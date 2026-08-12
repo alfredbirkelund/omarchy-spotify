@@ -154,6 +154,12 @@ Item {
       onMovementEnded: root.rememberView()
       onCountChanged: root.restoreView()
 
+      FastScrollHandler {
+        parent: mediaList
+        flickable: mediaList
+        onScrolled: root.rememberView()
+      }
+
       Keys.onReturnPressed: if (currentItem) currentItem.triggerPrimary()
       Keys.onEnterPressed: if (currentItem) currentItem.triggerPrimary()
 

@@ -25,7 +25,6 @@ Item {
   property string librarySort: "default"
   property string playlistFilter: ""
   property string playlistSort: "default"
-  property string playlistListFilter: ""
   property string detailFilter: ""
   property string detailSort: "default"
   property string artistSearchText: ""
@@ -200,6 +199,7 @@ Item {
   function restoreUiState() {
     if (!service) return
     var state = service.sessionState || ({})
+    service.restoreLastRadioPlaylist(state.lastRadioPlaylist)
     searchText = String(state.searchText || service.searchQuery || "")
     searchType = Api.SEARCH_TYPES.indexOf(String(state.searchType || "")) >= 0
       ? String(state.searchType) : "track"
@@ -211,7 +211,6 @@ Item {
     librarySort = String(state.librarySort || "default")
     playlistFilter = String(state.playlistFilter || "")
     playlistSort = String(state.playlistSort || "default")
-    playlistListFilter = String(state.playlistListFilter || "")
     detailFilter = String(state.detailFilter || "")
     detailSort = String(state.detailSort || "default")
     artistSearchText = String(state.artistSearchText || "")
@@ -237,14 +236,14 @@ Item {
       librarySort: librarySort,
       playlistFilter: playlistFilter,
       playlistSort: playlistSort,
-      playlistListFilter: playlistListFilter,
       detailFilter: detailFilter,
       detailSort: detailSort,
       artistSearchText: currentTab === "detail" && service.detailItem
         && service.detailItem.type === "artist" ? artistSearchText : "",
       scrollPositions: scrollPositions,
       detailItem: currentTab === "detail" && service.detailItem ? service.detailItem : null,
-      selectedPlaylistId: service.selectedPlaylist ? service.selectedPlaylist.id : restoredPlaylistId
+      selectedPlaylistId: service.selectedPlaylist ? service.selectedPlaylist.id : restoredPlaylistId,
+      lastRadioPlaylist: service.lastRadioPlaylist
     })
   }
 
@@ -364,6 +363,35 @@ Item {
     if (service) service.openView(tab, false)
   }
 
+  function openLastRadio() {
+    if (!service || !service.lastRadioPlaylist) return
+    chooseTab("playlists")
+    service.openPlaylist(service.lastRadioPlaylist)
+  }
+
+  function primaryNavigationItems() {
+    var items = [
+      { id: "home", label: "For you", icon: "󰎆" },
+      { id: "discover", label: "Discover", icon: "󰲸" }
+    ]
+    if (service && service.lastRadioPlaylist) items.push({
+      id: "radio",
+      label: service.lastRadioPlaying ? "Current radio" : "Last radio",
+      icon: "󰎆"
+    })
+    items.push(
+      { id: "search", label: "Search", icon: "󰍉" },
+      { id: "queue", label: "Queue", icon: "󰐕" },
+      { id: "devices", label: "Devices", icon: "󰋋" })
+    return items
+  }
+
+  function radioNavigationSelected() {
+    return currentTab === "playlists" && service && service.lastRadioPlaylist
+      && service.selectedPlaylist
+      && String(service.selectedPlaylist.id) === String(service.lastRadioPlaylist.id)
+  }
+
   function updateLoginGate() {
     if (!opened) return
     if (!fullyConnected) {
@@ -389,6 +417,10 @@ Item {
     target: root.service
     ignoreUnknownSignals: true
     function onPlaylistsChanged() { root.restorePlaylistSelection() }
+    function onRadioPlaylistReady(playlist) {
+      if (!playlist || !root.service) return
+      root.openLastRadio()
+    }
   }
 
   function pageComponent() {
@@ -435,6 +467,21 @@ Item {
   function sidebarPlaylistName(item) {
     var name = item && item.name ? String(item.name) : "Playlist"
     return name.length > 22 ? name.substring(0, 21) + "…" : name
+  }
+
+  function playlistOptions() {
+    var playlists = service ? service.sidebarPlaylists() : []
+    var options = []
+    for (var i = 0; i < playlists.length; i++) {
+      var playlist = playlists[i]
+      if (!playlist || !playlist.id) continue
+      options.push({
+        value: String(playlist.id),
+        label: String(playlist.name || "Playlist"),
+        description: String(playlist.ownerName || "")
+      })
+    }
+    return options
   }
 
   function openExternal(item) {
@@ -828,12 +875,15 @@ Item {
       PanelSeparator { width: parent.width; foreground: root.foreground }
 
       ListView {
+        id: playlistPickerList
         width: parent.width
         height: Math.min(Style.space(340), Math.max(Style.space(80), contentHeight))
         model: root.service ? root.service.editablePlaylists() : []
         clip: true
         spacing: Style.space(2)
         ScrollBar.vertical: ScrollBar { }
+
+        FastScrollHandler { parent: playlistPickerList; flickable: playlistPickerList }
 
         delegate: Button {
           required property var modelData
@@ -1068,25 +1118,26 @@ Item {
               }
 
               Repeater {
-                model: [
-                  { id: "home", label: "For you", icon: "󰎆" },
-                  { id: "discover", label: "Discover", icon: "󰲸" },
-                  { id: "search", label: "Search", icon: "󰍉" },
-                  { id: "queue", label: "Queue", icon: "󰐕" },
-                  { id: "devices", label: "Devices", icon: "󰋋" }
-                ]
+                model: root.primaryNavigationItems()
 
                 Button {
                   required property var modelData
+                  readonly property bool radioEntry: modelData.id === "radio"
                   width: primaryNavigation.width
                   text: root.compactWidth ? "" : modelData.label
                   iconText: modelData.icon
                   foreground: root.foreground
-                  selected: root.currentTab === modelData.id
+                  selected: radioEntry ? root.radioNavigationSelected()
+                    : root.currentTab === modelData.id
                   leftAlign: !root.compactWidth
                   focusable: true
-                  tooltipText: modelData.label
-                  onClicked: root.chooseTab(modelData.id)
+                  tooltipText: radioEntry && root.service && root.service.lastRadioPlaylist
+                    ? modelData.label + " · " + root.service.lastRadioPlaylist.name
+                    : modelData.label
+                  onClicked: {
+                    if (radioEntry) root.openLastRadio()
+                    else root.chooseTab(modelData.id)
+                  }
                 }
               }
 
@@ -1098,7 +1149,7 @@ Item {
 
             Text {
               id: playlistShortcutsHeading
-              visible: !root.compactHeight && !root.compactWidth
+              visible: !root.compactWidth
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.top: primaryNavigation.bottom
@@ -1151,16 +1202,32 @@ Item {
 
             ListView {
               id: playlistShortcuts
-              visible: !root.compactHeight && !root.compactWidth
+              visible: !root.compactWidth
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.top: libraryNavigation.bottom
               anchors.bottom: setupNavButton.top
               anchors.margins: Style.space(8)
-              model: root.service ? root.service.sidebarPlaylists().slice(0, 14) : []
+              model: root.service ? root.service.sidebarPlaylists() : []
               clip: true
               spacing: Style.space(1)
               reuseItems: true
+
+              FastScrollHandler {
+                parent: playlistShortcuts
+                flickable: playlistShortcuts
+                onScrolled: {
+                  if (playlistShortcuts.atYEnd && root.service
+                      && root.service.playlistsNext
+                      && !root.service.playlistsLoading)
+                    root.service.loadMorePlaylists()
+                }
+              }
+
+              onMovementEnded: {
+                if (atYEnd && root.service && root.service.playlistsNext
+                    && !root.service.playlistsLoading) root.service.loadMorePlaylists()
+              }
 
               delegate: Button {
                 required property var modelData
@@ -2322,18 +2389,93 @@ Item {
     id: playlistsPage
 
     Item {
-      Row {
+      Column {
         anchors.fill: parent
-        spacing: Style.space(12)
+        spacing: Style.space(6)
 
         Column {
-          width: Math.round((parent.width - parent.spacing) * 0.38)
-          height: parent.height
+          id: selectedPlaylistHeader
+          width: parent.width
           spacing: Style.space(6)
+
+          SearchableDropdown {
+            visible: root.compactWidth
+            width: parent.width
+            height: visible ? implicitHeight : 0
+            showLabel: false
+            foreground: root.foreground
+            background: root.background
+            accent: root.accent
+            fontFamily: root.fontFamily
+            placeholderText: "Choose a playlist…"
+            emptyText: root.service && root.service.playlistsLoading
+              ? "Loading playlists…" : "No playlists found"
+            options: root.playlistOptions()
+            value: root.service && root.service.selectedPlaylist
+              ? String(root.service.selectedPlaylist.id) : ""
+            onChanged: function(value) {
+              var playlist = root.service ? root.service.playlistById(value) : null
+              if (playlist) root.service.openPlaylist(playlist)
+            }
+          }
+
+          Button {
+            visible: root.compactWidth && root.service
+              && root.service.playlistsNext !== ""
+            width: parent.width
+            text: root.service && root.service.playlistsLoading
+              ? "Loading more playlists…" : "Load more playlists"
+            iconText: "󰑐"
+            foreground: root.foreground
+            enabled: root.service && !root.service.playlistsLoading
+            onClicked: root.service.loadMorePlaylists()
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(4)
+
+            Text {
+              width: Math.max(40, parent.width
+                - (playPlaylist.visible ? playPlaylist.width + parent.spacing : 0)
+                - (playlistMoreActions.visible
+                  ? playlistMoreActions.width + parent.spacing : 0))
+              text: root.service && root.service.selectedPlaylist
+                ? root.service.selectedPlaylist.name : "Select a playlist"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.subtitle
+              font.bold: true
+              elide: Text.ElideRight
+            }
+
+            Button {
+              id: playPlaylist
+              visible: root.service && root.service.selectedPlaylist
+              iconText: "󰐊"
+              text: "Play"
+              foreground: root.foreground
+              onClicked: root.service.playItem(root.service.selectedPlaylist)
+            }
+
+            Button {
+              id: playlistMoreActions
+              visible: root.service && root.service.selectedPlaylist
+              iconText: "󰇙"
+              foreground: root.foreground
+              tooltipText: "More actions"
+              onClicked: {
+                var point = playlistMoreActions.mapToItem(window.contentItem,
+                  playlistMoreActions.width, 0)
+                root.openMediaContext(root.service.selectedPlaylist, point.x, point.y,
+                  [], root.service.selectedPlaylist.uri, -1)
+              }
+            }
+          }
 
           Row {
             id: createPlaylistRow
-            width: parent.width
+            width: Math.min(parent.width, Style.space(390))
             spacing: Style.space(5)
 
             TextField {
@@ -2358,135 +2500,61 @@ Item {
             }
           }
 
-          MediaCollection {
-            id: playlistsCollection
+          Button {
             width: parent.width
-            height: Math.max(40, parent.height - createPlaylistRow.height - parent.spacing)
-            service: root.service
-            sourceItems: root.service ? root.service.sidebarPlaylists() : []
-            filterText: root.playlistListFilter
-            sortKey: "default"
-            showQueue: false
-            showSave: true
-            browseContexts: true
-            loading: root.service && root.service.playlistsLoading
-            hasMore: root.service && root.service.playlistsNext !== ""
-            emptyMessage: "No playlists are available."
-            restoredContentY: root.scrollFor("playlists:list")
-            stateKey: "playlists:list"
-            onActivated: function(item, items, uri) {
-              if (root.service) root.service.playItem(item)
-            }
-            onOpened: function(item) { if (root.service) root.service.openPlaylist(item) }
-            onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
-            onContextRequested: function(item, x, y, index, items, uri) {
-              root.openMediaContext(item, x, y, items, "", index)
-            }
-            onLoadMoreRequested: if (root.service) root.service.loadMorePlaylists()
-            onViewStateChanged: function(filter, sort, y) {
-              root.playlistListFilter = filter
-              root.rememberScroll("playlists:list", y)
-            }
+            visible: root.service && root.service.selectedPlaylist
+              && root.service.currentUserId !== ""
+              && !root.service.playlistOwned(root.service.selectedPlaylist)
+            text: root.service && root.service.playlistConversionBusy
+              ? "Making your copy…" : "Turn into your own playlist"
+            iconText: "󰒍"
+            foreground: root.foreground
+            selected: true
+            enabled: root.service && !root.service.playlistActionBusy
+            tooltipText: "Copy every available item, then remove the followed original"
+            onClicked: root.turnPlaylistIntoOwn(root.service.selectedPlaylist)
           }
         }
 
-        PanelSeparator {
-          width: 1
-          height: parent.height
-          foreground: root.foreground
-        }
-
-        Column {
-          width: Math.max(100, parent.width - parent.spacing * 2
-            - Math.round((parent.width - parent.spacing) * 0.38) - 1)
-          height: parent.height
-          spacing: Style.space(6)
-
-          Column {
-            id: selectedPlaylistHeader
-            width: parent.width
-            spacing: Style.space(6)
-
-            Row {
-              width: parent.width
-              spacing: Style.space(4)
-
-              Text {
-                width: Math.max(40, parent.width - playPlaylist.width - parent.spacing)
-                text: root.service && root.service.selectedPlaylist
-                  ? root.service.selectedPlaylist.name : "Select a playlist"
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.subtitle
-                font.bold: true
-                elide: Text.ElideRight
-              }
-
-              Button {
-                id: playPlaylist
-                visible: root.service && root.service.selectedPlaylist
-                iconText: "󰐊"
-                text: "Play"
-                foreground: root.foreground
-                onClicked: root.service.playItem(root.service.selectedPlaylist)
-              }
-            }
-
-            Button {
-              width: parent.width
-              visible: root.service && root.service.selectedPlaylist
-                && root.service.currentUserId !== ""
-                && !root.service.playlistOwned(root.service.selectedPlaylist)
-              text: root.service && root.service.playlistConversionBusy
-                ? "Making your copy…" : "Turn into your own playlist"
-              iconText: "󰒍"
-              foreground: root.foreground
-              selected: true
-              enabled: root.service && !root.service.playlistActionBusy
-              tooltipText: "Copy every available item, then remove the followed original"
-              onClicked: root.turnPlaylistIntoOwn(root.service.selectedPlaylist)
-            }
+        MediaCollection {
+          id: playlistItemsCollection
+          width: parent.width
+          height: Math.max(40, parent.height - selectedPlaylistHeader.height - parent.spacing)
+          service: root.service
+          sourceItems: root.service ? root.service.playlistItems : []
+          filterText: root.playlistFilter
+          sortKey: root.playlistSort
+          contextUri: root.service && root.service.selectedPlaylist
+            ? root.service.selectedPlaylist.uri : ""
+          showQueue: true
+          showSave: true
+          browseContexts: false
+          loading: root.service && root.service.playlistItemsLoading
+          hasMore: root.service && root.service.playlistItemsNext !== ""
+          emptyMessage: root.service && root.service.selectedPlaylist
+            ? "This playlist has no visible items."
+            : (root.compactWidth ? "Choose a playlist above."
+              : "Choose a playlist from the sidebar.")
+          restoredContentY: root.scrollFor("playlist:" + (root.service
+            && root.service.selectedPlaylist ? root.service.selectedPlaylist.id : ""))
+          stateKey: "playlist:" + (root.service && root.service.selectedPlaylist
+            ? root.service.selectedPlaylist.id : "")
+          onActivated: function(item, items, uri) {
+            if (root.service) root.service.playItem(item, items, uri)
           }
-
-          MediaCollection {
-            id: playlistItemsCollection
-            width: parent.width
-            height: Math.max(40, parent.height - selectedPlaylistHeader.height - parent.spacing)
-            service: root.service
-            sourceItems: root.service ? root.service.playlistItems : []
-            filterText: root.playlistFilter
-            sortKey: root.playlistSort
-            contextUri: root.service && root.service.selectedPlaylist
-              ? root.service.selectedPlaylist.uri : ""
-            showQueue: true
-            showSave: true
-            browseContexts: false
-            loading: root.service && root.service.playlistItemsLoading
-            hasMore: root.service && root.service.playlistItemsNext !== ""
-            emptyMessage: root.service && root.service.selectedPlaylist
-              ? "This playlist has no visible items."
-              : "Choose a playlist on the left."
-            restoredContentY: root.scrollFor("playlist:" + (root.service
-              && root.service.selectedPlaylist ? root.service.selectedPlaylist.id : ""))
-            stateKey: "playlist:" + (root.service && root.service.selectedPlaylist
-              ? root.service.selectedPlaylist.id : "")
-            onActivated: function(item, items, uri) {
-              if (root.service) root.service.playItem(item, items, uri)
-            }
-            onOpened: function(item) { root.openItem(item) }
-            onQueued: function(item) { if (root.service) root.service.addToQueue(item) }
-            onPlaylistRequested: function(item) { root.openPlaylistPicker(item) }
-            onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
-            onContextRequested: function(item, x, y, index, items, uri) {
-              root.openMediaContext(item, x, y, items, uri, index)
-            }
-            onLoadMoreRequested: if (root.service) root.service.loadMorePlaylistItems()
-            onViewStateChanged: function(filter, sort, y) {
-              root.playlistFilter = filter
-              root.playlistSort = sort
-              root.rememberScroll("playlist:" + (root.service
-                && root.service.selectedPlaylist ? root.service.selectedPlaylist.id : ""), y)
-            }
+          onOpened: function(item) { root.openItem(item) }
+          onQueued: function(item) { if (root.service) root.service.addToQueue(item) }
+          onPlaylistRequested: function(item) { root.openPlaylistPicker(item) }
+          onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
+          onContextRequested: function(item, x, y, index, items, uri) {
+            root.openMediaContext(item, x, y, items, uri, index)
+          }
+          onLoadMoreRequested: if (root.service) root.service.loadMorePlaylistItems()
+          onViewStateChanged: function(filter, sort, y) {
+            root.playlistFilter = filter
+            root.playlistSort = sort
+            root.rememberScroll("playlist:" + (root.service
+              && root.service.selectedPlaylist ? root.service.selectedPlaylist.id : ""), y)
           }
         }
       }
@@ -2525,6 +2593,7 @@ Item {
         }
 
         ListView {
+          id: queueList
           width: parent.width
           height: Math.max(60, parent.height - Style.space(44))
           model: root.service ? root.service.queue : []
@@ -2533,6 +2602,8 @@ Item {
           reuseItems: true
           cacheBuffer: Style.space(140)
           ScrollBar.vertical: ScrollBar { }
+
+          FastScrollHandler { parent: queueList; flickable: queueList }
 
           delegate: MediaRow {
             required property var modelData
@@ -2712,6 +2783,11 @@ Item {
 
           Item { width: 1; height: Style.space(4) }
         }
+      }
+
+      FastScrollHandler {
+        parent: devicesScroll.contentItem
+        flickable: devicesScroll.contentItem
       }
     }
   }
@@ -2928,6 +3004,11 @@ Item {
 
           Item { width: 1; height: Style.space(4) }
         }
+      }
+
+      FastScrollHandler {
+        parent: loginScroll.contentItem
+        flickable: loginScroll.contentItem
       }
     }
   }
@@ -3188,6 +3269,11 @@ Item {
             }
           }
         }
+      }
+
+      FastScrollHandler {
+        parent: setupScroll.contentItem
+        flickable: setupScroll.contentItem
       }
     }
   }

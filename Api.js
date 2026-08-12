@@ -220,6 +220,56 @@ function findThisIsPlaylist(items, artistName) {
   return best
 }
 
+function trackRadioPlaylists(items, trackName) {
+  var expected = comparablePlaylistTitle(String(trackName || "") + " Radio")
+  if (!expected || !String(trackName || "").trim()) return []
+  var rows = Array.isArray(items) ? items : []
+  var result = []
+  var seen = ({})
+  for (var i = 0; i < rows.length; i++) {
+    var item = rows[i]
+    if (!item || item.type !== "playlist" || !item.id || !item.uri
+        || comparablePlaylistTitle(item.name) !== expected) continue
+    var ownerId = String(item.ownerId || "").toLowerCase()
+    var ownerName = String(item.ownerName || "").toLowerCase()
+    var key = String(item.uri || item.id)
+    if ((ownerId !== "spotify" && ownerName !== "spotify") || seen[key]) continue
+    seen[key] = true
+    result.push(item)
+  }
+  return result
+}
+
+function radioSeedMatches(candidate, seed) {
+  var item = candidate || {}
+  var target = seed || {}
+  var itemId = String(item.id || "")
+  var targetId = String(target.id || "")
+  var itemUri = String(item.uri || "")
+  var targetUri = String(target.uri || "")
+  if ((itemId && targetId && itemId === targetId)
+      || (itemUri && targetUri && itemUri === targetUri)) return true
+  if (comparablePlaylistTitle(item.name) !== comparablePlaylistTitle(target.name))
+    return false
+
+  var itemArtists = Array.isArray(item.artists) ? item.artists : []
+  var targetArtists = Array.isArray(target.artists) ? target.artists : []
+  for (var i = 0; i < itemArtists.length; i++) {
+    var itemArtist = itemArtists[i] || {}
+    var itemArtistId = String(itemArtist.id || "")
+    var itemArtistName = comparablePlaylistTitle(itemArtist.name)
+    for (var j = 0; j < targetArtists.length; j++) {
+      var targetArtist = targetArtists[j] || {}
+      var targetArtistId = String(targetArtist.id || "")
+      var targetArtistName = comparablePlaylistTitle(targetArtist.name)
+      if ((itemArtistId && targetArtistId && itemArtistId === targetArtistId)
+          || (itemArtistName && targetArtistName && itemArtistName === targetArtistName))
+        return true
+    }
+  }
+  return false
+}
+
 function discoveryPlaylistRank(item) {
   if (!item || item.type !== "playlist" || !item.id) return -1
   var ownerId = String(item.ownerId || "").toLowerCase()

@@ -197,6 +197,13 @@ Item {
   property var pendingPlayback: null
   property var pendingPlaybackBody: null
   property string pendingPlaybackMessage: ""
+  property var pendingPlaybackRadio: null
+  property int pendingPlaybackSerial: 0
+  property int radioSerial: 0
+  property var lastRadioPlaylist: null
+  property bool radioContextSelected: false
+  readonly property bool lastRadioPlaying: !!lastRadioPlaylist
+    && radioContextSelected && playing
   property bool localActivationRequested: false
   property int deviceProbeAttempts: 0
   property bool loginFlowActive: false
@@ -208,6 +215,7 @@ Item {
   readonly property int cacheLimit: 200
 
   signal operationFailed(string reason)
+  signal radioPlaylistReady(var playlist)
 
   function defaults() {
     var fallback = {
@@ -516,6 +524,59 @@ Item {
     return playlists
   }
 
+  function validRadioPlaylist(value) {
+    return !!value && value.type === "playlist" && !!value.id && !!value.uri
+  }
+
+  function sameRadioPlaylist(left, right) {
+    if (!validRadioPlaylist(left) || !validRadioPlaylist(right)) return false
+    return String(left.id) === String(right.id)
+      || String(left.uri) === String(right.uri)
+  }
+
+  function restoreLastRadioPlaylist(value) {
+    if (!lastRadioPlaylist && validRadioPlaylist(value))
+      lastRadioPlaylist = value
+  }
+
+  function rememberRadioPlaylist(value) {
+    if (!validRadioPlaylist(value)) return
+    lastRadioPlaylist = value
+    radioContextSelected = false
+    var state = ({})
+    for (var key in sessionState) state[key] = sessionState[key]
+    state.lastRadioPlaylist = value
+    persistSession(state)
+  }
+
+  function radioPlaylistForPlayback(item, contextUri, explicitRadio) {
+    if (validRadioPlaylist(explicitRadio)) return explicitRadio
+    if (!validRadioPlaylist(lastRadioPlaylist)) return null
+    if (sameRadioPlaylist(item, lastRadioPlaylist)
+        || String(contextUri || "") === String(lastRadioPlaylist.uri))
+      return lastRadioPlaylist
+    return null
+  }
+
+  function verifyRadioPlaybackContext() {
+    if (!validRadioPlaylist(lastRadioPlaylist)) {
+      radioContextSelected = false
+      return
+    }
+    var expectedSerial = radioSerial
+    var expectedPlaylist = lastRadioPlaylist
+    spotifyApi.request("GET", "/me/player", null, null,
+      function(status, payload, error) {
+        if (error || expectedSerial !== root.radioSerial
+            || !root.sameRadioPlaylist(expectedPlaylist, root.lastRadioPlaylist)) return
+        var context = payload && payload.context ? payload.context : null
+        root.radioContextSelected = !!context
+          && (String(context.uri || "") === String(expectedPlaylist.uri)
+            || (context.type === "playlist"
+              && String(context.href || "").indexOf("/playlists/" + expectedPlaylist.id) >= 0))
+      })
+  }
+
   // Restore the keyring-backed session only when a Spotify API surface is
   // actually opened. This avoids a network request when the widget is merely
   // sitting on the bar and local MPRIS controls are sufficient.
@@ -525,6 +586,7 @@ Item {
       if (token) {
         root.loadProfile()
         root.loadSidebarPlaylists()
+        root.verifyRadioPlaybackContext()
         root.openView(root.activeView, false)
       }
       else if (error && error !== "Log in to Spotify first") root.fail(error)
@@ -1663,7 +1725,8 @@ Item {
     }
   }
 
-  function playItem(item, sourceItems, contextUri, successMessage) {
+  function playItem(item, sourceItems, contextUri, successMessage, explicitRadio) {
+    var playbackSerial = ++radioSerial
     var body = Api.playbackBody(item, sourceItems, contextUri)
     if (!body) {
       fail("This Spotify item cannot be played")
@@ -1672,6 +1735,8 @@ Item {
     pendingPlayback = item
     pendingPlaybackBody = body
     pendingPlaybackMessage = String(successMessage || "")
+    pendingPlaybackRadio = radioPlaylistForPlayback(item, contextUri, explicitRadio)
+    pendingPlaybackSerial = playbackSerial
     localActivationRequested = true
     deviceProbeAttempts = 0
     noteActivity()
@@ -1692,6 +1757,8 @@ Item {
       pendingPlayback = null
       pendingPlaybackBody = null
       pendingPlaybackMessage = ""
+      pendingPlaybackRadio = null
+      pendingPlaybackSerial = 0
       localActivationRequested = false
       return
     }
@@ -1728,6 +1795,8 @@ Item {
         root.pendingPlayback = null
         root.pendingPlaybackBody = null
         root.pendingPlaybackMessage = ""
+        root.pendingPlaybackRadio = null
+        root.pendingPlaybackSerial = 0
         root.localActivationRequested = false
         root.fail("Playback on this computer did not become available. Reconnect Spotify in Settings, then try again")
       }
@@ -1752,13 +1821,19 @@ Item {
   function sendPendingPlayback(deviceId) {
     var body = pendingPlaybackBody
     var successMessage = pendingPlaybackMessage
+    var radioPlaylist = pendingPlaybackRadio
+    var playbackSerial = pendingPlaybackSerial
     if (!body) return
     pendingPlayback = null
     pendingPlaybackBody = null
     pendingPlaybackMessage = ""
+    pendingPlaybackRadio = null
+    pendingPlaybackSerial = 0
     apiAction("PUT", "/me/player/play", { device_id: deviceId }, body, successMessage,
       function(ok) {
         if (ok) {
+          if (playbackSerial === root.radioSerial)
+            root.radioContextSelected = !!radioPlaylist
           root.selectedDeviceId = String(deviceId || root.selectedDeviceId)
           root.loadDevices()
           root.loadQueue()
@@ -1771,26 +1846,109 @@ Item {
       fail("Track radio is available for Spotify songs")
       return
     }
+    var expected = ++radioSerial
     noteActivity()
     succeed("Finding similar tracks…")
+    // Development-mode recommendation requests can succeed with no payload.
+    // Spotify's generated radio playlists provide a real playback context, so
+    // prefer an exact Spotify-owned match and verify its first track is the seed.
+    spotifyApi.request("GET", "/search", {
+      q: String(item.name || "") + " Radio",
+      type: "playlist",
+      limit: 10
+    }, null, function(status, payload, error) {
+      if (expected !== root.radioSerial) return
+      if (!error) {
+        var page = Api.normalizeSearchPage(payload, "playlist", 96)
+        var candidates = Api.trackRadioPlaylists(page.items, item.name)
+        if (candidates.length) {
+          root.tryRadioPlaylist(item, candidates, 0, expected)
+          return
+        }
+      }
+      root.requestRadioRecommendations(item, expected)
+    })
+  }
+
+  function tryRadioPlaylist(item, candidates, index, expected) {
+    if (expected !== radioSerial) return
+    if (index >= candidates.length) {
+      requestRadioRecommendations(item, expected)
+      return
+    }
+    var candidate = candidates[index]
+    spotifyApi.request("GET", "/playlists/"
+      + encodeURIComponent(String(candidate.id)) + "/items", { limit: 1 }, null,
+      function(status, payload, error) {
+        if (expected !== root.radioSerial) return
+        var source = payload && Array.isArray(payload.items) ? payload.items : []
+        var first = !error && source.length ? Api.normalizeTrack(source[0], 96) : null
+        if (first && Api.radioSeedMatches(first, item)) {
+          root.rememberRadioPlaylist(candidate)
+          root.playItem(candidate, null, "", "Track radio started", candidate)
+          root.radioPlaylistReady(candidate)
+          return
+        }
+        root.tryRadioPlaylist(item, candidates, index + 1, expected)
+      })
+  }
+
+  function requestRadioRecommendations(item, expected) {
+    if (expected !== radioSerial) return
     spotifyApi.request("GET", "/recommendations", {
       limit: 49,
       seed_tracks: item.id
     }, null, function(status, payload, error) {
-      if (error) {
-        // spotifyd Autoplay still supplies a recommendation stream when the
-        // Web API recommendation endpoint is unavailable for an account.
-        root.playItem(item, [item], "", "Track radio started with Spotify Autoplay")
-        return
-      }
+      if (expected !== root.radioSerial) return
       var source = payload && Array.isArray(payload.tracks) ? payload.tracks : []
       var radio = [item]
+      var seen = ({})
+      seen[String(item.uri)] = true
       for (var i = 0; i < source.length; i++) {
         var track = Api.normalizeTrack(source[i], 96)
-        if (track && track.uri !== item.uri) radio.push(track)
+        var uri = String((track && track.uri) || "")
+        if (uri && !seen[uri]) {
+          seen[uri] = true
+          radio.push(track)
+        }
       }
-      root.playItem(item, radio, "", radio.length > 1
-        ? "Track radio started" : "Track radio started with Spotify Autoplay")
+      if (!error && radio.length > 1) {
+        root.playItem(item, radio, "", "Track radio started")
+        return
+      }
+      root.requestRadioArtistTracks(item, expected)
+    })
+  }
+
+  function requestRadioArtistTracks(item, expected) {
+    if (expected !== radioSerial) return
+    var artist = item.artists && item.artists.length ? item.artists[0] : null
+    if (!artist || !artist.name) {
+      fail("Spotify could not find a radio mix for this song")
+      return
+    }
+    spotifyApi.request("GET", "/search", {
+      q: Api.catalogSearchText(artist.name, ""),
+      type: "track",
+      limit: 10
+    }, null, function(status, payload, error) {
+      if (expected !== root.radioSerial) return
+      var page = error ? { items: [] }
+        : Api.normalizeSearchPage(payload, "track", 96)
+      var matching = Api.tracksForArtist(page.items, artist)
+      var radio = [item]
+      var seen = ({})
+      seen[String(item.uri)] = true
+      for (var i = 0; i < matching.length; i++) {
+        var track = matching[i]
+        var uri = String((track && track.uri) || "")
+        if (uri && !seen[uri]) {
+          seen[uri] = true
+          radio.push(track)
+        }
+      }
+      if (radio.length > 1) root.playItem(item, radio, "", "Track radio started")
+      else root.fail("Spotify could not find a radio mix for this song")
     })
   }
 
@@ -1957,6 +2115,8 @@ Item {
     pendingPlayback = null
     pendingPlaybackBody = null
     pendingPlaybackMessage = ""
+    pendingPlaybackRadio = null
+    pendingPlaybackSerial = 0
     localActivationRequested = false
     deviceProbeTimer.stop()
     daemonManager.stop()
@@ -2009,6 +2169,8 @@ Item {
     pendingPlayback = null
     pendingPlaybackBody = null
     pendingPlaybackMessage = ""
+    pendingPlaybackRadio = null
+    pendingPlaybackSerial = 0
     localActivationRequested = false
     deviceProbeTimer.stop()
     spotifyApi.cancelSearch()
@@ -2018,6 +2180,13 @@ Item {
   }
 
   function clearData() {
+    radioSerial++
+    pendingPlayback = null
+    pendingPlaybackBody = null
+    pendingPlaybackMessage = ""
+    pendingPlaybackRadio = null
+    pendingPlaybackSerial = 0
+    radioContextSelected = false
     playlists = []
     playlistsLoaded = false
     playlistsNext = ""

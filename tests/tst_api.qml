@@ -47,6 +47,39 @@ TestCase {
     ], "Björk"), null)
   }
 
+  function test_trackRadioPlaylists_onlyKeepsExactSpotifyContexts() {
+    var result = Api.trackRadioPlaylists([
+      { id: "official", uri: "spotify:playlist:official", type: "playlist",
+        name: "Dreams - 2004 Remaster Radio", ownerId: "spotify" },
+      { id: "copy", uri: "spotify:playlist:copy", type: "playlist",
+        name: "Dreams - 2004 Remaster Radio", ownerName: "A listener" },
+      { id: "other", uri: "spotify:playlist:other", type: "playlist",
+        name: "Sunset Dreams - 2004 Remaster Radio", ownerName: "Spotify" }
+    ], "Dreams - 2004 Remaster")
+
+    compare(result.length, 1)
+    compare(result[0].id, "official")
+  }
+
+  function test_radioSeedMatches_acceptsRelinkedTrackFromSameArtist() {
+    verify(Api.radioSeedMatches({
+      id: "market-version", uri: "spotify:track:market-version",
+      name: "Love The Way You Lie",
+      artists: [{ id: "eminem", name: "Eminem" }, { id: "rihanna", name: "Rihanna" }]
+    }, {
+      id: "original", uri: "spotify:track:original",
+      name: "Love The Way You Lie",
+      artists: [{ id: "eminem", name: "Eminem" }]
+    }))
+    verify(!Api.radioSeedMatches({
+      id: "cover", name: "Love The Way You Lie",
+      artists: [{ id: "cover-band", name: "Cover Band" }]
+    }, {
+      id: "original", name: "Love The Way You Lie",
+      artists: [{ id: "eminem", name: "Eminem" }]
+    }))
+  }
+
   function test_discoveryPlaylists_keepsOfficialRelevantResultsInUsefulOrder() {
     var rows = Api.discoveryPlaylists([
       { id: "fan", type: "playlist", name: "Discover Weekly", ownerName: "A listener" },
