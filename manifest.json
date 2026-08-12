@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "id": "quickshell.spotify",
+  "name": "Music for Spotify",
+  "version": "1.0.0",
+  "author": "QuickshellSpotify",
+  "license": "MIT",
+  "description": "Search, browse, and play Spotify from a native Omarchy app.",
+  "kinds": [
+    "service",
+    "bar-widget",
+    "panel"
+  ],
+  "activation": "on-demand",
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml",
+    "panel": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Music for Spotify",
+    "description": "Search, browse your library, manage playlists, and play music on this computer or another Spotify Connect device.",
+    "category": "Media",
+    "aliases": [
+      "spotify",
+      "music",
+      "player"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "deviceName": "Omarchy Spotify",
+      "idleShutdownMinutes": 15,
+      "showTrackTitle": "On",
+      "audioQuality": "320 kbps"
+    },
+    "schema": [
+      {
+        "key": "deviceName",
+        "type": "string",
+        "label": "This computer appears as",
+        "defaultValue": "Omarchy Spotify",
+        "description": "Shown in Devices immediately. Spotify Connect uses the new name the next time local playback starts."
+      },
+      {
+        "key": "idleShutdownMinutes",
+        "type": "integer",
+        "label": "Stop local playback when idle",
+        "min": 0,
+        "max": 1440,
+        "step": 5,
+        "defaultValue": 15,
+        "description": "Minutes. Use 0 to keep this computer available in Spotify Connect."
+      },
+      {
+        "key": "showTrackTitle",
+        "type": "enum",
+        "label": "Show track title in bar",
+        "options": [
+          "On",
+          "Off"
+        ],
+        "defaultValue": "On"
+      },
+      {
+        "key": "audioQuality",
+        "type": "enum",
+        "label": "Local playback quality",
+        "options": [
+          "96 kbps",
+          "160 kbps",
+          "320 kbps"
+        ],
+        "defaultValue": "320 kbps",
+        "description": "Takes effect the next time playback starts."
+      }
+    ]
+  }
+}
