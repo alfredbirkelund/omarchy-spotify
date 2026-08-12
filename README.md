@@ -6,6 +6,12 @@ Music for Spotify puts search, your library, playlists, queue, playback controls
 and Spotify Connect in one fast, theme-aware Omarchy app. The bar widget keeps
 the current song close; the full window gives you room to browse and listen.
 
+![Omarchy Spotify playlists](docs/pr-assets/matte-black-playlists.png)
+
+![Omarchy Spotify search](docs/pr-assets/matte-black-search.png)
+
+![Omarchy Spotify discover](docs/pr-assets/matte-black-discover.png)
+
 > Requires Omarchy 4 and a personal Spotify Premium account.
 
 ## Highlights
