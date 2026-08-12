@@ -128,14 +128,6 @@ Item {
     return "Ready — starts automatically when you play music"
   }
 
-  function footerStatusText() {
-    if (!service) return "Spotify unavailable"
-    var selected = service.deviceForId(service.selectedDeviceId)
-    if (selected && !selected.local && selected.name)
-      return "Playing on " + selected.name
-    return service.daemon.running ? "This computer is active" : "Ready when you press play"
-  }
-
   function openMediaContext(item, sceneX, sceneY, sourceItems, contextUri, index) {
     if (!item) return
     contextItem = item
@@ -1627,17 +1619,6 @@ Item {
                     if (root.service) root.service.setVolume(value)
                   }
                 }
-              }
-
-              Text {
-                width: parent.width
-                text: root.service && root.service.sleepActive
-                  ? root.service.sleepStatusText() : root.footerStatusText()
-                color: Qt.darker(root.foreground, 1.42)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                horizontalAlignment: Text.AlignRight
-                elide: Text.ElideRight
               }
             }
           }
