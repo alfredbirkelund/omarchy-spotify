@@ -23,6 +23,15 @@ closed, the plugin adds only **1.6 MiB PSS** to the existing Omarchy shell.
 
 > Requires Omarchy 4 and a personal Spotify Premium account.
 
+## Add to Omarchy
+
+```bash
+omarchy plugin add https://github.com/stappmus/Omarchy-Spotify.git --enable
+```
+
+After installation, click the Spotify icon in the bar and follow the setup shown
+in the app.
+
 ## Highlights
 
 - Search songs, artists, albums, playlists, podcasts, episodes, and audiobooks.
@@ -39,11 +48,7 @@ closed, the plugin adds only **1.6 MiB PSS** to the existing Omarchy shell.
 - Match every Omarchy theme automatically, including light themes.
 - Stay lightweight: no embedded browser, Electron app, or background polling.
 
-## Install
-
-Install **Music for Spotify** from the Omarchy plugin directory and choose where
-you want it in the bar. You can move or disable it later from Omarchy's plugin
-and bar settings.
+## First-run setup
 
 On first launch:
 
