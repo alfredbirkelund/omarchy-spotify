@@ -1,10 +1,19 @@
-# Music for Spotify
+# Omarchy Spotify
 
-Spotify, built for Omarchy.
+**The Spotify app built for Omarchy.**
 
-Music for Spotify puts search, your library, playlists, queue, playback controls,
-and Spotify Connect in one fast, theme-aware Omarchy app. The bar widget keeps
-the current song close; the full window gives you room to browse and listen.
+Designed to feel like the original Spotify client, with the familiar sidebar,
+browsing views, playlists and persistent player—just way snappier and dramatically
+less resource-heavy.
+
+It talks directly to Spotify's API instead of controlling or embedding the official
+client, so the Spotify desktop app does not need to be installed or running. The
+entire interface automatically follows your active Omarchy theme, including light
+themes.
+
+A populated Omarchy Spotify window used **54.8 MiB PSS**, compared with **912.2 MiB**
+across the official Spotify client's processes: **94% less memory**. With its window
+closed, the plugin adds only **1.6 MiB PSS** to the existing Omarchy shell.
 
 ![Omarchy Spotify playlists](docs/pr-assets/matte-black-playlists.png)
 
