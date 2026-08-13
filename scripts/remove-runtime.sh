@@ -43,7 +43,7 @@ if (( purge )); then
     for _ in {1..20}; do
       secret-tool clear service quickshell-spotify kind refresh-token >/dev/null 2>&1 || break
     done
-    echo "Cleared matching Music for Spotify keyring entries."
+    echo "Cleared matching Omarchy Spotify keyring entries."
   fi
 fi
 

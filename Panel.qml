@@ -113,7 +113,7 @@ Item {
   }
 
   function connectionErrorText() {
-    if (!service) return "Music for Spotify is unavailable"
+    if (!service) return "Omarchy Spotify is unavailable"
     return service.lastError || service.auth.lastError || service.daemon.lastError
   }
 
@@ -981,7 +981,7 @@ Item {
   FloatingWindow {
     id: window
     visible: root.opened
-    title: "Music for Spotify"
+    title: "Omarchy Spotify"
     color: root.background
     implicitWidth: 980
     implicitHeight: 720
@@ -2814,7 +2814,7 @@ Item {
             Text {
               width: parent.width
               horizontalAlignment: Text.AlignHCenter
-              text: "Music for Spotify"
+              text: "Omarchy Spotify"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
@@ -2893,7 +2893,7 @@ Item {
 
               Text {
                 width: parent.width
-                text: "Spotify may open two approval pages the first time. Finish both and Music for Spotify will bring you back here automatically."
+                text: "Spotify may open two approval pages the first time. Finish both and Omarchy Spotify will bring you back here automatically."
                 color: Qt.darker(root.foreground, 1.3)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -2986,7 +2986,7 @@ Item {
           Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: "Your password is entered only on Spotify's own page. Music for Spotify never sees it."
+            text: "Your password is entered only on Spotify's own page. Omarchy Spotify never sees it."
             color: Qt.darker(root.foreground, 1.45)
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

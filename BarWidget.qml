@@ -61,7 +61,7 @@ BarWidget {
     active: root.spotify && root.spotify.playing
     tooltipText: root.spotify && root.spotify.hasMedia
       ? root.spotify.title + (root.spotify.artist ? " — " + root.spotify.artist : "")
-      : "Music for Spotify"
+      : "Omarchy Spotify"
     fixedWidth: root.vertical ? root.barSize
       : (root.iconOnly ? Style.bar.statusSlot
         : Math.min(Style.space(240), Math.max(root.barSize, labelMetrics.advanceWidth + Style.space(18))))

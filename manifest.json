@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "quickshell.spotify",
-  "name": "Music for Spotify",
-  "version": "1.0.0",
+  "name": "Omarchy Spotify",
+  "version": "1.0.1",
   "author": "QuickshellSpotify",
   "license": "MIT",
   "description": "Search, browse, and play Spotify from a native Omarchy app.",
@@ -18,7 +18,7 @@
     "panel": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "Music for Spotify",
+    "displayName": "Omarchy Spotify",
     "description": "Search, browse your library, manage playlists, and play music on this computer or another Spotify Connect device.",
     "category": "Media",
     "aliases": [

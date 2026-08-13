@@ -142,7 +142,7 @@ printf '%s\n' \
   'exit 0' >"$mock_bin/omarchy-shell"
 chmod 755 "$mock_bin/hyprctl" "$mock_bin/omarchy-shell"
 
-TEST_CLIENTS_JSON='[{"address":"0xabc","class":"chromium","title":"127.0.0.1:8000/login?code=mock - Chromium"},{"address":"0xdef","class":"org.quickshell","title":"Music for Spotify"}]' \
+TEST_CLIENTS_JSON='[{"address":"0xabc","class":"chromium","title":"127.0.0.1:8000/login?code=mock - Chromium"},{"address":"0xdef","class":"org.quickshell","title":"Omarchy Spotify"}]' \
 TEST_HYPR_LOG="$handoff_hypr_log" \
 TEST_SHELL_LOG="$handoff_shell_log" \
 PATH="$mock_bin:$PATH" \
@@ -152,7 +152,7 @@ grep -q 'focus.*address:0xdef' "$handoff_hypr_log"
 grep -q 'shell summon quickshell.spotify' "$handoff_shell_log"
 
 printf '' >"$handoff_hypr_log"
-TEST_CLIENTS_JSON='[{"address":"0xabc","class":"chromium","title":"Unrelated tab - Chromium"},{"address":"0xdef","class":"org.quickshell","title":"Music for Spotify"}]' \
+TEST_CLIENTS_JSON='[{"address":"0xabc","class":"chromium","title":"Unrelated tab - Chromium"},{"address":"0xdef","class":"org.quickshell","title":"Omarchy Spotify"}]' \
 TEST_HYPR_LOG="$handoff_hypr_log" \
 TEST_SHELL_LOG="$handoff_shell_log" \
 PATH="$mock_bin:$PATH" \
@@ -176,7 +176,7 @@ grep -q 'readonly property string redirectUri: "http://127.0.0.1:"' \
 ! grep -q '"clientId"' "$source_root/manifest.json"
 ! grep -q '"oauthPort"' "$source_root/manifest.json"
 grep -q 'window.close()' "$source_root/OAuth.js"
-jq -e '.version == "1.0.0"
+jq -e '.version == "1.0.1"
   and .barWidget.defaults.audioQuality == "320 kbps"
   and (.barWidget.schema[] | select(.key == "audioQuality").defaultValue) == "320 kbps"' \
   "$source_root/manifest.json" >/dev/null

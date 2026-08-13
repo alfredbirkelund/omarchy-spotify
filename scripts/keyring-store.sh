@@ -12,7 +12,7 @@ if [ -z "$refresh_token" ]; then
 fi
 
 printf '%s' "$refresh_token" | secret-tool store \
-  --label='Music for Spotify refresh token' \
+  --label='Omarchy Spotify refresh token' \
   service quickshell-spotify \
   kind refresh-token \
   client-id "$client_id"

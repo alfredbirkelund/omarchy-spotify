@@ -5,7 +5,7 @@ details out of the user-facing README.
 
 ## Architecture
 
-Music for Spotify runs as a plugin inside Omarchy's existing `omarchy-shell`
+Omarchy Spotify runs as a plugin inside Omarchy's existing `omarchy-shell`
 Quickshell process. It provides a shared service, a bar widget, and a lazy-loaded
 panel. There is no embedded website, browser engine, second shell process, or
 resident helper process.

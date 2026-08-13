@@ -42,7 +42,7 @@ running.
 
 | Ready-to-use UI | PSS | RSS |
 |---|---:|---:|
-| Music for Spotify, incremental over Omarchy shell | **54.8 MiB** | **61.5 MiB** |
+| Omarchy Spotify, incremental over Omarchy shell | **54.8 MiB** | **61.5 MiB** |
 | Official Spotify desktop client, all processes | **912.2 MiB** | **1,672.6 MiB** |
 
 On this host, the populated plugin window therefore used **857.4 MiB less

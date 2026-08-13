@@ -46,7 +46,7 @@ return_to_spotify() {
       hyprctl clients -j 2>/dev/null | jq -r '
         [.[]
           | select((.class // "") == "org.quickshell"
-            and (.title // "") == "Music for Spotify")
+            and (.title // "") == "Omarchy Spotify")
           | .address][0] // empty
       '
     )

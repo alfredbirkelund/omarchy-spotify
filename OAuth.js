@@ -70,7 +70,7 @@ function parseTokenResponse(status, text, previousRefreshToken) {
 }
 
 function successResponse() {
-  var body = "<!doctype html><meta charset=\"utf-8\"><title>Music for Spotify</title>"
+  var body = "<!doctype html><meta charset=\"utf-8\"><title>Omarchy Spotify</title>"
     + "<style>:root{color-scheme:light dark}body{font-family:system-ui;background:Canvas;color:CanvasText;display:grid;place-items:center;height:100vh;margin:0}"
     + "main{max-width:32rem;padding:2rem;border:1px solid GrayText;border-radius:.5rem}</style>"
     + "<main><h1>Authorization complete</h1><p>Returning to Omarchy Spotify…</p>"

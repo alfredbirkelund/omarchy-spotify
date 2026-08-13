@@ -1,5 +1,5 @@
 [Unit]
-Description=Lightweight Spotify playback engine for Music for Spotify
+Description=Lightweight Spotify playback engine for Omarchy Spotify
 Documentation=https://github.com/Spotifyd/spotifyd
 After=graphical-session.target sound.target
 Wants=sound.target

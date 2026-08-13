@@ -1057,7 +1057,7 @@ Item {
     spotifyApi.request("POST", "/me/playlists", null, {
       name: normalized.slice(0, 100),
       "public": false,
-      description: "Created with Music for Spotify on Omarchy"
+      description: "Created with Omarchy Spotify"
     }, function(status, payload, error) {
       root.playlistActionBusy = false
       if (error) { root.fail(error); return }
@@ -1186,7 +1186,7 @@ Item {
       spotifyApi.request("POST", "/me/playlists", null, {
         name: String(playlist.name || "My playlist").slice(0, 100),
         "public": false,
-        description: "Your copy, created with Music for Spotify on Omarchy"
+        description: "Your copy, created with Omarchy Spotify"
       }, function(status, payload, createError) {
         if (expected !== root.dataSerial) return
         if (createError) { root.finishPlaylistConversion(createError); return }

@@ -62,6 +62,26 @@ On first launch:
 That is the whole setup. Playback on this computer starts only when needed and
 stops automatically after it has been idle.
 
+### Why setup may request administrator access
+
+The `omarchy plugin add` command only clones, validates, installs, and enables
+the plugin. It does not run setup hooks or privileged code.
+
+After you explicitly choose **Set up and continue**, Omarchy Spotify checks for
+the local `spotifyd` playback component. If it is missing, Polkit shows the
+system authorization prompt before the plugin runs this fixed command:
+
+```bash
+pkexec /usr/bin/pacman -S --needed --noconfirm spotifyd
+```
+
+The package name and command are not assembled from remote input, and the setup
+does not download or pipe a remote script into a shell. Everything after that
+runs without administrator privileges: the plugin writes a private config and
+a static systemd user unit under your user configuration directory. The unit is
+not enabled at login; Omarchy Spotify starts it only when local playback is
+needed and stops it again after the configured idle period.
+
 ## Everyday controls
 
 - Left-click the bar widget for now playing and quick controls.
@@ -110,7 +130,7 @@ Spotify Connect target all the time.
 
 ## Privacy and security
 
-Your Spotify password is entered only on Spotify's own page. Music for Spotify
+Your Spotify password is entered only on Spotify's own page. Omarchy Spotify
 never sees it.
 
 The saved Spotify session is stored in GNOME Keyring. Short-lived access data
@@ -160,7 +180,7 @@ For complete runtime cleanup, see the [technical notes](docs/TECHNICAL.md#comple
 - The local playback component is community-maintained and is not an official
   Spotify desktop client.
 
-Music for Spotify is an independent project and is not affiliated with Spotify.
+Omarchy Spotify is an independent project and is not affiliated with Spotify.
 Spotify is a trademark of Spotify AB.
 
 Technical architecture, development setup, and verification are documented in

@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.0.1 — 2026-08-13
+
+- Use Omarchy Spotify consistently as the product name.
+- Document the user-initiated, narrowly scoped playback setup and its exact
+  privileged package-install command.
 
 - Show active playback from remote Spotify Connect devices, including Sonos
   players omitted from Spotify's available-device response or reported without
