@@ -27,6 +27,7 @@ QT_QPA_PLATFORM=offscreen "$qml_test_runner" \
   -import "$source_root" \
   -o -,txt
 
+PYTHONDONTWRITEBYTECODE=1 python3 "$source_root/tests/test_connect_helper.py"
 "$source_root/tests/test-scripts.sh"
 
 if rg -n 'QtWebEngine|WebEngineView|WebView|playerctl|node_modules' \

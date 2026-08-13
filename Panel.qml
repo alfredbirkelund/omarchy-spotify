@@ -1513,12 +1513,14 @@ Item {
                   foreground: root.foreground
                   selected: root.service && root.service.shuffle
                   tooltipText: "Shuffle"
+                  enabled: root.service && root.service.playbackControllable
                   onClicked: if (root.service) root.service.setShuffle(!root.service.shuffle)
                 }
                 Button {
                   iconText: "󰒮"
                   foreground: root.foreground
                   tooltipText: "Previous"
+                  enabled: root.service && root.service.playbackControllable
                   onClicked: if (root.service) root.service.previous()
                 }
                 Button {
@@ -1526,12 +1528,14 @@ Item {
                   iconSize: Style.font.iconLarge
                   foreground: root.foreground
                   tooltipText: root.service && root.service.playing ? "Pause" : "Play"
+                  enabled: root.service && root.service.playbackControllable
                   onClicked: if (root.service) root.service.togglePlayback()
                 }
                 Button {
                   iconText: "󰒭"
                   foreground: root.foreground
                   tooltipText: "Next"
+                  enabled: root.service && root.service.playbackControllable
                   onClicked: if (root.service) root.service.next()
                 }
                 Button {
@@ -1539,6 +1543,7 @@ Item {
                   foreground: root.foreground
                   selected: root.service && root.service.repeatMode !== "off"
                   tooltipText: "Repeat: " + (root.service ? root.service.repeatMode : "off")
+                  enabled: root.service && root.service.playbackControllable
                   onClicked: if (root.service) root.service.cycleRepeat()
                 }
               }
@@ -1609,7 +1614,7 @@ Item {
                 PanelSlider {
                   width: Math.max(35, parent.width - Style.space(74))
                   anchors.verticalCenter: parent.verticalCenter
-                  enabled: root.service && root.service.hasPlayer
+                  enabled: root.service && root.service.volumeSupported
                   bar: root.panelBar
                   minimum: 0
                   maximum: 1
@@ -2688,7 +2693,8 @@ Item {
             HoverHandler { id: deviceHover }
             MouseArea {
               anchors.fill: parent
-              enabled: !deviceRow.modelData.restricted && root.service
+              enabled: (!deviceRow.modelData.restricted
+                || deviceRow.modelData.activationRequired) && root.service
                 && !root.service.deviceActivationBusy
               cursorShape: enabled ? Qt.PointingHandCursor : Qt.ForbiddenCursor
               onClicked: if (root.service) root.service.selectDevice(deviceRow.modelData.id, true)
@@ -2727,7 +2733,11 @@ Item {
                     + (deviceRow.modelData.description ? " · " + deviceRow.modelData.description : "")
                     + (deviceRow.modelData.local ? " · this computer" : "")
                     + (deviceRow.modelData.localDiscovery ? " · nearby" : "")
-                    + (deviceRow.modelData.restricted ? " · unavailable" : "")
+                    + (deviceRow.modelData.restricted
+                      ? (deviceRow.modelData.active
+                        ? (root.service && root.service.sonosControlAvailable
+                          ? " · local controls" : " · limited controls")
+                        : " · unavailable") : "")
                   color: Qt.darker(root.foreground, 1.4)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption

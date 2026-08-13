@@ -169,9 +169,9 @@ grep -q 'exec /usr/bin/spotifyd authenticate' \
 grep -q -- '--config-path "$config_root/omarchy-spotify/spotifyd.conf"' \
   "$source_root/scripts/spotifyd-auth.sh"
 grep -q -- '--oauth-port 8000' "$source_root/scripts/spotifyd-auth.sh"
-grep -q 'readonly property string clientId: "d420a117a32841c2b3474932e49fb54b"' \
+grep -q 'property string clientId: "d420a117a32841c2b3474932e49fb54b"' \
   "$source_root/AuthManager.qml"
-grep -q 'readonly property string redirectUri: "http://127.0.0.1:8989/login"' \
+grep -q 'readonly property string redirectUri: "http://127.0.0.1:"' \
   "$source_root/AuthManager.qml"
 ! grep -q '"clientId"' "$source_root/manifest.json"
 ! grep -q '"oauthPort"' "$source_root/manifest.json"

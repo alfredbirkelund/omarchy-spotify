@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 """Discover and activate genuine Spotify Connect receivers on the local LAN.
 
-The activation command re-wraps spotifyd's owner-only reusable credential for
-the receiver's ZeroConf public key. Credentials and derived keys never leave
-this process; stdout contains device metadata or a status result only.
+Activation uses either spotifyd's owner-only reusable credential or a
+short-lived, receiver-scoped authorization code, according to the receiver's
+advertised token type. Credentials and derived keys never leave this process;
+stdout contains device metadata or a status result only.
 """
 
 from __future__ import annotations
@@ -21,7 +22,10 @@ import stat
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +44,14 @@ DH_PRIME = int.from_bytes(bytes([
     0xA6, 0x3A, 0x36, 0x20, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 ]), "big")
 FIXED_IV = bytes([253, 81, 222, 19, 70, 203, 45, 89, 141, 68, 210, 240, 93, 20, 76, 30])
+SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
+SPOTIFY_DESKTOP_CLIENT_ID = "65b708073fc0480ea92a077233ca87bd"
+SONOS_CLIENT_ID = "9b377073ea334637b1406f329ce005de"
+SONOS_AVTRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
+SONOS_RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1"
+SONOS_PLAY_MODES = {
+    "NORMAL", "REPEAT_ALL", "REPEAT_ONE", "SHUFFLE", "SHUFFLE_NOREPEAT"
+}
 
 
 class ConnectError(Exception):
@@ -102,6 +114,66 @@ def request_json(
         return result
     except (OSError, TimeoutError, http.client.HTTPException) as error:
         raise ConnectError("receiver did not respond") from error
+    finally:
+        connection.close()
+
+
+def request_sonos_soap(
+    receiver: dict[str, Any],
+    service: str,
+    control_path: str,
+    action: str,
+    arguments: dict[str, str],
+) -> None:
+    """Issue one fixed, locally scoped Sonos UPnP control request."""
+    address = safe_address(str(receiver.get("address") or ""))
+    try:
+        port = int(receiver.get("port", 0))
+    except (TypeError, ValueError) as error:
+        raise ConnectError("invalid receiver port") from error
+    if port < 1 or port > 65535:
+        raise ConnectError("invalid receiver port")
+
+    soap_namespace = "http://schemas.xmlsoap.org/soap/envelope/"
+    envelope = ElementTree.Element(
+        f"{{{soap_namespace}}}Envelope",
+        {f"{{{soap_namespace}}}encodingStyle": "http://schemas.xmlsoap.org/soap/encoding/"},
+    )
+    body = ElementTree.SubElement(envelope, f"{{{soap_namespace}}}Body")
+    action_node = ElementTree.SubElement(body, f"{{{service}}}{action}")
+    for key, value in arguments.items():
+        ElementTree.SubElement(action_node, key).text = value
+    payload = ElementTree.tostring(envelope, encoding="utf-8", xml_declaration=True)
+
+    connection = http.client.HTTPConnection(address, port, timeout=5)
+    try:
+        connection.request(
+            "POST",
+            endpoint_path(control_path),
+            body=payload,
+            headers={
+                "Connection": "close",
+                "Content-Type": 'text/xml; charset="utf-8"',
+                "Content-Length": str(len(payload)),
+                "SOAPACTION": f'"{service}#{action}"',
+            },
+        )
+        response = connection.getresponse()
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise ConnectError("receiver response is too large")
+        if response.status < 200 or response.status >= 300:
+            raise ConnectError("receiver rejected playback control")
+        try:
+            root = ElementTree.fromstring(raw)
+        except ElementTree.ParseError as error:
+            raise ConnectError("receiver returned an invalid response") from error
+        if any(node.tag.rsplit("}", 1)[-1] == "Fault" for node in root.iter()):
+            raise ConnectError("receiver rejected playback control")
+    except ConnectError:
+        raise
+    except (OSError, TimeoutError, http.client.HTTPException) as error:
+        raise ConnectError("receiver did not respond to playback control") from error
     finally:
         connection.close()
 
@@ -176,6 +248,8 @@ def discover_receivers() -> list[dict[str, Any]]:
             "model": model,
             "description": " · ".join(value for value in (brand, model) if value),
             "activeUser": bool(str(info.get("activeUser") or "").strip()),
+            "tokenType": str(info.get("tokenType") or "default").strip().lower()[:40],
+            "clientId": str(info.get("clientID") or "").strip()[:80],
             "localDiscovery": True,
             "activationRequired": True,
             "address": address,
@@ -185,6 +259,42 @@ def discover_receivers() -> list[dict[str, Any]]:
             "publicKey": str(info.get("publicKey") or ""),
         }
     return sorted(discovered.values(), key=lambda item: item["name"].casefold())
+
+
+def find_receiver(device_id: str, attempts: int = 5) -> dict[str, Any] | None:
+    """Resolve a receiver, tolerating the brief sleep after a playback transfer."""
+    for attempt in range(max(1, attempts)):
+        try:
+            receiver = next(
+                (item for item in discover_receivers() if item["id"] == device_id),
+                None,
+            )
+            if receiver is not None:
+                return receiver
+        except ConnectError:
+            pass
+        if attempt + 1 < attempts:
+            time.sleep(0.4)
+    return None
+
+
+def request_json_with_retry(
+    address: str,
+    port: int,
+    path: str,
+    method: str = "GET",
+    fields: dict[str, str] | None = None,
+    attempts: int = 5,
+) -> dict[str, Any]:
+    last_error: ConnectError | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            return request_json(address, port, path, method, fields)
+        except ConnectError as error:
+            last_error = error
+            if attempt + 1 < attempts:
+                time.sleep(0.4)
+    raise last_error or ConnectError("receiver did not respond")
 
 
 def credentials_path() -> Path:
@@ -347,10 +457,63 @@ def build_login_blob(
     return signed_blob, client_key
 
 
-def activate_receiver(device_id: str) -> dict[str, Any]:
+def exchange_authorization_code(access_token: str, receiver: dict[str, Any]) -> str:
+    """Exchange a desktop streaming token for a receiver-scoped login code."""
+    token = str(access_token or "").strip()
+    if len(token) < 20 or len(token) > 4096 or any(char.isspace() for char in token):
+        raise ConnectError("speaker authorization is unavailable")
+
+    brand = str(receiver.get("brand") or "").strip().casefold()
+    audience = SONOS_CLIENT_ID if brand == "sonos" else str(receiver.get("clientId") or "")
+    if not re.fullmatch(r"[A-Fa-f0-9]{16,80}", audience):
+        raise ConnectError("receiver authorization is unsupported")
+
+    fields = {
+        "audience": audience,
+        "client_id": SPOTIFY_DESKTOP_CLIENT_ID,
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "requested_token_type": "urn:spotify:params:oauth:authorization_code",
+        "resource": "urn:spotify:resources:connect",
+        "scope": "streaming",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "subject_token": token,
+    }
+    request = urllib.request.Request(
+        SPOTIFY_TOKEN_URL,
+        data=urllib.parse.urlencode(fields).encode("utf-8"),
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "Spotify/124300420 Win32_x86_64/0 (PC desktop)",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+            status_code = response.status
+    except urllib.error.HTTPError as error:
+        raw = error.read(MAX_RESPONSE_BYTES + 1)
+        status_code = error.code
+    except (OSError, TimeoutError, urllib.error.URLError) as error:
+        raise ConnectError("Spotify receiver authorization did not respond") from error
+
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ConnectError("Spotify receiver authorization returned too much data")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ConnectError("Spotify receiver authorization returned an invalid response") from error
+    result = str(payload.get("access_token") or "") if isinstance(payload, dict) else ""
+    if status_code != 200 or len(result) < 20 or len(result) > 4096 \
+            or any(char.isspace() for char in result):
+        raise ConnectError("Spotify could not authorize this receiver")
+    return result
+
+
+def activate_receiver(device_id: str, access_token: str = "") -> dict[str, Any]:
     if not DEVICE_ID_RE.fullmatch(device_id):
         raise ConnectError("invalid receiver id")
-    receiver = next((item for item in discover_receivers() if item["id"] == device_id), None)
+    receiver = find_receiver(device_id)
     if receiver is None:
         raise ConnectError("receiver is no longer discoverable")
     username, auth_type, auth_data = load_credentials()
@@ -358,30 +521,36 @@ def activate_receiver(device_id: str) -> dict[str, Any]:
     info_query = urllib.parse.urlencode({
         "action": "getInfo", "version": receiver["serviceVersion"]
     })
-    info = request_json(
+    info = request_json_with_retry(
         receiver["address"], receiver["port"], f'{receiver["cpath"]}?{info_query}'
     )
     origin_name = "Omarchy Spotify"
+    token_type = str(info.get("tokenType") or receiver.get("tokenType") or "default").lower()
     fields: dict[str, str] = {}
     attempts = 0
     while attempts < 7:
         attempts += 1
-        public_key = str(info.get("publicKey") or "")
-        blob, client_key = build_login_blob(
-            username, auth_type, auth_data, str(info.get("deviceID") or device_id), public_key
-        )
+        if token_type == "authorization_code":
+            blob = exchange_authorization_code(access_token, receiver)
+            client_key = ""
+        else:
+            public_key = str(info.get("publicKey") or "")
+            blob, client_key = build_login_blob(
+                username, auth_type, auth_data,
+                str(info.get("deviceID") or device_id), public_key
+            )
         fields = {
             "action": "addUser",
             "version": str(receiver["serviceVersion"]),
-            "tokenType": "default",
+            "tokenType": token_type if token_type == "authorization_code" else "default",
             "clientKey": client_key,
-            "loginId": "",
+            "loginId": username,
             "userName": username,
             "blob": blob,
             "deviceName": origin_name,
             "deviceId": hashlib.sha1(origin_name.encode("utf-8")).hexdigest(),
         }
-        response = request_json(
+        response = request_json_with_retry(
             receiver["address"], receiver["port"], receiver["cpath"], "POST", fields
         )
         status_value = int(response.get("status", 0))
@@ -390,7 +559,7 @@ def activate_receiver(device_id: str) -> dict[str, Any]:
             return {"id": device_id, "status": "activated"}
         if status_value == 203 and status_string == "ERROR-INVALID-PUBLICKEY":
             time.sleep(0.25)
-            info = request_json(
+            info = request_json_with_retry(
                 receiver["address"], receiver["port"], f'{receiver["cpath"]}?{info_query}'
             )
             continue
@@ -399,6 +568,58 @@ def activate_receiver(device_id: str) -> dict[str, Any]:
             continue
         raise ConnectError(f"receiver rejected activation ({status_value or 'unknown'})")
     raise ConnectError("receiver activation timed out")
+
+
+def control_receiver(device_id: str, action: str, value: str = "") -> dict[str, Any]:
+    if not DEVICE_ID_RE.fullmatch(device_id):
+        raise ConnectError("invalid receiver id")
+    receiver = find_receiver(device_id, attempts=3)
+    if receiver is None:
+        raise ConnectError("receiver is no longer discoverable")
+    if str(receiver.get("brand") or "").strip().casefold() != "sonos":
+        raise ConnectError("local playback control is unsupported for this receiver")
+
+    command = str(action or "").strip().lower()
+    raw_value = str(value or "").strip()
+    service = SONOS_AVTRANSPORT
+    path = "/MediaRenderer/AVTransport/Control"
+    soap_action = ""
+    arguments: dict[str, str] = {"InstanceID": "0"}
+    if command == "play":
+        soap_action = "Play"
+        arguments["Speed"] = "1"
+    elif command == "pause":
+        soap_action = "Pause"
+    elif command == "next":
+        soap_action = "Next"
+    elif command == "previous":
+        soap_action = "Previous"
+    elif command == "seek":
+        if not raw_value.isdigit() or int(raw_value) > 86_400:
+            raise ConnectError("invalid seek position")
+        seconds = int(raw_value)
+        soap_action = "Seek"
+        arguments["Unit"] = "REL_TIME"
+        arguments["Target"] = f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+    elif command == "mode":
+        mode = raw_value.upper()
+        if mode not in SONOS_PLAY_MODES:
+            raise ConnectError("invalid playback mode")
+        soap_action = "SetPlayMode"
+        arguments["NewPlayMode"] = mode
+    elif command == "volume":
+        if not raw_value.isdigit() or int(raw_value) > 100:
+            raise ConnectError("invalid volume")
+        service = SONOS_RENDERING_CONTROL
+        path = "/MediaRenderer/RenderingControl/Control"
+        soap_action = "SetVolume"
+        arguments["Channel"] = "Master"
+        arguments["DesiredVolume"] = str(int(raw_value))
+    else:
+        raise ConnectError("unsupported playback control")
+
+    request_sonos_soap(receiver, service, path, soap_action, arguments)
+    return {"id": device_id, "status": "controlled", "action": command}
 
 
 def self_test() -> None:
@@ -424,14 +645,21 @@ def main() -> int:
             devices = discover_receivers()
             for item in devices:
                 for private_field in (
-                    "address", "port", "cpath", "serviceVersion", "publicKey"
+                    "address", "port", "cpath", "serviceVersion", "publicKey", "clientId"
                 ):
                     item.pop(private_field, None)
             emit({"schemaVersion": 1, "devices": devices})
             return 0
         if command == "activate":
             device_id = sys.stdin.readline(256).strip()
-            emit(activate_receiver(device_id))
+            access_token = sys.stdin.readline(4097).strip()
+            emit(activate_receiver(device_id, access_token))
+            return 0
+        if command == "control":
+            device_id = sys.stdin.readline(256).strip()
+            action = sys.stdin.readline(65).strip()
+            value = sys.stdin.readline(129).strip()
+            emit(control_receiver(device_id, action, value))
             return 0
         if command == "self-test":
             self_test()

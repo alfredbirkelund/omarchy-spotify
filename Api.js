@@ -129,6 +129,58 @@ function isLocalPlaybackDevice(device, configuredName, runtimeName, knownId) {
   return !!name && (name === configured || (!!runtime && name === runtime))
 }
 
+// Spotify may expose an active hardware player through /me/player while
+// omitting it from /me/player/devices (Sonos is a common example). Device ids
+// are authoritative when both endpoints provide one; otherwise fall back to
+// the user-visible name and device type.
+function playbackDevicesMatch(left, right) {
+  var first = left || {}
+  var second = right || {}
+  var firstId = String(first.id || "")
+  var secondId = String(second.id || "")
+  if (firstId && secondId) return firstId === secondId
+  var firstName = String(first.name || first.sourceName || "").trim().toLowerCase()
+  var secondName = String(second.name || second.sourceName || "").trim().toLowerCase()
+  if (!firstName || firstName !== secondName) return false
+  var firstType = String(first.type || "").trim().toLowerCase()
+  var secondType = String(second.type || "").trim().toLowerCase()
+  return !firstType || !secondType || firstType === secondType
+}
+
+function normalizePlaybackState(value, imageWidth) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  var source = value
+  var rawDevice = source.device || null
+  var device = rawDevice && typeof rawDevice === "object" ? {
+    id: String(rawDevice.id || ""),
+    name: String(rawDevice.name || "Spotify device"),
+    type: String(rawDevice.type || "unknown"),
+    active: rawDevice.is_active === true,
+    restricted: rawDevice.is_restricted === true,
+    volumePercent: Math.max(0, Math.min(100,
+      Number(rawDevice.volume_percent) || 0)),
+    supportsVolume: rawDevice.supports_volume === true
+  } : null
+  var item = source.item && typeof source.item === "object"
+    ? normalizeTrack(source.item, imageWidth || 192) : null
+  if (!device && !item) return null
+  return {
+    device: device,
+    item: item,
+    playing: source.is_playing === true,
+    progressSeconds: Math.max(0, Number(source.progress_ms) || 0) / 1000,
+    receivedAt: Date.now(),
+    repeatMode: ["off", "track", "context"].indexOf(String(source.repeat_state)) >= 0
+      ? String(source.repeat_state) : "off",
+    shuffle: source.shuffle_state === true,
+    contextUri: source.context && source.context.uri
+      ? String(source.context.uri) : "",
+    disallows: source.actions && source.actions.disallows
+      && typeof source.actions.disallows === "object"
+      ? source.actions.disallows : ({})
+  }
+}
+
 function imageFor(images, targetWidth) {
   if (!Array.isArray(images) || images.length === 0) return ""
   var target = Math.max(1, Number(targetWidth) || 128)

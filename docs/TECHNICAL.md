@@ -10,10 +10,13 @@ Quickshell process. It provides a shared service, a bar widget, and a lazy-loade
 panel. There is no embedded website, browser engine, second shell process, or
 resident helper process.
 
-Playback state and ordinary controls use MPRIS. Spotify data and user actions use
-the Spotify Web API. Local audio uses `spotifyd` 0.4.2 or newer, supervised by a
-static systemd user unit that is never enabled at login. The app starts it only
-when playback needs this computer and stops it after the configured idle period.
+Local playback state and ordinary controls use MPRIS. Active playback on another
+Spotify Connect device comes from the Spotify Web API, refreshed while a UI is
+visible and at a slower rate while that device is playing. Spotify data and user
+actions also use the Web API. Local audio uses `spotifyd` 0.4.2 or newer,
+supervised by a static systemd user unit that is never enabled at login. The app
+starts it only when playback needs this computer and stops it after the
+configured idle period.
 
 ## Runtime requirements
 
@@ -34,12 +37,15 @@ private config and static user unit without privilege.
 Web API access uses Spotify's Authorization Code with PKCE flow and the public
 application identity also used by `spotify-player` and ncspot. The fixed callback
 is `http://127.0.0.1:8989/login`. `spotifyd` performs its independent browser
-authorization on loopback port `8000`.
+authorization on loopback port `8000`. Receivers that advertise the
+`authorization_code` token type use a separate, on-demand, streaming-only PKCE
+grant on port `8990`.
 
-No client secret or Spotify password enters the plugin. Web API refresh tokens
-are written to GNOME Keyring over stdin. Short-lived access tokens and PKCE
-values remain in the shell process. OAuth state is checked, callback listeners
-bind explicitly to IPv4 loopback, API URLs are restricted to
+No client secret or Spotify password enters the plugin. OAuth refresh tokens
+are written to GNOME Keyring over stdin and separated by client identity.
+Short-lived access tokens and PKCE values remain in the shell process. OAuth
+state is checked, callback listeners bind explicitly to IPv4 loopback, API URLs
+are restricted to
 `https://api.spotify.com/v1`, and sensitive credential patterns are redacted
 before an error can reach the interface.
 
@@ -51,11 +57,28 @@ It does not request profile or email permissions.
 
 The app prefers its own local device unless the user explicitly chooses another
 Spotify Connect device. It can perform a one-shot `_spotify-connect._tcp` lookup
-for nearby receivers omitted from Spotify's device response. The helper
-re-encrypts `spotifyd`'s owner-only reusable credential for the receiver's
-ephemeral ZeroConf key, waits for Spotify to report the genuine device, and then
-transfers playback through Spotify. It never asks for or stores the user's
-password.
+for nearby receivers omitted from Spotify's device response. For ordinary
+receivers, the helper re-encrypts `spotifyd`'s owner-only reusable credential for
+the receiver's ephemeral ZeroConf key. For authorization-code receivers such as
+Sonos, it exchanges the short-lived streaming token for a receiver-scoped code
+and sends that code to the receiver. It then waits for Spotify to report the
+genuine device before transferring playback when needed. It never asks for or
+stores the user's password.
+
+Once a restricted Sonos is active, the Web API rejects its player commands.
+The app therefore resolves that same receiver on the LAN and sends fixed UPnP
+AVTransport or RenderingControl actions for play, pause, previous, next, seek,
+shuffle/repeat mode, and volume. Targets still come only from validated local
+Spotify Connect discovery. When playback has moved elsewhere, a local Play wake
+is attempted first; the OAuth activation flow remains the fallback for a Sonos
+that has actually lost its Spotify session. Receiver discovery and requests are
+retried briefly because Sonos can sleep its endpoint during a handoff.
+
+The current-playback response is also merged into the device list. This matters
+for models that Spotify omits from `/me/player/devices`, or whose active device
+id is null. A matching nearby receiver is recognized by name and type in that
+case. Restricted devices remain visible with their current item. Controls stay
+disabled unless the app has a supported local-control path such as Sonos.
 
 Spotify changed development-mode endpoints and fields in 2026. This client uses
 `/playlists/{id}/items`, `/me/library`, and search limits of 10. Some non-owned

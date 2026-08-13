@@ -17,14 +17,15 @@ Item {
   height: 0
 
   required property string pluginDir
-  // spotify-player and ncspot use this public application identity for their
-  // Web API login. Its registered loopback redirect lets this personal client
-  // offer ordinary browser sign-in without asking the user to create a
-  // developer account. Playback still receives its own spotifyd OAuth grant.
-  readonly property string clientId: "d420a117a32841c2b3474932e49fb54b"
-  readonly property int oauthPort: 8989
-  readonly property string callbackPath: "/login"
-  readonly property string redirectUri: "http://127.0.0.1:8989/login"
+  // spotify-player and ncspot use the defaults below for Web API login.
+  // A second internal instance may override them for the streaming-only grant
+  // required by authorization-code Spotify Connect receivers such as Sonos.
+  property string clientId: "d420a117a32841c2b3474932e49fb54b"
+  property int oauthPort: 8989
+  property string callbackPath: "/login"
+  property var scopes: Api.SCOPES
+  readonly property string redirectUri: "http://127.0.0.1:"
+    + OAuth.normalizedPort(oauthPort) + callbackPath
 
   property string accessToken: ""
   property double accessTokenExpiresAt: 0
@@ -237,7 +238,7 @@ Item {
       code_challenge_method: "S256",
       redirect_uri: redirectUri,
       response_type: "code",
-      scope: Api.SCOPES.join(" "),
+      scope: (Array.isArray(scopes) ? scopes : Api.SCOPES).join(" "),
       state: oauthState,
       show_dialog: "true"
     })

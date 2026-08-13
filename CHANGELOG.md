@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Show active playback from remote Spotify Connect devices, including Sonos
+  players omitted from Spotify's available-device response or reported without
+  a device id.
+- Activate Sonos and other authorization-code receivers with their advertised
+  OAuth flow instead of sending an incompatible reusable-credential blob.
+- Mark restricted active devices clearly and avoid sending controls that the
+  Spotify Web API will reject.
+- Control locally discovered Sonos playback, seeking, modes, and volume over
+  its fixed LAN endpoints when Spotify marks the device restricted.
+- Reconnect to a previously authorized Sonos by waking its retained session,
+  with transient receiver retries and OAuth activation as fallback.
+
 ## 1.0.0 — 2026-08-12
 
 First public release for Omarchy 4.

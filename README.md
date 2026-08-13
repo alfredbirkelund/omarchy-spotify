@@ -46,7 +46,8 @@ in the app.
 - Play on this computer or switch to another Spotify Connect device.
 - Control shuffle, repeat, position, volume, and a flexible sleep timer.
 - Match every Omarchy theme automatically, including light themes.
-- Stay lightweight: no embedded browser, Electron app, or background polling.
+- Stay lightweight: no embedded browser, Electron app, or always-on background
+  worker.
 
 ## First-run setup
 
@@ -115,7 +116,7 @@ never sees it.
 The saved Spotify session is stored in GNOME Keyring. Short-lived access data
 stays in the Omarchy shell process, sign-in listens only on this computer, and
 sensitive values are removed from any error shown in the app. Logging out stops
-local playback and clears both saved Spotify sessions.
+local playback and clears all saved Spotify sessions.
 
 Like every Omarchy shell plugin, this code runs inside `omarchy-shell` rather
 than a sandbox. Install plugins only from sources you trust.
@@ -130,6 +131,10 @@ than a sandbox. Install plugins only from sources you trust.
   try again. Another local sign-in already in progress can block the return.
 - **A speaker is missing:** make sure it is awake and on the same network, then
   open **Devices** and choose **Refresh**.
+- **A Sonos speaker will not connect:** choose it while it is awake. The app
+  first wakes its existing session and asks for an extra Spotify approval only
+  when the speaker has actually signed out. If it is already playing, the app
+  recognizes its current track without reconnecting it.
 - **Spotify reports a temporary limit:** wait for the time shown in the app,
   then try again.
 
@@ -148,6 +153,10 @@ For complete runtime cleanup, see the [technical notes](docs/TECHNICAL.md#comple
   still be played as a playlist. Spotify must expose the contents before the
   app can turn one into your own copy.
 - Speaker availability is ultimately controlled by Spotify and the device.
+- Spotify marks some players, including Sonos in some states, as restricted.
+  For a locally discovered Sonos, the app uses its LAN controls for transport,
+  seeking, playback mode, and volume. Other restricted-device actions remain
+  subject to Spotify and the speaker.
 - The local playback component is community-maintained and is not an official
   Spotify desktop client.
 

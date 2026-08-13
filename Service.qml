@@ -4,9 +4,9 @@ import Quickshell.Services.Mpris
 
 import "Api.js" as Api
 
-// Shared state for the bar widget and the lazy full panel. There is no
-// heartbeat: MPRIS supplies playback changes, Spotify requests happen only
-// after a user action, and the idle timer runs only while spotifyd is active.
+// Shared state for the bar widget and the lazy full panel. MPRIS supplies local
+// playback changes. External Spotify Connect playback is refreshed only while
+// a UI is visible (or while a known remote item is actively playing).
 Item {
   id: root
 
@@ -70,26 +70,86 @@ Item {
 
   readonly property var mprisPlayers: Mpris.players ? Mpris.players.values : []
   readonly property var activePlayer: spotifydPlayer()
-  readonly property bool hasPlayer: activePlayer !== null
-  readonly property bool hasMedia: hasPlayer && !!(activePlayer.trackTitle || activePlayer.trackArtist)
-  readonly property bool playing: hasPlayer && activePlayer.isPlaying
+  readonly property bool hasLocalPlayer: activePlayer !== null
+  property var remotePlayback: null
+  property bool remotePlaybackLoading: false
+  property var remotePlaybackWaiters: []
+  property int playbackPositionTick: 0
+  property string remoteControlDiscoveryKey: ""
+  readonly property var remoteTrack: remotePlayback ? remotePlayback.item : null
+  readonly property var remoteDevice: remotePlayback ? remotePlayback.device : null
+  readonly property bool remotePlaybackIsLocal: !!remoteDevice
+    && Api.isLocalPlaybackDevice(remoteDevice, deviceName,
+      localRuntimeDeviceName, localDeviceId)
+  readonly property bool useRemotePlayback: !!remotePlayback
+    && !!remoteDevice && remoteDevice.active === true
+    && !remotePlaybackIsLocal
+    && !(hasLocalPlayer && activePlayer.isPlaying)
+  readonly property bool hasPlayer: useRemotePlayback || hasLocalPlayer
+  readonly property bool hasMedia: useRemotePlayback
+    ? !!remoteTrack
+    : (hasLocalPlayer && !!(activePlayer.trackTitle || activePlayer.trackArtist))
+  readonly property bool playing: useRemotePlayback
+    ? remotePlayback.playing === true
+    : (hasLocalPlayer && activePlayer.isPlaying)
   readonly property int playbackState: hasPlayer
-    ? activePlayer.playbackState : MprisPlaybackState.Stopped
-  readonly property string title: hasPlayer ? String(activePlayer.trackTitle || "") : ""
-  readonly property string artist: hasPlayer ? String(activePlayer.trackArtist || "") : ""
-  readonly property string album: hasPlayer ? String(activePlayer.trackAlbum || "") : ""
-  readonly property string artUrl: hasPlayer ? String(activePlayer.trackArtUrl || "") : ""
-  readonly property real positionSeconds: hasPlayer && activePlayer.positionSupported
-    ? Math.max(0, Number(activePlayer.position) || 0) : 0
-  readonly property real lengthSeconds: hasPlayer && activePlayer.lengthSupported
-    ? Math.max(0, Number(activePlayer.length) || 0) : 0
-  readonly property real volume: hasPlayer && activePlayer.volumeSupported
-    ? Math.max(0, Math.min(1, Number(activePlayer.volume) || 0)) : 0
-  readonly property bool shuffle: hasPlayer && activePlayer.shuffleSupported
-    ? activePlayer.shuffle === true : false
-  readonly property string repeatMode: mprisRepeatMode()
-  readonly property string currentUri: metadataString("xesam:url")
-  readonly property string currentExternalUrl: spotifyWebUrl(currentUri)
+    ? (useRemotePlayback
+      ? (remotePlayback.playing ? MprisPlaybackState.Playing : MprisPlaybackState.Paused)
+      : activePlayer.playbackState)
+    : MprisPlaybackState.Stopped
+  readonly property string title: useRemotePlayback && remoteTrack
+    ? String(remoteTrack.name || "")
+    : (hasLocalPlayer ? String(activePlayer.trackTitle || "") : "")
+  readonly property string artist: useRemotePlayback && remoteTrack
+    ? String(remoteTrack.subtitle || "")
+    : (hasLocalPlayer ? String(activePlayer.trackArtist || "") : "")
+  readonly property string album: useRemotePlayback && remoteTrack
+    ? String(remoteTrack.album || "")
+    : (hasLocalPlayer ? String(activePlayer.trackAlbum || "") : "")
+  readonly property string artUrl: useRemotePlayback && remoteTrack
+    ? String(remoteTrack.imageUrl || "")
+    : (hasLocalPlayer ? String(activePlayer.trackArtUrl || "") : "")
+  readonly property real positionSeconds: {
+    playbackPositionTick
+    if (!useRemotePlayback) return hasLocalPlayer && activePlayer.positionSupported
+      ? Math.max(0, Number(activePlayer.position) || 0) : 0
+    var value = Math.max(0, Number(remotePlayback.progressSeconds) || 0)
+    if (remotePlayback.playing)
+      value += Math.max(0, Date.now() - Number(remotePlayback.receivedAt || Date.now())) / 1000
+    var maximum = remoteTrack ? Math.max(0, Number(remoteTrack.durationMs) || 0) / 1000 : 0
+    return maximum > 0 ? Math.min(maximum, value) : value
+  }
+  readonly property real lengthSeconds: useRemotePlayback && remoteTrack
+    ? Math.max(0, Number(remoteTrack.durationMs) || 0) / 1000
+    : (hasLocalPlayer && activePlayer.lengthSupported
+      ? Math.max(0, Number(activePlayer.length) || 0) : 0)
+  readonly property real volume: useRemotePlayback && remoteDevice
+    ? Math.max(0, Math.min(1, Number(remoteDevice.volumePercent) || 0) / 100)
+    : (hasLocalPlayer && activePlayer.volumeSupported
+      ? Math.max(0, Math.min(1, Number(activePlayer.volume) || 0)) : 0)
+  readonly property bool shuffle: useRemotePlayback
+    ? remotePlayback.shuffle === true
+    : (hasLocalPlayer && activePlayer.shuffleSupported
+      ? activePlayer.shuffle === true : false)
+  readonly property string repeatMode: useRemotePlayback
+    ? String(remotePlayback.repeatMode || "off") : mprisRepeatMode()
+  readonly property string currentUri: useRemotePlayback && remoteTrack
+    ? String(remoteTrack.uri || "") : metadataString("xesam:url")
+  readonly property string currentExternalUrl: useRemotePlayback && remoteTrack
+    ? String(remoteTrack.externalUrl || spotifyWebUrl(currentUri)) : spotifyWebUrl(currentUri)
+  readonly property bool playbackRestricted: useRemotePlayback
+    && remoteDevice && remoteDevice.restricted === true
+  readonly property var sonosControlDevice: findSonosControlDevice()
+  readonly property bool sonosControlAvailable: useRemotePlayback
+    && playbackRestricted && !!sonosControlDevice
+  readonly property bool playbackControllable: hasPlayer
+    && (!playbackRestricted || sonosControlAvailable)
+  readonly property bool volumeSupported: useRemotePlayback
+    ? !!remoteDevice && remoteDevice.supportsVolume === true
+      && (!playbackRestricted || sonosControlAvailable)
+    : (hasLocalPlayer && activePlayer.volumeSupported)
+  readonly property string playbackDeviceName: useRemotePlayback && remoteDevice
+    ? String(remoteDevice.name || "") : (hasLocalPlayer ? deviceName : "")
 
   property var playlists: []
   property string playlistsNext: ""
@@ -209,8 +269,11 @@ Item {
   property bool loginFlowActive: false
   property string pendingConnectDeviceId: ""
   property int connectActivationAttempts: 0
+  property bool pendingConnectWakeTried: false
 
   readonly property bool deviceActivationBusy: spotifyConnectManager.activating
+    || (!!pendingConnectDeviceId && spotifyConnectManager.controlling)
+    || connectAuthManager.loginBusy || connectAuthManager.sessionBusy
 
   readonly property int cacheLimit: 200
 
@@ -372,7 +435,7 @@ Item {
   }
 
   function mprisRepeatMode() {
-    if (!hasPlayer || !activePlayer.loopSupported) return "off"
+    if (!hasLocalPlayer || !activePlayer.loopSupported) return "off"
     if (activePlayer.loopState === MprisLoopState.Track) return "track"
     if (activePlayer.loopState === MprisLoopState.Playlist) return "context"
     return "off"
@@ -407,11 +470,78 @@ Item {
       if (oldKey !== name && visibleSurfaces[oldKey]) next[oldKey] = true
     if (value) next[name] = true
     visibleSurfaces = next
-    if (value) noteActivity()
+    if (value) {
+      noteActivity()
+      if (authManager.loggedIn || authManager.tokenIsFresh()) loadPlaybackState()
+    }
   }
 
   function refreshPosition() {
-    if (activePlayer && activePlayer.positionSupported) activePlayer.positionChanged()
+    if (!useRemotePlayback && activePlayer && activePlayer.positionSupported)
+      activePlayer.positionChanged()
+    else playbackPositionTick++
+  }
+
+  function finishRemotePlaybackWaiters(ok) {
+    var pending = remotePlaybackWaiters.slice()
+    remotePlaybackWaiters = []
+    for (var i = 0; i < pending.length; i++) {
+      try { pending[i](ok === true) }
+      catch (e) { /* callers own callback errors */ }
+    }
+  }
+
+  function applyPlaybackState(payload) {
+    var state = Api.normalizePlaybackState(payload, 192)
+    if (state && state.device) {
+      var device = state.device
+      device.sourceName = device.name
+      device.local = Api.isLocalPlaybackDevice(device, deviceName,
+        localRuntimeDeviceName, localDeviceId)
+      if (device.local && device.id) {
+        localDeviceId = device.id
+        localRuntimeDeviceName = device.name
+      }
+    }
+    remotePlayback = state
+    var discoveryKey = state && state.device && state.device.active
+        && state.device.restricted && String(state.device.type).toLowerCase() === "speaker"
+      ? String(state.device.name).toLowerCase() + "|" + String(state.device.type).toLowerCase()
+      : ""
+    if (discoveryKey && discoveryKey !== remoteControlDiscoveryKey) {
+      remoteControlDiscoveryKey = discoveryKey
+      if (!findDiscoveredReceiver(state.device) && !spotifyConnectManager.loading)
+        spotifyConnectManager.refresh()
+    } else if (!discoveryKey) {
+      remoteControlDiscoveryKey = ""
+    }
+    if (state && state.device && state.device.active === true
+        && lastError === speakerAvailabilityError()) succeed("")
+    playbackPositionTick++
+    if (devicesLoaded || apiDevices.length
+        || (spotifyConnectManager.devices || []).length) mergeConnectDevices()
+  }
+
+  function loadPlaybackState(callback, reportError) {
+    if (typeof callback === "function") {
+      var waiters = remotePlaybackWaiters.slice()
+      waiters.push(callback)
+      remotePlaybackWaiters = waiters
+    }
+    if (remotePlaybackLoading) return
+    var expected = dataSerial
+    remotePlaybackLoading = true
+    spotifyApi.request("GET", "/me/player", { additional_types: "episode" }, null,
+      function(status, payload, error) {
+        root.remotePlaybackLoading = false
+        if (expected !== root.dataSerial) {
+          root.finishRemotePlaybackWaiters(false)
+          return
+        }
+        if (!error) root.applyPlaybackState(payload)
+        else if (reportError === true) root.fail(error)
+        root.finishRemotePlaybackWaiters(!error)
+      })
   }
 
   function apiAction(method, path, query, body, successText, callback) {
@@ -457,6 +587,7 @@ Item {
   }
 
   function refreshView(view) {
+    loadPlaybackState()
     openView(view, true)
   }
 
@@ -584,6 +715,7 @@ Item {
     activeView = normalizedView(view)
     authManager.withAccessToken(function(token, error) {
       if (token) {
+        root.loadPlaybackState()
         root.loadProfile()
         root.loadSidebarPlaylists()
         root.verifyRadioPlaybackContext()
@@ -1448,6 +1580,24 @@ Item {
       requestDiscoverPlaylistSearch(Api.DISCOVERY_SEARCHES[i], expectedData, expectedDiscover)
   }
 
+  function findDiscoveredReceiver(playbackDevice) {
+    var target = playbackDevice || null
+    if (!target) return null
+    var receivers = spotifyConnectManager.devices || []
+    for (var i = 0; i < receivers.length; i++) {
+      var receiver = receivers[i]
+      if (receiver && receiver.id && Api.playbackDevicesMatch(receiver, target))
+        return receiver
+    }
+    return null
+  }
+
+  function findSonosControlDevice() {
+    var receiver = findDiscoveredReceiver(remoteDevice)
+    return receiver && String(receiver.brand || "").toLowerCase() === "sonos"
+      ? receiver : null
+  }
+
   function normalizeDevice(value) {
     var item = value || {}
     var rawName = String(item.name || "Spotify device")
@@ -1467,27 +1617,48 @@ Item {
       active: item.is_active === true,
       restricted: item.is_restricted === true,
       volumePercent: Math.max(0, Math.min(100, Number(item.volume_percent) || 0)),
+      supportsVolume: item.supports_volume === true,
+      brand: "",
+      model: "",
       local: local,
       localDiscovery: false,
       activationRequired: false,
+      tokenType: "default",
       description: ""
     }
   }
 
   function mergeConnectDevices() {
     var local = spotifyConnectManager.devices || []
+    var current = remoteDevice && remoteDevice.active === true ? remoteDevice : null
+    var currentMatched = false
     var localById = ({})
     for (var i = 0; i < local.length; i++) localById[String(local[i].id || "")] = local[i]
     var next = []
     var present = ({})
     for (var j = 0; j < apiDevices.length && next.length < 32; j++) {
-      var apiDevice = apiDevices[j]
+      var sourceDevice = apiDevices[j]
+      var apiDevice = ({})
+      for (var propertyName in sourceDevice) apiDevice[propertyName] = sourceDevice[propertyName]
       var discovered = localById[String(apiDevice.id || "")]
       if (discovered) {
         if (!apiDevice.local) apiDevice.name = discovered.name
         apiDevice.description = discovered.description
         apiDevice.localDiscovery = true
         apiDevice.activationRequired = false
+        apiDevice.tokenType = discovered.tokenType
+        apiDevice.brand = discovered.brand
+        apiDevice.model = discovered.model
+      }
+      if (current) {
+        var apiCurrentMatch = Api.playbackDevicesMatch(apiDevice, current)
+        apiDevice.active = apiCurrentMatch
+        if (apiCurrentMatch) {
+          currentMatched = true
+          apiDevice.restricted = current.restricted === true
+          apiDevice.volumePercent = current.volumePercent
+          apiDevice.supportsVolume = current.supportsVolume === true
+        }
       }
       present[String(apiDevice.id || "")] = true
       next.push(apiDevice)
@@ -1503,23 +1674,63 @@ Item {
         if (rawName === deviceName || !localRuntimeDeviceName)
           localRuntimeDeviceName = rawName
       }
+      var currentMatch = !!current && !currentMatched
+        && Api.playbackDevicesMatch(item, current)
+      if (currentMatch) currentMatched = true
       next.push({
         id: String(item.id || ""),
         name: isLocal ? deviceName : rawName,
         sourceName: rawName,
         type: String(item.type || "Speaker"),
-        active: false,
-        restricted: false,
-        volumePercent: 0,
+        active: currentMatch,
+        restricted: currentMatch && current.restricted === true,
+        volumePercent: currentMatch ? current.volumePercent : 0,
+        supportsVolume: currentMatch && current.supportsVolume === true,
         local: isLocal,
         localDiscovery: true,
-        activationRequired: true,
+        activationRequired: !currentMatch,
+        activeUser: item.activeUser === true || currentMatch,
+        tokenType: String(item.tokenType || "default"),
+        brand: String(item.brand || ""),
+        model: String(item.model || ""),
         description: String(item.description || "")
       })
     }
+    if (current && !currentMatched && next.length < 32) {
+      next.push({
+        id: String(current.id || ""),
+        name: String(current.name || "Active Spotify device"),
+        sourceName: String(current.name || "Active Spotify device"),
+        type: String(current.type || "unknown"),
+        active: true,
+        restricted: current.restricted === true,
+        volumePercent: current.volumePercent,
+        supportsVolume: current.supportsVolume === true,
+        local: remotePlaybackIsLocal,
+        localDiscovery: false,
+        activationRequired: false,
+        activeUser: true,
+        tokenType: "default",
+        brand: "",
+        model: "",
+        description: ""
+      })
+    }
     devices = next
-    var preferred = Api.preferredPlaybackDevice(next, selectedDeviceId,
-      selectedDeviceExplicit)
+    var explicitActiveReceiver = null
+    if (selectedDeviceExplicit) {
+      for (var selectedIndex = 0; selectedIndex < next.length; selectedIndex++) {
+        var selectedItem = next[selectedIndex]
+        if (selectedItem.id === selectedDeviceId && selectedItem.active
+            && selectedItem.localDiscovery
+            && String(selectedItem.brand || "").toLowerCase() === "sonos") {
+          explicitActiveReceiver = selectedItem
+          break
+        }
+      }
+    }
+    var preferred = explicitActiveReceiver || Api.preferredPlaybackDevice(
+      next, selectedDeviceId, selectedDeviceExplicit)
     if (selectedDeviceExplicit
         && (!preferred || preferred.id !== selectedDeviceId))
       selectedDeviceExplicit = false
@@ -1541,6 +1752,7 @@ Item {
     }
     var expected = serial === undefined ? dataSerial : serial
     devicesLoading = true
+    if (discoverLocal === true) loadPlaybackState()
     spotifyApi.request("GET", "/me/player/devices", null, null,
       function(status, payload, error) {
         if (expected !== root.dataSerial) {
@@ -1682,20 +1894,55 @@ Item {
       selectedDeviceExplicit)
   }
 
+  function beginConnectAuthorization(device) {
+    if (!device || !device.id || pendingConnectDeviceId !== device.id) return
+    pendingConnectWakeTried = false
+    if (device.tokenType === "authorization_code") {
+      statusMessage = "Checking permission for " + device.name
+      connectAuthManager.withAccessToken(function(token, error) {
+        if (root.pendingConnectDeviceId !== device.id) return
+        if (token) {
+          root.statusMessage = "Connecting to " + device.name
+          spotifyConnectManager.activate(device.id, token)
+        } else {
+          root.statusMessage = "Approve speaker access in your browser"
+          connectAuthManager.beginLogin()
+        }
+      })
+    } else {
+      statusMessage = "Connecting to " + device.name
+      spotifyConnectManager.activate(device.id, "")
+    }
+  }
+
   function selectDevice(id, transferPlayback) {
     var device = deviceForId(id)
-    if (!device || !device.id || device.restricted) return
+    if (!device) return
+    if (!device.id || (device.restricted && !device.activationRequired)) return
     selectedDeviceId = device.id
     selectedDeviceExplicit = true
     noteActivity()
     if (device.activationRequired) {
-      if (spotifyConnectManager.activating) return
+      if (deviceActivationBusy) return
       pendingConnectDeviceId = device.id
       connectActivationAttempts = 0
+      pendingConnectWakeTried = false
       statusClearTimer.stop()
-      statusMessage = "Connecting to " + device.name
       lastError = ""
-      spotifyConnectManager.activate(device.id)
+      if (String(device.brand || "").toLowerCase() === "sonos") {
+        pendingConnectWakeTried = true
+        statusMessage = "Waking " + device.name
+        spotifyConnectManager.control(device.id, "play", "")
+      } else {
+        beginConnectAuthorization(device)
+      }
+      return
+    }
+    if (device.active) {
+      selectedDeviceId = device.restricted ? "" : String(device.id || "")
+      selectedDeviceExplicit = false
+      succeed("Already playing on " + device.name)
+      loadPlaybackState()
       return
     }
     if (transferPlayback !== false) transferToConnectDevice(device.id)
@@ -1704,7 +1951,12 @@ Item {
   function transferToConnectDevice(deviceId) {
     apiAction("PUT", "/me/player", null,
       { device_ids: [deviceId], play: playing }, "Playback device changed",
-      function(ok) { if (ok) root.loadDevices() })
+      function(ok) {
+        if (ok) {
+          root.loadDevices()
+          root.loadPlaybackState()
+        }
+      })
   }
 
   function checkActivatedConnectDevice() {
@@ -1714,15 +1966,40 @@ Item {
     if (device && !device.activationRequired) {
       pendingConnectDeviceId = ""
       connectActivationAttempts = 0
-      transferToConnectDevice(requested)
+      pendingConnectWakeTried = false
+      if (device.active) {
+        succeed("Playing on " + device.name)
+        loadPlaybackState()
+      } else {
+        transferToConnectDevice(requested)
+      }
       return
     }
     connectActivationAttempts++
-    if (connectActivationAttempts < 8) connectActivationTimer.restart()
+    if (pendingConnectWakeTried && connectActivationAttempts >= 4 && device) {
+      connectActivationAttempts = 0
+      beginConnectAuthorization(device)
+    } else if (connectActivationAttempts < 20) {
+      connectActivationTimer.restart()
+    }
     else {
       pendingConnectDeviceId = ""
-      fail("The speaker connected, but did not become available. Make sure it is awake and try again")
+      pendingConnectWakeTried = false
+      fail(speakerAvailabilityError())
     }
+  }
+
+  function speakerAvailabilityError() {
+    return "The speaker connected, but did not become available. Make sure it is awake and try again"
+  }
+
+  function refreshActivatedConnectDevice() {
+    // Sonos is commonly absent from /me/player/devices even after addUser has
+    // succeeded. Refresh current playback first so an active null-id Sonos can
+    // be matched to its locally discovered receiver by name and type.
+    loadPlaybackState(function() {
+      root.loadDevices(function() { root.checkActivatedConnectDevice() })
+    })
   }
 
   function playItem(item, sourceItems, contextUri, successMessage, explicitRadio) {
@@ -1952,73 +2229,131 @@ Item {
     })
   }
 
+  function sendSonosControl(action, value) {
+    if (!sonosControlAvailable || !sonosControlDevice.id) return false
+    if (!spotifyConnectManager.controlling)
+      spotifyConnectManager.control(sonosControlDevice.id, action, value)
+    return true
+  }
+
+  function sonosPlayMode(nextRepeat, nextShuffle) {
+    if (nextRepeat === "track") return "REPEAT_ONE"
+    if (nextShuffle) return nextRepeat === "context" ? "SHUFFLE" : "SHUFFLE_NOREPEAT"
+    return nextRepeat === "context" ? "REPEAT_ALL" : "NORMAL"
+  }
+
+  function applySonosControlResult(action, value) {
+    if (!remotePlayback) return
+    var nextState = ({})
+    for (var key in remotePlayback) nextState[key] = remotePlayback[key]
+    if (action === "play" || action === "pause") {
+      nextState.progressSeconds = positionSeconds
+      nextState.receivedAt = Date.now()
+      nextState.playing = action === "play"
+    } else if (action === "seek") {
+      nextState.progressSeconds = Math.max(0, Number(value) || 0)
+      nextState.receivedAt = Date.now()
+    } else if (action === "volume" && remoteDevice) {
+      var nextDevice = ({})
+      for (var propertyName in remoteDevice) nextDevice[propertyName] = remoteDevice[propertyName]
+      nextDevice.volumePercent = Math.max(0, Math.min(100, Number(value) || 0))
+      nextState.device = nextDevice
+    } else if (action === "mode") {
+      var mode = String(value || "").toUpperCase()
+      nextState.repeatMode = mode === "REPEAT_ONE" ? "track"
+        : (mode === "REPEAT_ALL" || mode === "SHUFFLE" ? "context" : "off")
+      nextState.shuffle = mode === "SHUFFLE" || mode === "SHUFFLE_NOREPEAT"
+    }
+    remotePlayback = nextState
+    playbackPositionTick++
+  }
+
   function togglePlayback() {
     noteActivity()
-    if (hasPlayer && activePlayer.canTogglePlaying) {
+    if (sendSonosControl(playing ? "pause" : "play", "")) return
+    if (!useRemotePlayback && hasLocalPlayer && activePlayer.canTogglePlaying) {
       activePlayer.togglePlaying()
       return
     }
     apiAction("PUT", playing ? "/me/player/pause" : "/me/player/play",
-      selectedDeviceId ? { device_id: selectedDeviceId } : null, null, "")
+      controlDeviceId() ? { device_id: controlDeviceId() } : null, null, "",
+      function(ok) { if (ok) root.loadPlaybackState() })
   }
 
   function next() {
     noteActivity()
-    if (hasPlayer && activePlayer.canGoNext) activePlayer.next()
+    if (sendSonosControl("next", "")) return
+    if (!useRemotePlayback && hasLocalPlayer && activePlayer.canGoNext) activePlayer.next()
     else apiAction("POST", "/me/player/next",
-      selectedDeviceId ? { device_id: selectedDeviceId } : null, null, "")
+      controlDeviceId() ? { device_id: controlDeviceId() } : null, null, "",
+      function(ok) { if (ok) root.loadPlaybackState() })
   }
 
   function previous() {
     noteActivity()
-    if (hasPlayer && activePlayer.canGoPrevious) activePlayer.previous()
+    if (sendSonosControl("previous", "")) return
+    if (!useRemotePlayback && hasLocalPlayer && activePlayer.canGoPrevious) activePlayer.previous()
     else apiAction("POST", "/me/player/previous",
-      selectedDeviceId ? { device_id: selectedDeviceId } : null, null, "")
+      controlDeviceId() ? { device_id: controlDeviceId() } : null, null, "",
+      function(ok) { if (ok) root.loadPlaybackState() })
+  }
+
+  function controlDeviceId() {
+    if (useRemotePlayback) return remoteDevice && !remoteDevice.restricted
+      ? String(remoteDevice.id || "") : ""
+    return String(selectedDeviceId || "")
   }
 
   function seekSeconds(seconds) {
     var value = Math.max(0, Math.min(lengthSeconds || Number.MAX_VALUE,
       Number(seconds) || 0))
     noteActivity()
-    if (hasPlayer && activePlayer.canSeek && activePlayer.positionSupported)
+    if (sendSonosControl("seek", String(Math.round(value)))) return
+    if (!useRemotePlayback && hasLocalPlayer
+        && activePlayer.canSeek && activePlayer.positionSupported)
       activePlayer.position = value
     else apiAction("PUT", "/me/player/seek", {
       position_ms: Math.round(value * 1000),
-      device_id: selectedDeviceId || undefined
-    }, null, "")
+      device_id: controlDeviceId() || undefined
+    }, null, "", function(ok) { if (ok) root.loadPlaybackState() })
   }
 
   function setVolume(value) {
     var normalized = Math.max(0, Math.min(1, Number(value) || 0))
     noteActivity()
-    if (hasPlayer && activePlayer.volumeSupported) activePlayer.volume = normalized
+    if (sendSonosControl("volume", String(Math.round(normalized * 100)))) return
+    if (!useRemotePlayback && hasLocalPlayer && activePlayer.volumeSupported)
+      activePlayer.volume = normalized
     else apiAction("PUT", "/me/player/volume", {
       volume_percent: Math.round(normalized * 100),
-      device_id: selectedDeviceId || undefined
-    }, null, "")
+      device_id: controlDeviceId() || undefined
+    }, null, "", function(ok) { if (ok) root.loadPlaybackState() })
   }
 
   function setShuffle(value) {
     var enabled = value === true
     noteActivity()
-    if (hasPlayer && activePlayer.shuffleSupported) activePlayer.shuffle = enabled
+    if (sendSonosControl("mode", sonosPlayMode(repeatMode, enabled))) return
+    if (!useRemotePlayback && hasLocalPlayer && activePlayer.shuffleSupported)
+      activePlayer.shuffle = enabled
     else apiAction("PUT", "/me/player/shuffle", {
       state: enabled ? "true" : "false",
-      device_id: selectedDeviceId || undefined
-    }, null, "")
+      device_id: controlDeviceId() || undefined
+    }, null, "", function(ok) { if (ok) root.loadPlaybackState() })
   }
 
   function cycleRepeat() {
     var nextMode = repeatMode === "off" ? "context" : (repeatMode === "context" ? "track" : "off")
     noteActivity()
-    if (hasPlayer && activePlayer.loopSupported) {
+    if (sendSonosControl("mode", sonosPlayMode(nextMode, shuffle))) return
+    if (!useRemotePlayback && hasLocalPlayer && activePlayer.loopSupported) {
       activePlayer.loopState = nextMode === "track" ? MprisLoopState.Track
         : (nextMode === "context" ? MprisLoopState.Playlist : MprisLoopState.None)
     } else {
       apiAction("PUT", "/me/player/repeat", {
         state: nextMode,
-        device_id: selectedDeviceId || undefined
-      }, null, "")
+        device_id: controlDeviceId() || undefined
+      }, null, "", function(ok) { if (ok) root.loadPlaybackState() })
     }
   }
 
@@ -2088,7 +2423,7 @@ Item {
     }
     apiAction("POST", "/me/player/queue", {
       uri: item.uri,
-      device_id: selectedDeviceId || undefined
+      device_id: controlDeviceId() || undefined
     }, null, "Added to queue", function(ok) { if (ok) root.loadQueue() })
   }
 
@@ -2157,6 +2492,7 @@ Item {
   function finishLoginFlow() {
     loginFlowActive = false
     succeed("Connected to Spotify")
+    loadPlaybackState()
     loadProfile()
     loadSidebarPlaylists()
     openView(activeView, true)
@@ -2175,6 +2511,7 @@ Item {
     deviceProbeTimer.stop()
     spotifyApi.cancelSearch()
     daemonManager.clearCredentials()
+    connectAuthManager.logout()
     authManager.logout()
     clearData()
   }
@@ -2217,6 +2554,11 @@ Item {
     queueLoaded = false
     devices = []
     apiDevices = []
+    remotePlayback = null
+    remotePlaybackLoading = false
+    remotePlaybackWaiters = []
+    remoteControlDiscoveryKey = ""
+    playbackPositionTick++
     devicesLoaded = false
     selectedDeviceId = ""
     selectedDeviceExplicit = false
@@ -2224,6 +2566,7 @@ Item {
     localRuntimeDeviceName = deviceName
     pendingConnectDeviceId = ""
     connectActivationAttempts = 0
+    pendingConnectWakeTried = false
     connectActivationTimer.stop()
     searchQuery = ""
     searchGroups = Api.searchGroups({}, 128)
@@ -2358,21 +2701,77 @@ Item {
     }
     function onRefreshFailed(reason) {
       var callback = root.pendingDeviceLoadCallback
-      var error = root.pendingDeviceLoadError || reason
+      var apiError = root.pendingDeviceLoadError
       root.pendingDeviceLoadCallback = null
       root.pendingDeviceLoadError = ""
-      root.finishDeviceLoad(callback, error)
+      root.finishDeviceLoad(callback, apiError)
+      // Local discovery is supplemental. If Spotify already supplied devices
+      // or an active playback target, a transient Avahi failure must not turn
+      // a working connection into a user-visible error.
+      if (!apiError && !root.remoteDevice && !root.apiDevices.length)
+        root.fail(reason)
     }
     function onActivated(deviceId) {
       statusClearTimer.stop()
       root.statusMessage = "Speaker connected · waiting for it to become available"
       root.connectActivationAttempts = 0
+      root.pendingConnectWakeTried = false
       connectActivationTimer.restart()
     }
     function onActivationFailed(reason) {
       root.pendingConnectDeviceId = ""
       root.connectActivationAttempts = 0
+      root.pendingConnectWakeTried = false
       root.fail(reason)
+    }
+    function onControlled(deviceId, action, value) {
+      if (root.pendingConnectDeviceId === deviceId && action === "play") {
+        root.statusMessage = "Connecting to "
+          + String((root.deviceForId(deviceId) || {}).name || "speaker")
+        root.connectActivationAttempts = 0
+        connectActivationTimer.restart()
+        return
+      }
+      root.applySonosControlResult(action, value)
+      sonosControlRefreshTimer.restart()
+    }
+    function onControlFailed(deviceId, reason) {
+      if (root.pendingConnectDeviceId === deviceId) {
+        var device = root.deviceForId(deviceId)
+        if (device) root.beginConnectAuthorization(device)
+        else {
+          root.pendingConnectDeviceId = ""
+          root.pendingConnectWakeTried = false
+          root.fail(reason)
+        }
+        return
+      }
+      root.fail(reason)
+    }
+  }
+
+  Connections {
+    target: connectAuthManager
+    function onLoginSucceeded() {
+      var requested = root.pendingConnectDeviceId
+      var device = root.deviceForId(requested)
+      if (!requested || !device) return
+      root.statusMessage = "Connecting to " + device.name
+      connectAuthManager.withAccessToken(function(token, error) {
+        if (root.pendingConnectDeviceId !== requested) return
+        if (token) spotifyConnectManager.activate(requested, token)
+        else {
+          root.pendingConnectDeviceId = ""
+          root.fail(error || "Spotify could not authorize this speaker")
+        }
+      })
+    }
+    function onSessionUnavailable(reason) {
+      if (!root.pendingConnectDeviceId) return
+      root.pendingConnectDeviceId = ""
+      root.connectActivationAttempts = 0
+      root.pendingConnectWakeTried = false
+      root.fail(reason || "Spotify could not authorize this speaker")
     }
   }
 
@@ -2397,9 +2796,25 @@ Item {
 
   Timer {
     id: connectActivationTimer
+    interval: 750
+    repeat: false
+    onTriggered: root.refreshActivatedConnectDevice()
+  }
+
+  Timer {
+    id: remotePlaybackTimer
+    interval: root.uiVisible ? 5000 : 15000
+    repeat: true
+    running: root.auth.loggedIn && !root.remotePlaybackLoading
+      && (root.uiVisible || (root.useRemotePlayback && root.playing))
+    onTriggered: root.loadPlaybackState()
+  }
+
+  Timer {
+    id: sonosControlRefreshTimer
     interval: 650
     repeat: false
-    onTriggered: root.loadDevices(function() { root.checkActivatedConnectDevice() })
+    onTriggered: root.loadPlaybackState()
   }
 
   Timer {
@@ -2440,6 +2855,14 @@ Item {
     pluginDir: root.pluginDir
   }
 
+  AuthManager {
+    id: connectAuthManager
+    pluginDir: root.pluginDir
+    clientId: "65b708073fc0480ea92a077233ca87bd"
+    oauthPort: 8990
+    scopes: ["streaming"]
+  }
+
   SpotifyApi {
     id: spotifyApi
     auth: authManager
@@ -2455,6 +2878,6 @@ Item {
     pluginDir: root.pluginDir
     deviceName: root.deviceName
     bitrateKbps: root.bitrateKbps
-    mprisPresent: root.hasPlayer
+    mprisPresent: root.hasLocalPlayer
   }
 }

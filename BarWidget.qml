@@ -221,6 +221,7 @@ BarWidget {
           foreground: root.foreground
           selected: root.spotify && root.spotify.shuffle
           tooltipText: "Shuffle"
+          enabled: root.spotify && root.spotify.playbackControllable
           onClicked: if (root.spotify) root.spotify.setShuffle(!root.spotify.shuffle)
         }
 
@@ -228,6 +229,7 @@ BarWidget {
           iconText: "󰒮"
           foreground: root.foreground
           tooltipText: "Previous"
+          enabled: root.spotify && root.spotify.playbackControllable
           onClicked: if (root.spotify) root.spotify.previous()
         }
 
@@ -236,6 +238,7 @@ BarWidget {
           iconSize: Style.font.iconLarge
           foreground: root.foreground
           tooltipText: root.spotify && root.spotify.playing ? "Pause" : "Play"
+          enabled: root.spotify && root.spotify.playbackControllable
           onClicked: if (root.spotify) root.spotify.togglePlayback()
         }
 
@@ -243,6 +246,7 @@ BarWidget {
           iconText: "󰒭"
           foreground: root.foreground
           tooltipText: "Next"
+          enabled: root.spotify && root.spotify.playbackControllable
           onClicked: if (root.spotify) root.spotify.next()
         }
 
@@ -251,6 +255,7 @@ BarWidget {
           foreground: root.foreground
           selected: root.spotify && root.spotify.repeatMode !== "off"
           tooltipText: "Repeat: " + (root.spotify ? root.spotify.repeatMode : "off")
+          enabled: root.spotify && root.spotify.playbackControllable
           onClicked: if (root.spotify) root.spotify.cycleRepeat()
         }
       }
@@ -276,6 +281,7 @@ BarWidget {
           maximum: 1
           step: 0.05
           value: root.spotify ? root.spotify.volume : 0
+          enabled: root.spotify && root.spotify.volumeSupported
           onReleased: function(value) {
             if (root.spotify) root.spotify.setVolume(value)
           }
@@ -293,7 +299,10 @@ BarWidget {
           anchors.verticalCenter: parent.verticalCenter
           text: !root.spotify ? "Spotify is unavailable"
             : (!root.spotify.fullyConnected ? "Continue with Spotify"
-            : (root.spotify.daemon.running ? "Playing on this computer" : "Ready when you press play"))
+            : (root.spotify.useRemotePlayback
+              ? (root.spotify.playing ? "Playing on " : "Connected to ")
+                + root.spotify.playbackDeviceName
+              : (root.spotify.daemon.running ? "Playing on this computer" : "Ready when you press play")))
           color: Qt.darker(root.foreground, 1.35)
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.caption

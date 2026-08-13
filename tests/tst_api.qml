@@ -346,6 +346,49 @@ TestCase {
       "New desk", "Old desk", "local"))
   }
 
+  function test_playbackDeviceMatch_fallsBackToNameWhenCurrentIdIsMissing() {
+    verify(Api.playbackDevicesMatch({ id: "", name: "Work", type: "Speaker" },
+      { id: "sonos-id", name: "work", type: "speaker" }))
+    verify(!Api.playbackDevicesMatch({ id: "api-id", name: "Work", type: "Speaker" },
+      { id: "different-id", name: "Work", type: "Speaker" }))
+    verify(!Api.playbackDevicesMatch({ id: "", name: "Work", type: "Speaker" },
+      { id: "sonos-id", name: "Work", type: "Computer" }))
+  }
+
+  function test_normalizePlaybackState_keepsRemoteTrackAndNullableDeviceId() {
+    var state = Api.normalizePlaybackState({
+      is_playing: true,
+      progress_ms: 42000,
+      repeat_state: "context",
+      shuffle_state: true,
+      device: {
+        id: null, name: "Work", type: "Speaker", is_active: true,
+        is_restricted: true, volume_percent: 33, supports_volume: true
+      },
+      item: {
+        id: "track", uri: "spotify:track:track", type: "track",
+        name: "A song", duration_ms: 180000,
+        artists: [{ name: "An artist" }], album: { name: "An album" }
+      }
+    }, 192)
+
+    verify(state !== null)
+    compare(state.device.id, "")
+    compare(state.device.name, "Work")
+    compare(state.device.restricted, true)
+    compare(state.item.name, "A song")
+    compare(state.item.subtitle, "An artist")
+    compare(state.progressSeconds, 42)
+    compare(state.repeatMode, "context")
+    compare(state.shuffle, true)
+  }
+
+  function test_normalizePlaybackState_rejectsEmptyPlaybackResponse() {
+    compare(Api.normalizePlaybackState(null, 192), null)
+    compare(Api.normalizePlaybackState({}, 192), null)
+    compare(Api.normalizePlaybackState([], 192), null)
+  }
+
   function test_mergeUnique_preservesOrder() {
     var merged = Api.mergeUnique([
       { uri: "spotify:track:a" },
