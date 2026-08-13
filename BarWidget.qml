@@ -59,6 +59,7 @@ BarWidget {
     text: root.displayText
     fontSize: root.iconOnly ? Style.font.bodySmall : Style.font.body
     active: root.spotify && root.spotify.playing
+    activeColor: Color.accent
     tooltipText: root.spotify && root.spotify.hasMedia
       ? root.spotify.title + (root.spotify.artist ? " — " + root.spotify.artist : "")
       : "Omarchy Spotify"
