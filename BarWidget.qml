@@ -59,7 +59,10 @@ BarWidget {
     text: root.displayText
     fontSize: root.iconOnly ? Style.font.bodySmall : Style.font.body
     active: root.spotify && root.spotify.playing
-    activeColor: Color.accent
+    // Keep the playing state legible on transparent bars. WidgetButton's
+    // foreground follows bar.barForeground, which the shell derives from the
+    // wallpaper underneath the bar.
+    activeColor: button.foreground
     tooltipText: root.spotify && root.spotify.hasMedia
       ? root.spotify.title + (root.spotify.artist ? " — " + root.spotify.artist : "")
       : "Omarchy Spotify"
