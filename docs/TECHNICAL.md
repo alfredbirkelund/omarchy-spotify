@@ -15,8 +15,9 @@ Spotify Connect device comes from the Spotify Web API, refreshed while a UI is
 visible and at a slower rate while that device is playing. Spotify data and user
 actions also use the Web API. Local audio uses `spotifyd` 0.4.2 or newer,
 supervised by a static systemd user unit that is never enabled at login. The app
-starts it only when playback needs this computer and stops it after the
-configured idle period.
+starts it whenever the mini player or full panel is visible, or when playback
+needs this computer. Visible surfaces keep it available in Spotify Connect; once
+they are closed, the app stops it after the configured idle period.
 
 ## Runtime requirements
 

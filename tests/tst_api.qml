@@ -364,6 +364,14 @@ TestCase {
     compare(Api.preferredPlaybackDevice(devices, "", false).id, "omarchy")
   }
 
+  function test_visibleUiStartsAndRefreshesLocalReceiver() {
+    compare(Api.visibleLocalReceiverAction(false, true, false, false), "idle")
+    compare(Api.visibleLocalReceiverAction(true, false, false, false), "idle")
+    compare(Api.visibleLocalReceiverAction(true, true, false, true), "wait")
+    compare(Api.visibleLocalReceiverAction(true, true, false, false), "start")
+    compare(Api.visibleLocalReceiverAction(true, true, true, false), "refresh")
+  }
+
   function test_currentPlaybackDeviceWorksBeforeDeviceListLoads() {
     var current = {
       id: "phone", name: "Phone", type: "Smartphone",

@@ -59,8 +59,10 @@ On first launch:
 3. Finish the Spotify approval pages in your browser. Spotify may show two pages
    the first time; complete both and the app brings you back automatically.
 
-That is the whole setup. Playback on this computer starts only when needed and
-stops automatically after it has been idle.
+That is the whole setup. Playback on this computer starts when the mini player
+or full app opens, or when local playback is needed. It stays available in
+Spotify Connect while either view is open and stops automatically after it has
+been idle with both views closed.
 
 ### Why setup may request administrator access
 

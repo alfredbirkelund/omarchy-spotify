@@ -272,6 +272,7 @@ Item {
     && radioContextSelected && playing
   property bool localActivationRequested: false
   property int deviceProbeAttempts: 0
+  property int visibleLocalDeviceRefreshAttempts: 0
   property bool loginFlowActive: false
   property string pendingConnectDeviceId: ""
   property int connectActivationAttempts: 0
@@ -467,6 +468,46 @@ Item {
 
   function noteActivity() {
     lastActivityAt = Date.now()
+  }
+
+  function cancelVisibleLocalDeviceRefresh() {
+    visibleLocalDeviceRefreshTimer.stop()
+    visibleLocalDeviceRefreshAttempts = 0
+  }
+
+  function ensureVisibleLocalReceiver() {
+    var action = Api.visibleLocalReceiverAction(uiVisible, fullyConnected,
+      daemonManager.running, daemonManager.busy)
+    if (action === "idle") {
+      cancelVisibleLocalDeviceRefresh()
+      return
+    }
+    if (action === "start") daemonManager.start()
+    if (action === "refresh") visibleLocalDeviceRefreshAttempts = 0
+    visibleLocalDeviceRefreshTimer.restart()
+  }
+
+  function refreshVisibleLocalDevice() {
+    var action = Api.visibleLocalReceiverAction(uiVisible, fullyConnected,
+      daemonManager.running, daemonManager.busy)
+    if (action === "idle") {
+      cancelVisibleLocalDeviceRefresh()
+      return
+    }
+    if (action !== "refresh") {
+      if (action === "start") daemonManager.start()
+      visibleLocalDeviceRefreshTimer.restart()
+      return
+    }
+    loadDevices(function() {
+      if (!root.uiVisible || !root.fullyConnected || root.localDevice()) {
+        root.visibleLocalDeviceRefreshAttempts = 0
+        return
+      }
+      root.visibleLocalDeviceRefreshAttempts++
+      if (root.visibleLocalDeviceRefreshAttempts < 8)
+        visibleLocalDeviceRefreshTimer.restart()
+    })
   }
 
   function setUiVisible(key, value) {
@@ -2724,6 +2765,14 @@ Item {
         && currentUri !== sleepTrackUri) finishSleepTimer()
   }
   onShellChanged: settingsSync.restart()
+  onUiVisibleChanged: {
+    if (uiVisible) ensureVisibleLocalReceiver()
+    else cancelVisibleLocalDeviceRefresh()
+  }
+  onFullyConnectedChanged: {
+    if (fullyConnected && uiVisible) ensureVisibleLocalReceiver()
+    else if (!fullyConnected) cancelVisibleLocalDeviceRefresh()
+  }
 
   Component.onCompleted: {
     settingsSync.start()
@@ -2772,6 +2821,7 @@ Item {
       root.localRuntimeDeviceName = root.deviceName
       root.localDeviceId = ""
       root.succeed("Playback started on this computer")
+      if (root.uiVisible) root.ensureVisibleLocalReceiver()
       if (root.pendingPlayback || root.localActivationRequested) deviceProbeTimer.restart()
     }
     function onStopped() { root.succeed("Playback stopped on this computer") }
@@ -2890,6 +2940,13 @@ Item {
     interval: 750
     repeat: false
     onTriggered: root.probeForLocalDevice()
+  }
+
+  Timer {
+    id: visibleLocalDeviceRefreshTimer
+    interval: 750
+    repeat: false
+    onTriggered: root.refreshVisibleLocalDevice()
   }
 
   Timer {

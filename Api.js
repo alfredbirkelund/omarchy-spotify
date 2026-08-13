@@ -133,6 +133,15 @@ function responseError(status, payload, fallback) {
   return redact(message)
 }
 
+// A visible Spotify surface owns the local receiver's lifetime. The action is
+// kept pure so startup races (for example, opening the panel while systemd is
+// still reporting status) follow one deterministic policy.
+function visibleLocalReceiverAction(uiVisible, fullyConnected, running, busy) {
+  if (uiVisible !== true || fullyConnected !== true) return "idle"
+  if (busy === true) return "wait"
+  return running === true ? "refresh" : "start"
+}
+
 // Preserve Spotify's current playback target unless the user explicitly chose
 // another device in this app. The local spotifyd player is only the fallback
 // when Spotify has no active device. Keeping a restricted device here avoids

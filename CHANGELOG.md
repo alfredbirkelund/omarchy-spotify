@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Keep this computer available in Spotify Connect while the mini player or full
+  app is open, waking local playback and refreshing its device registration when
+  either surface appears.
+
 ## 1.0.1 — 2026-08-13
 
 - Use Omarchy Spotify consistently as the product name.
