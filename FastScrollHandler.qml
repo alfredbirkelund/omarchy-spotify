@@ -4,7 +4,7 @@ Item {
   id: root
 
   required property var flickable
-  property real speedMultiplier: 2
+  property real speedMultiplier: 4
   property real mouseWheelStep: Math.max(1,
     Number(Application.styleHints.wheelScrollLines) || 3) * 24
 

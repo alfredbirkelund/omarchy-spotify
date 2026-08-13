@@ -59,15 +59,15 @@ TestCase {
     wait(1)
   }
 
-  function test_deltaIsDoubled() {
+  function test_deltaIsQuadrupled() {
     compare(fastScroll.parent, list)
-    compare(fastScroll.scrollDistance(14, 0), 28)
+    compare(fastScroll.scrollDistance(14, 0), 56)
     compare(fastScroll.scrollDistance(0, -120),
-      -fastScroll.mouseWheelStep * 2)
+      -fastScroll.mouseWheelStep * 4)
   }
 
-  function test_scrollApplicationMovesTwoTimesTheBaseStep() {
-    var expected = fastScroll.mouseWheelStep * 2
+  function test_scrollApplicationMovesFourTimesTheBaseStep() {
+    var expected = fastScroll.mouseWheelStep * 4
     compare(fastScroll.scrollByDeltas(0, -120), expected)
     compare(list.contentY, expected)
     compare(scrollSpy.count, 1)
@@ -82,7 +82,7 @@ TestCase {
     compare(scrollViewFastScroll.parent, scrollView.contentItem)
     compare(scrollViewFastScroll.flickable.contentHeight, 600)
     compare(scrollViewFastScroll.scrollByDeltas(0, -120),
-      scrollViewFastScroll.mouseWheelStep * 2)
+      scrollViewFastScroll.mouseWheelStep * 4)
     compare(scrollViewFastScroll.flickable.contentHeight, 600)
   }
 }
