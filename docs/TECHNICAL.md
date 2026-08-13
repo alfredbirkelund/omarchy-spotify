@@ -38,8 +38,8 @@ Web API access uses Spotify's Authorization Code with PKCE flow and the public
 application identity also used by `spotify-player` and ncspot. The fixed callback
 is `http://127.0.0.1:8989/login`. `spotifyd` performs its independent browser
 authorization on loopback port `8000`. Receivers that advertise the
-`authorization_code` token type use a separate, on-demand, streaming-only PKCE
-grant on port `8990`.
+`accesstoken` or `authorization_code` token type use a separate, on-demand,
+streaming-only PKCE grant on port `8990`.
 
 No client secret or Spotify password enters the plugin. OAuth refresh tokens
 are written to GNOME Keyring over stdin and separated by client identity.
@@ -61,11 +61,12 @@ only when no active target is available. Restricted active devices are kept as
 the target rather than silently moving playback locally; Spotify may reject the
 new selection when it does not allow Web API control. The app can perform a
 one-shot `_spotify-connect._tcp` lookup for nearby receivers omitted from
-Spotify's device response. For ordinary receivers, the helper re-encrypts
-`spotifyd`'s owner-only reusable credential for the receiver's ephemeral
-ZeroConf key. For
-authorization-code receivers such as Sonos, it exchanges the short-lived
-streaming token for a receiver-scoped code and sends that code to the receiver.
+Spotify's device response. It also resolves opaque Web API device names against
+the matching locally advertised alias. For ordinary receivers, the helper
+re-encrypts `spotifyd`'s owner-only reusable credential for the receiver's
+ephemeral ZeroConf key. Access-token receivers such as JBL receive the
+short-lived receiver token minted from the streaming grant; authorization-code
+receivers such as Sonos receive a receiver-scoped code exchanged from that grant.
 It then waits for Spotify to report the genuine device before transferring
 playback when needed. It never asks for or stores the user's password.
 
@@ -145,7 +146,7 @@ omarchy plugin remove quickshell.spotify --yes
 ```
 
 This stops and removes the static user unit, deletes the app's private playback
-config, removes `spotifyd`'s cached credential, and clears matching Music for
+config, removes `spotifyd`'s cached credential, and clears matching Omarchy
 Spotify keyring entries. The `spotifyd` package remains installed because another
 client may use it.
 

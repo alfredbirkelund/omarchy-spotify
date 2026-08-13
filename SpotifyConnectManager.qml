@@ -132,8 +132,7 @@ Item {
           activeUser: item.activeUser === true,
           volumePercent: volumeKnown
             ? Math.max(0, Math.min(100, Number(rawVolume))) : null,
-          tokenType: String(item.tokenType || "default") === "authorization_code"
-            ? "authorization_code" : "default"
+          tokenType: Api.spotifyConnectTokenType(item.tokenType)
         })
       }
       devices = next

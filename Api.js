@@ -199,6 +199,35 @@ function playbackDevicesMatch(left, right) {
   return !firstType || !secondType || firstType === secondType
 }
 
+function spotifyConnectTokenType(value) {
+  var tokenType = String(value || "default").trim().toLowerCase()
+  return ["default", "accesstoken", "authorization_code"].indexOf(tokenType) >= 0
+    ? tokenType : "default"
+}
+
+// Some hardware receivers expose their device id as their Web API name. Local
+// ZeroConf discovery has the user-facing alias and can safely relabel the same
+// receiver because playbackDevicesMatch requires equal ids when both exist.
+function spotifyDeviceNameNeedsDiscovery(device) {
+  var item = device || {}
+  var name = String(item.name || "").trim()
+  var id = String(item.id || "").trim()
+  return !name || (!!id && name.toLowerCase() === id.toLowerCase())
+    || /^[a-f0-9]{40}$/i.test(name)
+}
+
+function playbackDeviceDisplayName(device, discoveredDevices) {
+  var item = device || {}
+  var receivers = Array.isArray(discoveredDevices) ? discoveredDevices : []
+  for (var i = 0; i < receivers.length; i++) {
+    var receiver = receivers[i]
+    if (!receiver || !playbackDevicesMatch(receiver, item)) continue
+    var discoveredName = String(receiver.name || "").trim()
+    if (discoveredName) return discoveredName
+  }
+  return String(item.name || "").trim()
+}
+
 function normalizePlaybackState(value, imageWidth) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
   var source = value

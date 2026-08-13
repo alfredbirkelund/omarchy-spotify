@@ -1,10 +1,10 @@
 #!/usr/bin/python3
 """Discover and activate genuine Spotify Connect receivers on the local LAN.
 
-Activation uses either spotifyd's owner-only reusable credential or a
-short-lived, receiver-scoped authorization code, according to the receiver's
-advertised token type. Credentials and derived keys never leave this process;
-stdout contains device metadata or a status result only.
+Activation uses spotifyd's owner-only reusable credential, a short-lived
+streaming access token, or a receiver-scoped authorization code according to
+the receiver's advertised token type. Credentials and derived keys never leave
+this process; stdout contains device metadata or a status result only.
 """
 
 from __future__ import annotations
@@ -45,6 +45,7 @@ DH_PRIME = int.from_bytes(bytes([
 ]), "big")
 FIXED_IV = bytes([253, 81, 222, 19, 70, 203, 45, 89, 141, 68, 210, 240, 93, 20, 76, 30])
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
+SPOTIFY_DEVICE_AUTH_URL = "https://spclient.wg.spotify.com/device-auth/v1/refresh"
 SPOTIFY_DESKTOP_CLIENT_ID = "65b708073fc0480ea92a077233ca87bd"
 SONOS_CLIENT_ID = "9b377073ea334637b1406f329ce005de"
 SONOS_AVTRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
@@ -485,11 +486,57 @@ def build_login_blob(
     return signed_blob, client_key
 
 
-def exchange_authorization_code(access_token: str, receiver: dict[str, Any]) -> str:
-    """Exchange a desktop streaming token for a receiver-scoped login code."""
+def validated_access_token(access_token: str) -> str:
     token = str(access_token or "").strip()
     if len(token) < 20 or len(token) > 4096 or any(char.isspace() for char in token):
         raise ConnectError("speaker authorization is unavailable")
+    return token
+
+
+def exchange_access_token(access_token: str, receiver: dict[str, Any]) -> str:
+    """Mint the access token addressed to an access-token receiver."""
+    token = validated_access_token(access_token)
+    client_id = str(receiver.get("clientId") or "").strip()
+    device_id = str(receiver.get("id") or "").strip()
+    if not re.fullmatch(r"[A-Fa-f0-9]{16,80}", client_id) \
+            or not DEVICE_ID_RE.fullmatch(device_id):
+        raise ConnectError("receiver authorization is unsupported")
+
+    request = urllib.request.Request(
+        SPOTIFY_DEVICE_AUTH_URL,
+        data=json.dumps({"clientId": client_id, "deviceId": device_id}).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "text/plain;charset=UTF-8",
+            "User-Agent": "Spotify/124300420 Win32_x86_64/0 (PC desktop)",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+            status_code = response.status
+    except urllib.error.HTTPError as error:
+        raw = error.read(MAX_RESPONSE_BYTES + 1)
+        status_code = error.code
+    except (OSError, TimeoutError, urllib.error.URLError) as error:
+        raise ConnectError("Spotify receiver authorization did not respond") from error
+
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ConnectError("Spotify receiver authorization returned too much data")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ConnectError("Spotify receiver authorization returned an invalid response") from error
+    result = str(payload.get("accessToken") or "") if isinstance(payload, dict) else ""
+    if status_code != 200:
+        raise ConnectError("Spotify could not authorize this receiver")
+    return validated_access_token(result)
+
+
+def exchange_authorization_code(access_token: str, receiver: dict[str, Any]) -> str:
+    """Exchange a desktop streaming token for a receiver-scoped login code."""
+    token = validated_access_token(access_token)
 
     brand = str(receiver.get("brand") or "").strip().casefold()
     audience = SONOS_CLIENT_ID if brand == "sonos" else str(receiver.get("clientId") or "")
@@ -553,13 +600,20 @@ def activate_receiver(device_id: str, access_token: str = "") -> dict[str, Any]:
         receiver["address"], receiver["port"], f'{receiver["cpath"]}?{info_query}'
     )
     origin_name = "Omarchy Spotify"
-    token_type = str(info.get("tokenType") or receiver.get("tokenType") or "default").lower()
+    token_type = str(
+        info.get("tokenType") or receiver.get("tokenType") or "default"
+    ).strip().lower()
+    if token_type not in {"default", "accesstoken", "authorization_code"}:
+        token_type = "default"
     fields: dict[str, str] = {}
     attempts = 0
     while attempts < 7:
         attempts += 1
         if token_type == "authorization_code":
             blob = exchange_authorization_code(access_token, receiver)
+            client_key = ""
+        elif token_type == "accesstoken":
+            blob = exchange_access_token(access_token, receiver)
             client_key = ""
         else:
             public_key = str(info.get("publicKey") or "")
@@ -570,7 +624,7 @@ def activate_receiver(device_id: str, access_token: str = "") -> dict[str, Any]:
         fields = {
             "action": "addUser",
             "version": str(receiver["serviceVersion"]),
-            "tokenType": token_type if token_type == "authorization_code" else "default",
+            "tokenType": token_type,
             "clientKey": client_key,
             "loginId": username,
             "userName": username,
@@ -590,8 +644,15 @@ def activate_receiver(device_id: str, access_token: str = "") -> dict[str, Any]:
             info = request_json_with_retry(
                 receiver["address"], receiver["port"], f'{receiver["cpath"]}?{info_query}'
             )
+            # A receiver may advertise access-token login before its reusable
+            # credential endpoint is awake. Retain the former behavior as a
+            # compatibility fallback after the advertised flow is rejected.
+            if token_type == "accesstoken":
+                token_type = "default"
             continue
         if status_value == 202 and status_string == "ERROR-LOGIN-FAILED" and attempts < 7:
+            if token_type == "accesstoken":
+                token_type = "default"
             time.sleep(0.25)
             continue
         raise ConnectError(f"receiver rejected activation ({status_value or 'unknown'})")

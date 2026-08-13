@@ -154,7 +154,8 @@ Item {
       && (!playbackRestricted || sonosControlAvailable)
     : (hasLocalPlayer && activePlayer.volumeSupported)
   readonly property string playbackDeviceName: useRemotePlayback && remoteDevice
-    ? String(remoteDevice.name || "") : (hasLocalPlayer ? deviceName : "")
+    ? Api.playbackDeviceDisplayName(remoteDevice, spotifyConnectManager.devices)
+    : (hasLocalPlayer ? deviceName : "")
 
   property var playlists: []
   property string playlistsNext: ""
@@ -548,8 +549,10 @@ Item {
     }
     remotePlayback = state
     var discoveryKey = state && state.device && state.device.active
-        && state.device.restricted && String(state.device.type).toLowerCase() === "speaker"
-      ? String(state.device.name).toLowerCase() + "|" + String(state.device.type).toLowerCase()
+        && String(state.device.type).toLowerCase() === "speaker"
+        && (state.device.restricted
+          || Api.spotifyDeviceNameNeedsDiscovery(state.device))
+      ? playbackDeviceKey(state.device)
       : ""
     if (discoveryKey && discoveryKey !== remoteControlDiscoveryKey) {
       remoteControlDiscoveryKey = discoveryKey
@@ -1961,7 +1964,7 @@ Item {
   function beginConnectAuthorization(device) {
     if (!device || !device.id || pendingConnectDeviceId !== device.id) return
     pendingConnectWakeTried = false
-    if (device.tokenType === "authorization_code") {
+    if (Api.spotifyConnectTokenType(device.tokenType) !== "default") {
       statusMessage = "Checking permission for " + device.name
       connectAuthManager.withAccessToken(function(token, error) {
         if (root.pendingConnectDeviceId !== device.id) return

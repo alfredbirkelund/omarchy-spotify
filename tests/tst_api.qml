@@ -428,6 +428,29 @@ TestCase {
       { id: "sonos-id", name: "Work", type: "Computer" }))
   }
 
+  function test_playbackDeviceDisplayName_prefersMatchedLocalAlias() {
+    var deviceId = "0123456789abcdef0123456789abcdef01234567"
+    var current = { id: deviceId, name: deviceId, type: "Speaker" }
+    var receivers = [{
+      id: deviceId, name: "Living room soundbar", type: "Speaker",
+      brand: "JBL", model: "BAR_800"
+    }]
+
+    verify(Api.spotifyDeviceNameNeedsDiscovery(current))
+    compare(Api.playbackDeviceDisplayName(current, receivers), "Living room soundbar")
+    compare(Api.playbackDeviceDisplayName(current, []), deviceId)
+    verify(!Api.spotifyDeviceNameNeedsDiscovery({
+      id: deviceId, name: "Living room", type: "Speaker"
+    }))
+  }
+
+  function test_spotifyConnectTokenType_preservesSupportedReceiverFlows() {
+    compare(Api.spotifyConnectTokenType("accesstoken"), "accesstoken")
+    compare(Api.spotifyConnectTokenType("authorization_code"), "authorization_code")
+    compare(Api.spotifyConnectTokenType("default"), "default")
+    compare(Api.spotifyConnectTokenType("unexpected"), "default")
+  }
+
   function test_normalizePlaybackState_keepsRemoteTrackAndNullableDeviceId() {
     var state = Api.normalizePlaybackState({
       is_playing: true,

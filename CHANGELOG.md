@@ -21,6 +21,8 @@
   reading, including an authoritative local volume read for Sonos.
 - Reconnect to a previously authorized Sonos by waking its retained session,
   with transient receiver retries and OAuth activation as fallback.
+- Show locally advertised aliases for active speakers whose Spotify API name is
+  only an opaque device id, and honor JBL-style access-token activation.
 
 ## 1.0.0 — 2026-08-12
 
