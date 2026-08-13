@@ -86,6 +86,28 @@ Item {
     controlCommand.running = true
   }
 
+  function rememberVolume(deviceId, value) {
+    var requested = String(deviceId || "")
+    var volume = Number(value)
+    if (!requested || !isFinite(volume)) return
+    volume = Math.max(0, Math.min(100, volume))
+    var changed = false
+    var next = []
+    for (var i = 0; i < devices.length; i++) {
+      var item = devices[i]
+      if (String((item && item.id) || "") !== requested) {
+        next.push(item)
+        continue
+      }
+      var updated = ({})
+      for (var key in item) updated[key] = item[key]
+      updated.volumePercent = volume
+      changed = true
+      next.push(updated)
+    }
+    if (changed) devices = next
+  }
+
   function applyDiscovery(raw) {
     try {
       var payload = JSON.parse(String(raw || "{}"))
@@ -95,6 +117,9 @@ Item {
         var item = payload.devices[i] || {}
         var id = String(item.id || "")
         if (!/^[A-Za-z0-9_.:-]{8,160}$/.test(id)) continue
+        var rawVolume = item.volumePercent
+        var volumeKnown = rawVolume !== null && rawVolume !== undefined
+          && rawVolume !== "" && isFinite(Number(rawVolume))
         next.push({
           id: id,
           name: String(item.name || "Spotify Connect device").slice(0, 160),
@@ -105,6 +130,8 @@ Item {
           localDiscovery: true,
           activationRequired: true,
           activeUser: item.activeUser === true,
+          volumePercent: volumeKnown
+            ? Math.max(0, Math.min(100, Number(rawVolume))) : null,
           tokenType: String(item.tokenType || "default") === "authorization_code"
             ? "authorization_code" : "default"
         })

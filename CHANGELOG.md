@@ -13,8 +13,12 @@
   OAuth flow instead of sending an incompatible reusable-credential blob.
 - Mark restricted active devices clearly and avoid sending controls that the
   Spotify Web API will reject.
+- Keep new song selections on the currently active Spotify Connect device,
+  falling back to this computer only when no device is active.
 - Control locally discovered Sonos playback, seeking, modes, and volume over
   its fixed LAN endpoints when Spotify marks the device restricted.
+- Keep the remote volume slider visible when Spotify omits its nullable volume
+  reading, including an authoritative local volume read for Sonos.
 - Reconnect to a previously authorized Sonos by waking its retained session,
   with transient receiver retries and OAuth activation as fallback.
 

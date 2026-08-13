@@ -32,6 +32,38 @@ var DISCOVERY_SEARCHES = [
   "Fresh Finds"
 ]
 
+// spotifyd's software mixer maps its normalized volume over a 60 dB
+// logarithmic range. Convert that control to a cubic slider over the same
+// range, matching the gentler taper used by common desktop audio mixers.
+// Zero remains a true mute in both directions.
+var SPOTIFYD_CUBIC_FLOOR = 0.1
+
+function clampUnit(value) {
+  return Math.max(0, Math.min(1, Number(value) || 0))
+}
+
+function normalizeVolumePercent(value) {
+  if (value === null || value === undefined || value === "") return null
+  var volume = Number(value)
+  return isFinite(volume) ? Math.max(0, Math.min(100, volume)) : null
+}
+
+function spotifydVolumeToSlider(value) {
+  var volume = clampUnit(value)
+  if (volume <= 0) return 0
+  var cubicRoot = Math.pow(10, volume - 1)
+  return clampUnit((cubicRoot - SPOTIFYD_CUBIC_FLOOR)
+    / (1 - SPOTIFYD_CUBIC_FLOOR))
+}
+
+function sliderToSpotifydVolume(value) {
+  var slider = clampUnit(value)
+  if (slider <= 0) return 0
+  var cubicRoot = SPOTIFYD_CUBIC_FLOOR
+    + (1 - SPOTIFYD_CUBIC_FLOOR) * slider
+  return clampUnit(1 + Math.log(cubicRoot) / Math.LN10)
+}
+
 function encode(value) {
   return encodeURIComponent(String(value === undefined || value === null ? "" : value))
 }
@@ -101,10 +133,11 @@ function responseError(status, payload, fallback) {
   return redact(message)
 }
 
-// Playback defaults to this app's local spotifyd device. An external device is
-// considered only when the user selected it explicitly in the Devices view;
-// merely being active in another Spotify client must never steal a play click.
-function preferredPlaybackDevice(devices, selectedId, explicitSelection) {
+// Preserve Spotify's current playback target unless the user explicitly chose
+// another device in this app. The local spotifyd player is only the fallback
+// when Spotify has no active device. Keeping a restricted device here avoids
+// silently moving playback locally; Spotify can report the unsupported action.
+function preferredPlaybackDevice(devices, selectedId, explicitSelection, currentDevice) {
   var values = Array.isArray(devices) ? devices : []
   var key = String(selectedId || "")
   if (explicitSelection && key) {
@@ -112,10 +145,29 @@ function preferredPlaybackDevice(devices, selectedId, explicitSelection) {
       if (String(values[i].id || "") === key && values[i].restricted !== true)
         return values[i]
   }
-  for (var j = 0; j < values.length; j++)
-    if (values[j].local === true && values[j].restricted !== true && values[j].id)
-      return values[j]
+  var current = currentDevice || null
+  if (current && current.active === true) {
+    for (var j = 0; j < values.length; j++)
+      if (playbackDevicesMatch(values[j], current))
+        return values[j]
+    return current
+  }
+  for (var k = 0; k < values.length; k++)
+    if (values[k].active === true)
+      return values[k]
+  for (var l = 0; l < values.length; l++)
+    if (values[l].local === true && values[l].restricted !== true && values[l].id)
+      return values[l]
   return null
+}
+
+// Omitting device_id tells Spotify to keep the user's active device. Address a
+// device directly only for an explicit choice or an inactive fallback target.
+function playbackTargetDeviceId(device, explicitSelection) {
+  var item = device || null
+  if (!item) return ""
+  return explicitSelection === true || item.active !== true
+    ? String(item.id || "") : ""
 }
 
 function isLocalPlaybackDevice(device, configuredName, runtimeName, knownId) {
@@ -157,8 +209,9 @@ function normalizePlaybackState(value, imageWidth) {
     type: String(rawDevice.type || "unknown"),
     active: rawDevice.is_active === true,
     restricted: rawDevice.is_restricted === true,
-    volumePercent: Math.max(0, Math.min(100,
-      Number(rawDevice.volume_percent) || 0)),
+    // Spotify explicitly permits this field to be null. Preserve that as
+    // "unknown" instead of making a missing reading look like a real mute.
+    volumePercent: normalizeVolumePercent(rawDevice.volume_percent),
     supportsVolume: rawDevice.supports_volume === true
   } : null
   var item = source.item && typeof source.item === "object"

@@ -74,6 +74,9 @@ Item {
   property var remotePlayback: null
   property bool remotePlaybackLoading: false
   property var remotePlaybackWaiters: []
+  property var rememberedRemoteVolumeDevice: null
+  property real rememberedRemoteVolumePercent: -1
+  property string remoteVolumeProbeKey: ""
   property int playbackPositionTick: 0
   property string remoteControlDiscoveryKey: ""
   readonly property var remoteTrack: remotePlayback ? remotePlayback.item : null
@@ -123,10 +126,12 @@ Item {
     ? Math.max(0, Number(remoteTrack.durationMs) || 0) / 1000
     : (hasLocalPlayer && activePlayer.lengthSupported
       ? Math.max(0, Number(activePlayer.length) || 0) : 0)
-  readonly property real volume: useRemotePlayback && remoteDevice
-    ? Math.max(0, Math.min(1, Number(remoteDevice.volumePercent) || 0) / 100)
+  readonly property real playbackVolume: useRemotePlayback && remoteDevice
+    ? displayedRemoteVolumePercent(remoteDevice) / 100
     : (hasLocalPlayer && activePlayer.volumeSupported
       ? Math.max(0, Math.min(1, Number(activePlayer.volume) || 0)) : 0)
+  readonly property real volume: useRemotePlayback
+    ? playbackVolume : Api.spotifydVolumeToSlider(playbackVolume)
   readonly property bool shuffle: useRemotePlayback
     ? remotePlayback.shuffle === true
     : (hasLocalPlayer && activePlayer.shuffleSupported
@@ -491,6 +496,42 @@ Item {
     }
   }
 
+  function playbackDeviceKey(device) {
+    var item = device || {}
+    var id = String(item.id || "")
+    if (id) return "id:" + id
+    return "name:" + String(item.name || item.sourceName || "").trim().toLowerCase()
+      + "|" + String(item.type || "").trim().toLowerCase()
+  }
+
+  function rememberRemoteVolume(device, value) {
+    var volumePercent = Api.normalizeVolumePercent(value)
+    if (!device || volumePercent === null) return false
+    rememberedRemoteVolumePercent = volumePercent
+    rememberedRemoteVolumeDevice = {
+      id: String(device.id || ""),
+      name: String(device.name || ""),
+      sourceName: String(device.sourceName || device.name || ""),
+      type: String(device.type || "")
+    }
+    return true
+  }
+
+  function displayedRemoteVolumePercent(device) {
+    if (rememberedRemoteVolumePercent >= 0 && rememberedRemoteVolumeDevice
+        && Api.playbackDevicesMatch(rememberedRemoteVolumeDevice, device))
+      return rememberedRemoteVolumePercent
+    var reported = Api.normalizeVolumePercent((device || {}).volumePercent)
+    return reported === null ? 0 : reported
+  }
+
+  function rememberDiscoveredReceiverVolume(device) {
+    var receiver = findDiscoveredReceiver(device)
+    if (!receiver || String(receiver.brand || "").toLowerCase() !== "sonos")
+      return false
+    return rememberRemoteVolume(device, receiver.volumePercent)
+  }
+
   function applyPlaybackState(payload) {
     var state = Api.normalizePlaybackState(payload, 192)
     if (state && state.device) {
@@ -502,6 +543,8 @@ Item {
         localDeviceId = device.id
         localRuntimeDeviceName = device.name
       }
+      if (!rememberDiscoveredReceiverVolume(device))
+        rememberRemoteVolume(device, device.volumePercent)
     }
     remotePlayback = state
     var discoveryKey = state && state.device && state.device.active
@@ -520,6 +563,16 @@ Item {
     playbackPositionTick++
     if (devicesLoaded || apiDevices.length
         || (spotifyConnectManager.devices || []).length) mergeConnectDevices()
+    if (state && state.device && state.device.active && !state.device.local
+        && !state.device.restricted
+        && Api.normalizeVolumePercent(state.device.volumePercent) === null
+        && !devicesLoading) {
+      var probeKey = playbackDeviceKey(state.device)
+      if (probeKey && probeKey !== remoteVolumeProbeKey) {
+        remoteVolumeProbeKey = probeKey
+        loadDevices()
+      }
+    }
   }
 
   function loadPlaybackState(callback, reportError) {
@@ -1616,7 +1669,7 @@ Item {
       type: String(item.type || "unknown"),
       active: item.is_active === true,
       restricted: item.is_restricted === true,
-      volumePercent: Math.max(0, Math.min(100, Number(item.volume_percent) || 0)),
+      volumePercent: Api.normalizeVolumePercent(item.volume_percent),
       supportsVolume: item.supports_volume === true,
       brand: "",
       model: "",
@@ -1631,6 +1684,10 @@ Item {
   function mergeConnectDevices() {
     var local = spotifyConnectManager.devices || []
     var current = remoteDevice && remoteDevice.active === true ? remoteDevice : null
+    var localVolumePreferred = current
+      ? rememberDiscoveredReceiverVolume(current) : false
+    if (current && !localVolumePreferred)
+      rememberRemoteVolume(current, current.volumePercent)
     var currentMatched = false
     var localById = ({})
     for (var i = 0; i < local.length; i++) localById[String(local[i].id || "")] = local[i]
@@ -1649,14 +1706,19 @@ Item {
         apiDevice.tokenType = discovered.tokenType
         apiDevice.brand = discovered.brand
         apiDevice.model = discovered.model
+        if (String(discovered.brand || "").toLowerCase() === "sonos"
+            && Api.normalizeVolumePercent(discovered.volumePercent) !== null)
+          apiDevice.volumePercent = discovered.volumePercent
       }
       if (current) {
         var apiCurrentMatch = Api.playbackDevicesMatch(apiDevice, current)
         apiDevice.active = apiCurrentMatch
         if (apiCurrentMatch) {
           currentMatched = true
+          if (!localVolumePreferred)
+            rememberRemoteVolume(current, apiDevice.volumePercent)
           apiDevice.restricted = current.restricted === true
-          apiDevice.volumePercent = current.volumePercent
+          apiDevice.volumePercent = displayedRemoteVolumePercent(current)
           apiDevice.supportsVolume = current.supportsVolume === true
         }
       }
@@ -1684,7 +1746,9 @@ Item {
         type: String(item.type || "Speaker"),
         active: currentMatch,
         restricted: currentMatch && current.restricted === true,
-        volumePercent: currentMatch ? current.volumePercent : 0,
+        volumePercent: currentMatch ? displayedRemoteVolumePercent(current)
+          : (Api.normalizeVolumePercent(item.volumePercent) === null
+            ? 0 : item.volumePercent),
         supportsVolume: currentMatch && current.supportsVolume === true,
         local: isLocal,
         localDiscovery: true,
@@ -1704,7 +1768,7 @@ Item {
         type: String(current.type || "unknown"),
         active: true,
         restricted: current.restricted === true,
-        volumePercent: current.volumePercent,
+        volumePercent: displayedRemoteVolumePercent(current),
         supportsVolume: current.supportsVolume === true,
         local: remotePlaybackIsLocal,
         localDiscovery: false,
@@ -1730,7 +1794,7 @@ Item {
       }
     }
     var preferred = explicitActiveReceiver || Api.preferredPlaybackDevice(
-      next, selectedDeviceId, selectedDeviceExplicit)
+      next, selectedDeviceId, selectedDeviceExplicit, current)
     if (selectedDeviceExplicit
         && (!preferred || preferred.id !== selectedDeviceId))
       selectedDeviceExplicit = false
@@ -1891,7 +1955,7 @@ Item {
 
   function chooseDevice() {
     return Api.preferredPlaybackDevice(devices, selectedDeviceId,
-      selectedDeviceExplicit)
+      selectedDeviceExplicit, remoteDevice)
   }
 
   function beginConnectAuthorization(device) {
@@ -2002,31 +2066,17 @@ Item {
     })
   }
 
-  function playItem(item, sourceItems, contextUri, successMessage, explicitRadio) {
-    var playbackSerial = ++radioSerial
-    var body = Api.playbackBody(item, sourceItems, contextUri)
-    if (!body) {
-      fail("This Spotify item cannot be played")
-      return
-    }
-    pendingPlayback = item
-    pendingPlaybackBody = body
-    pendingPlaybackMessage = String(successMessage || "")
-    pendingPlaybackRadio = radioPlaylistForPlayback(item, contextUri, explicitRadio)
-    pendingPlaybackSerial = playbackSerial
-    localActivationRequested = true
-    deviceProbeAttempts = 0
-    noteActivity()
-
+  function dispatchPendingPlayback(playbackSerial) {
+    if (playbackSerial !== pendingPlaybackSerial || !pendingPlaybackBody) return
     var target = chooseDevice()
-    if (target && selectedDeviceExplicit && !target.local) {
+    if (target && !target.local) {
       localActivationRequested = false
-      sendPendingPlayback(target.id)
+      sendPendingPlayback(Api.playbackTargetDeviceId(target, selectedDeviceExplicit))
       return
     }
     if (target && target.local && daemonManager.running) {
       localActivationRequested = false
-      sendPendingPlayback(target.id)
+      sendPendingPlayback(Api.playbackTargetDeviceId(target, selectedDeviceExplicit))
       return
     }
     if (!daemonManager.binaryAvailable || !daemonManager.unitAvailable) {
@@ -2043,15 +2093,43 @@ Item {
     deviceProbeTimer.restart()
   }
 
+  function playItem(item, sourceItems, contextUri, successMessage, explicitRadio) {
+    var playbackSerial = ++radioSerial
+    var body = Api.playbackBody(item, sourceItems, contextUri)
+    if (!body) {
+      fail("This Spotify item cannot be played")
+      return
+    }
+    pendingPlayback = item
+    pendingPlaybackBody = body
+    pendingPlaybackMessage = String(successMessage || "")
+    pendingPlaybackRadio = radioPlaylistForPlayback(item, contextUri, explicitRadio)
+    pendingPlaybackSerial = playbackSerial
+    localActivationRequested = true
+    deviceProbeAttempts = 0
+    noteActivity()
+
+    // Opening the panel refreshes current playback asynchronously. Wait for
+    // that in-flight result before choosing the local fallback, otherwise a
+    // fast click can race the refresh and move playback off the active device.
+    if (!selectedDeviceExplicit && remotePlaybackLoading) {
+      loadPlaybackState(function() {
+        root.dispatchPendingPlayback(playbackSerial)
+      })
+      return
+    }
+    dispatchPendingPlayback(playbackSerial)
+  }
+
   function probeForLocalDevice() {
     if (!pendingPlayback && !localActivationRequested) return
     loadDevices(function() {
       if (!root.pendingPlayback && !root.localActivationRequested) return
-      var explicitTarget = root.pendingPlayback && root.selectedDeviceExplicit
-        ? root.deviceForId(root.selectedDeviceId) : null
-      if (explicitTarget && !explicitTarget.local && !explicitTarget.restricted) {
+      var target = root.pendingPlayback ? root.chooseDevice() : null
+      if (target && !target.local) {
         root.localActivationRequested = false
-        root.sendPendingPlayback(explicitTarget.id)
+        root.sendPendingPlayback(Api.playbackTargetDeviceId(
+          target, root.selectedDeviceExplicit))
         return
       }
       var local = root.localDevice()
@@ -2060,7 +2138,7 @@ Item {
         root.selectedDeviceExplicit = false
         if (root.pendingPlayback) {
           root.localActivationRequested = false
-          root.sendPendingPlayback(local.id)
+          root.sendPendingPlayback(Api.playbackTargetDeviceId(local, false))
         } else {
           root.activateLocalDevice(local.id)
         }
@@ -2258,6 +2336,10 @@ Item {
       for (var propertyName in remoteDevice) nextDevice[propertyName] = remoteDevice[propertyName]
       nextDevice.volumePercent = Math.max(0, Math.min(100, Number(value) || 0))
       nextState.device = nextDevice
+      rememberRemoteVolume(remoteDevice, nextDevice.volumePercent)
+      if (sonosControlDevice)
+        spotifyConnectManager.rememberVolume(sonosControlDevice.id,
+          nextDevice.volumePercent)
     } else if (action === "mode") {
       var mode = String(value || "").toUpperCase()
       nextState.repeatMode = mode === "REPEAT_ONE" ? "track"
@@ -2319,10 +2401,20 @@ Item {
   }
 
   function setVolume(value) {
-    var normalized = Math.max(0, Math.min(1, Number(value) || 0))
+    var sliderValue = Math.max(0, Math.min(1, Number(value) || 0))
+    var localVolume = !useRemotePlayback && hasLocalPlayer
+      && activePlayer.volumeSupported
+    var normalized = localVolume
+      ? Api.sliderToSpotifydVolume(sliderValue) : sliderValue
     noteActivity()
+    if (!localVolume && useRemotePlayback && remoteDevice) {
+      var remotePercent = Math.round(normalized * 100)
+      rememberRemoteVolume(remoteDevice, remotePercent)
+      var receiver = findDiscoveredReceiver(remoteDevice)
+      if (receiver) spotifyConnectManager.rememberVolume(receiver.id, remotePercent)
+    }
     if (sendSonosControl("volume", String(Math.round(normalized * 100)))) return
-    if (!useRemotePlayback && hasLocalPlayer && activePlayer.volumeSupported)
+    if (localVolume)
       activePlayer.volume = normalized
     else apiAction("PUT", "/me/player/volume", {
       volume_percent: Math.round(normalized * 100),
@@ -2557,6 +2649,9 @@ Item {
     remotePlayback = null
     remotePlaybackLoading = false
     remotePlaybackWaiters = []
+    rememberedRemoteVolumeDevice = null
+    rememberedRemoteVolumePercent = -1
+    remoteVolumeProbeKey = ""
     remoteControlDiscoveryKey = ""
     playbackPositionTick++
     devicesLoaded = false

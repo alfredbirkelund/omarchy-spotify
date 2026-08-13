@@ -11,6 +11,36 @@ TestCase {
       "q=AC%2FDC%20%26%20friends&z=last")
   }
 
+  function test_spotifydVolumeCurve_hasStableEndpointsAndRoundTrips() {
+    compare(Api.spotifydVolumeToSlider(0), 0)
+    compare(Api.spotifydVolumeToSlider(1), 1)
+    compare(Api.sliderToSpotifydVolume(0), 0)
+    compare(Api.sliderToSpotifydVolume(1), 1)
+
+    var positions = [0.01, 0.1, 0.25, 0.5, 0.75, 0.9]
+    for (var i = 0; i < positions.length; i++) {
+      var slider = positions[i]
+      var backend = Api.sliderToSpotifydVolume(slider)
+      verify(Math.abs(Api.spotifydVolumeToSlider(backend) - slider) < 0.000001)
+    }
+  }
+
+  function test_spotifydVolumeCurve_usesGentlerCubicTaper() {
+    var backendMidpoint = Api.sliderToSpotifydVolume(0.5)
+    verify(backendMidpoint > 0.73 && backendMidpoint < 0.75)
+    verify(Api.spotifydVolumeToSlider(0.5) < 0.25)
+  }
+
+  function test_normalizeVolumePercent_preservesUnknownAndValidMute() {
+    compare(Api.normalizeVolumePercent(null), null)
+    compare(Api.normalizeVolumePercent(undefined), null)
+    compare(Api.normalizeVolumePercent(""), null)
+    compare(Api.normalizeVolumePercent("not-a-volume"), null)
+    compare(Api.normalizeVolumePercent(0), 0)
+    compare(Api.normalizeVolumePercent(47), 47)
+    compare(Api.normalizeVolumePercent(120), 100)
+  }
+
   function test_catalogSearchText_scopesResultsToArtist() {
     compare(Api.catalogSearchText("Miles Davis", "blue in green"),
       "blue in green artist:\"Miles Davis\"")
@@ -321,14 +351,57 @@ TestCase {
     }))
   }
 
-  function test_playbackDefaultsToLocalDevice() {
+  function test_playbackPreservesActiveDeviceAndFallsBackToLocal() {
     var external = { id: "desktop", local: false, active: true, restricted: false }
     var local = { id: "omarchy", local: true, active: false, restricted: false }
     var devices = [external, local]
 
-    compare(Api.preferredPlaybackDevice(devices, "", false).id, "omarchy")
-    compare(Api.preferredPlaybackDevice(devices, "desktop", false).id, "omarchy")
+    compare(Api.preferredPlaybackDevice(devices, "", false).id, "desktop")
+    compare(Api.preferredPlaybackDevice(devices, "omarchy", false).id, "desktop")
     compare(Api.preferredPlaybackDevice(devices, "desktop", true).id, "desktop")
+
+    external.active = false
+    compare(Api.preferredPlaybackDevice(devices, "", false).id, "omarchy")
+  }
+
+  function test_currentPlaybackDeviceWorksBeforeDeviceListLoads() {
+    var current = {
+      id: "phone", name: "Phone", type: "Smartphone",
+      local: false, active: true, restricted: false
+    }
+
+    compare(Api.preferredPlaybackDevice([], "", false, current).id, "phone")
+  }
+
+  function test_explicitDeviceOverridesCurrentPlaybackDevice() {
+    var selected = { id: "speaker", local: false, active: false, restricted: false }
+    var current = { id: "phone", local: false, active: true, restricted: false }
+
+    compare(Api.preferredPlaybackDevice([selected], "speaker", true, current).id,
+      "speaker")
+  }
+
+  function test_activePlaybackTargetOmitsDeviceId() {
+    var active = { id: "phone", active: true }
+    var fallback = { id: "omarchy", active: false }
+
+    compare(Api.playbackTargetDeviceId(active, false), "")
+    compare(Api.playbackTargetDeviceId(active, true), "phone")
+    compare(Api.playbackTargetDeviceId(fallback, false), "omarchy")
+    compare(Api.playbackTargetDeviceId(null, false), "")
+  }
+
+  function test_restrictedActiveDeviceDoesNotSilentlyFallBackToLocal() {
+    var speaker = {
+      id: "speaker", local: false, active: true, restricted: true
+    }
+    var local = {
+      id: "omarchy", local: true, active: false, restricted: false
+    }
+
+    compare(Api.preferredPlaybackDevice([speaker, local], "", false).id,
+      "speaker")
+    compare(Api.playbackTargetDeviceId(speaker, false), "")
   }
 
   function test_unavailableExplicitDeviceFallsBackToLocal() {
@@ -376,11 +449,25 @@ TestCase {
     compare(state.device.id, "")
     compare(state.device.name, "Work")
     compare(state.device.restricted, true)
+    compare(state.device.volumePercent, 33)
     compare(state.item.name, "A song")
     compare(state.item.subtitle, "An artist")
     compare(state.progressSeconds, 42)
     compare(state.repeatMode, "context")
     compare(state.shuffle, true)
+  }
+
+  function test_normalizePlaybackState_preservesUnknownRemoteVolume() {
+    var state = Api.normalizePlaybackState({
+      device: {
+        id: "phone", name: "Phone", type: "Smartphone", is_active: true,
+        is_restricted: false, volume_percent: null, supports_volume: true
+      }
+    }, 192)
+
+    verify(state !== null)
+    compare(state.device.volumePercent, null)
+    compare(state.device.supportsVolume, true)
   }
 
   function test_normalizePlaybackState_rejectsEmptyPlaybackResponse() {

@@ -124,7 +124,7 @@ def request_sonos_soap(
     control_path: str,
     action: str,
     arguments: dict[str, str],
-) -> None:
+) -> ElementTree.Element:
     """Issue one fixed, locally scoped Sonos UPnP control request."""
     address = safe_address(str(receiver.get("address") or ""))
     try:
@@ -170,12 +170,32 @@ def request_sonos_soap(
             raise ConnectError("receiver returned an invalid response") from error
         if any(node.tag.rsplit("}", 1)[-1] == "Fault" for node in root.iter()):
             raise ConnectError("receiver rejected playback control")
+        return root
     except ConnectError:
         raise
     except (OSError, TimeoutError, http.client.HTTPException) as error:
         raise ConnectError("receiver did not respond to playback control") from error
     finally:
         connection.close()
+
+
+def sonos_volume(receiver: dict[str, Any]) -> int:
+    """Read a Sonos player's current master volume from RenderingControl."""
+    root = request_sonos_soap(
+        receiver,
+        SONOS_RENDERING_CONTROL,
+        "/MediaRenderer/RenderingControl/Control",
+        "GetVolume",
+        {"InstanceID": "0", "Channel": "Master"},
+    )
+    for node in root.iter():
+        if node.tag.rsplit("}", 1)[-1] != "CurrentVolume":
+            continue
+        value = str(node.text or "").strip()
+        if value.isdigit() and int(value) <= 100:
+            return int(value)
+        break
+    raise ConnectError("receiver returned an invalid volume")
 
 
 def parse_txt(raw: str) -> dict[str, str]:
@@ -197,7 +217,7 @@ def receiver_name(info: dict[str, Any], service_name: str) -> str:
     return "Spotify Connect device"
 
 
-def discover_receivers() -> list[dict[str, Any]]:
+def discover_receivers(include_volume: bool = False) -> list[dict[str, Any]]:
     try:
         result = subprocess.run(
             ["avahi-browse", "--resolve", "--parsable", "--terminate", "_spotify-connect._tcp"],
@@ -240,7 +260,7 @@ def discover_receivers() -> list[dict[str, Any]]:
 
         model = str(info.get("modelDisplayName") or "").strip()[:120]
         brand = str(info.get("brandDisplayName") or "").strip()[:120]
-        discovered[device_id] = {
+        device = {
             "id": device_id,
             "name": receiver_name(info, service_name),
             "type": str(info.get("deviceType") or "Speaker").strip().title()[:80],
@@ -258,6 +278,14 @@ def discover_receivers() -> list[dict[str, Any]]:
             "serviceVersion": version,
             "publicKey": str(info.get("publicKey") or ""),
         }
+        if include_volume and brand.casefold() == "sonos":
+            try:
+                device["volumePercent"] = sonos_volume(device)
+            except ConnectError:
+                # Discovery and playback control still work when a receiver
+                # temporarily declines the supplemental volume query.
+                pass
+        discovered[device_id] = device
     return sorted(discovered.values(), key=lambda item: item["name"].casefold())
 
 
@@ -642,7 +670,7 @@ def main() -> int:
     command = sys.argv[1] if len(sys.argv) == 2 else ""
     try:
         if command == "discover":
-            devices = discover_receivers()
+            devices = discover_receivers(include_volume=True)
             for item in devices:
                 for private_field in (
                     "address", "port", "cpath", "serviceVersion", "publicKey", "clientId"

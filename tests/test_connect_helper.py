@@ -140,6 +140,32 @@ class ConnectHelperTests(unittest.TestCase):
             {"InstanceID": "0", "Channel": "Master", "DesiredVolume": "37"},
         )
 
+    def test_sonos_volume_reads_rendering_service_value(self) -> None:
+        receiver = {
+            "id": "4c1e461f8fe6be10d41c504f6e5121a5275d1d6d",
+            "address": "192.168.1.10",
+            "port": 1400,
+            "brand": "Sonos",
+        }
+        response = helper.ElementTree.fromstring(
+            "<Envelope><Body><GetVolumeResponse>"
+            "<CurrentVolume>42</CurrentVolume>"
+            "</GetVolumeResponse></Body></Envelope>"
+        )
+        with mock.patch.object(
+            helper, "request_sonos_soap", return_value=response
+        ) as soap:
+            result = helper.sonos_volume(receiver)
+
+        self.assertEqual(result, 42)
+        soap.assert_called_once_with(
+            receiver,
+            helper.SONOS_RENDERING_CONTROL,
+            "/MediaRenderer/RenderingControl/Control",
+            "GetVolume",
+            {"InstanceID": "0", "Channel": "Master"},
+        )
+
     def test_sonos_seek_formats_relative_time(self) -> None:
         receiver = {
             "id": "4c1e461f8fe6be10d41c504f6e5121a5275d1d6d",

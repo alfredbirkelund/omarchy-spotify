@@ -55,24 +55,31 @@ It does not request profile or email permissions.
 
 ## Local Spotify Connect
 
-The app prefers its own local device unless the user explicitly chooses another
-Spotify Connect device. It can perform a one-shot `_spotify-connect._tcp` lookup
-for nearby receivers omitted from Spotify's device response. For ordinary
-receivers, the helper re-encrypts `spotifyd`'s owner-only reusable credential for
-the receiver's ephemeral ZeroConf key. For authorization-code receivers such as
-Sonos, it exchanges the short-lived streaming token for a receiver-scoped code
-and sends that code to the receiver. It then waits for Spotify to report the
-genuine device before transferring playback when needed. It never asks for or
-stores the user's password.
+New playback keeps Spotify's currently active device. An explicit
+choice in the Devices view takes priority, and the app's local device is used
+only when no active target is available. Restricted active devices are kept as
+the target rather than silently moving playback locally; Spotify may reject the
+new selection when it does not allow Web API control. The app can perform a
+one-shot `_spotify-connect._tcp` lookup for nearby receivers omitted from
+Spotify's device response. For ordinary receivers, the helper re-encrypts
+`spotifyd`'s owner-only reusable credential for the receiver's ephemeral
+ZeroConf key. For
+authorization-code receivers such as Sonos, it exchanges the short-lived
+streaming token for a receiver-scoped code and sends that code to the receiver.
+It then waits for Spotify to report the genuine device before transferring
+playback when needed. It never asks for or stores the user's password.
 
 Once a restricted Sonos is active, the Web API rejects its player commands.
 The app therefore resolves that same receiver on the LAN and sends fixed UPnP
 AVTransport or RenderingControl actions for play, pause, previous, next, seek,
 shuffle/repeat mode, and volume. Targets still come only from validated local
-Spotify Connect discovery. When playback has moved elsewhere, a local Play wake
-is attempted first; the OAuth activation flow remains the fallback for a Sonos
-that has actually lost its Spotify session. Receiver discovery and requests are
-retried briefly because Sonos can sleep its endpoint during a handoff.
+Spotify Connect discovery. Discovery also reads the current Sonos master volume
+from RenderingControl because Spotify's `volume_percent` field is nullable; the
+UI remembers that value and updates it immediately after a volume command. When
+playback has moved elsewhere, a local Play wake is attempted first; the OAuth
+activation flow remains the fallback for a Sonos that has actually lost its
+Spotify session. Receiver discovery and requests are retried briefly because
+Sonos can sleep its endpoint during a handoff.
 
 The current-playback response is also merged into the device list. This matters
 for models that Spotify omits from `/me/player/devices`, or whose active device
