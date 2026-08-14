@@ -123,7 +123,9 @@ Open **Settings** in the app to:
 - reconnect Spotify or log out;
 - rename how this computer appears in Spotify Connect;
 - choose when local playback goes to sleep;
-- show or hide the song title in the bar; and
+- show or hide the song title and artist in the bar;
+- scroll long bar text so the full artist and title remain readable, with an
+  adjustable speed from 0.25× to 3×; and
 - choose standard, high, or very high audio quality. New installs default to
   very high (320 kbps).
 

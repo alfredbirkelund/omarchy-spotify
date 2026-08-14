@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Optionally show the artist before the song title in the bar, scroll long bar
+  text so the complete label remains readable, and adjust its speed from 0.25×
+  to 3×.
 - Keep this computer available in Spotify Connect while the mini player or full
   app is open, waking local playback and refreshing its device registration when
   either surface appears.

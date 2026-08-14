@@ -11,6 +11,27 @@ TestCase {
       "q=AC%2FDC%20%26%20friends&z=last")
   }
 
+  function test_barTrackText_optionallyPrefixesArtist() {
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", false), "Blue in Green")
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", true),
+      "Miles Davis - Blue in Green")
+    compare(Api.barTrackText("  Blue in Green  ", "  Miles Davis  ", true),
+      "Miles Davis - Blue in Green")
+    compare(Api.barTrackText("Blue in Green", "", true), "Blue in Green")
+    compare(Api.barTrackText("", "Miles Davis", true), "Miles Davis")
+    compare(Api.barTrackText("", "Miles Davis", false), "")
+  }
+
+  function test_normalizedScrollSpeed_defaultsClampsAndSnaps() {
+    compare(Api.normalizedScrollSpeed(undefined), 1)
+    compare(Api.normalizedScrollSpeed("not-a-speed"), 1)
+    compare(Api.normalizedScrollSpeed(0), 0.25)
+    compare(Api.normalizedScrollSpeed(4), 3)
+    compare(Api.normalizedScrollSpeed(1), 1)
+    compare(Api.normalizedScrollSpeed(1.12), 1)
+    compare(Api.normalizedScrollSpeed(1.13), 1.25)
+  }
+
   function test_spotifydVolumeCurve_hasStableEndpointsAndRoundTrips() {
     compare(Api.spotifydVolumeToSlider(0), 0)
     compare(Api.spotifydVolumeToSlider(1), 1)

@@ -35,6 +35,9 @@ Item {
   property string draftDeviceName: "Omarchy Spotify"
   property string draftIdleMinutes: "15"
   property bool draftShowTitle: true
+  property bool draftShowArtist: false
+  property bool draftScrollBarText: false
+  property real draftScrollSpeed: 1
   property string draftAudioQuality: "320 kbps"
   property var contextItem: null
   property var contextSourceItems: []
@@ -68,6 +71,9 @@ Item {
     draftDeviceName = service.deviceName
     draftIdleMinutes = String(service.idleShutdownMinutes)
     draftShowTitle = service.showTrackTitle
+    draftShowArtist = service.showArtistName
+    draftScrollBarText = service.scrollBarText
+    draftScrollSpeed = service.scrollSpeed
     draftAudioQuality = service.audioQuality
   }
 
@@ -78,6 +84,9 @@ Item {
       idleShutdownMinutes: Math.max(0, Math.min(1440,
         Math.floor(Number(draftIdleMinutes) || 0))),
       showTrackTitle: draftShowTitle ? "On" : "Off",
+      showArtistName: draftShowArtist ? "On" : "Off",
+      scrollBarText: draftScrollBarText ? "On" : "Off",
+      scrollSpeed: Api.normalizedScrollSpeed(draftScrollSpeed),
       audioQuality: draftAudioQuality
     }
     service.persistSettings(values)
@@ -94,6 +103,11 @@ Item {
     if (draftAudioQuality === "96 kbps") return "Standard · 96 kbps"
     if (draftAudioQuality === "320 kbps") return "Very high · 320 kbps"
     return "High · 160 kbps"
+  }
+
+  function scrollSpeedLabel() {
+    var value = Api.normalizedScrollSpeed(draftScrollSpeed)
+    return value.toFixed(2).replace(/\.00$/, "").replace(/0$/, "") + "×"
   }
 
   function connectionButtonText() {
@@ -3224,7 +3238,7 @@ Item {
               }
             }
 
-            Row {
+            Flow {
               width: parent.width
               spacing: Style.space(8)
 
@@ -3233,6 +3247,20 @@ Item {
                 foreground: root.foreground
                 selected: root.draftShowTitle
                 onClicked: root.draftShowTitle = !root.draftShowTitle
+              }
+              Button {
+                text: root.draftShowArtist ? "Artist name in bar · On" : "Artist name in bar · Off"
+                foreground: root.foreground
+                selected: root.draftShowArtist
+                enabled: root.draftShowTitle
+                onClicked: root.draftShowArtist = !root.draftShowArtist
+              }
+              Button {
+                text: root.draftScrollBarText ? "Scroll long bar text · On" : "Scroll long bar text · Off"
+                foreground: root.foreground
+                selected: root.draftScrollBarText
+                enabled: root.draftShowTitle
+                onClicked: root.draftScrollBarText = !root.draftScrollBarText
               }
               Button {
                 text: "Audio quality · " + root.audioQualityLabel()
@@ -3247,6 +3275,55 @@ Item {
                 foreground: root.foreground
                 selected: true
                 onClicked: root.saveSettings()
+              }
+            }
+
+            Column {
+              width: parent.width
+              spacing: Style.space(4)
+              enabled: root.draftShowTitle && root.draftScrollBarText
+              opacity: enabled ? 1 : 0.45
+
+              Row {
+                width: parent.width
+
+                Text {
+                  id: scrollSpeedTitle
+                  text: "SCROLL SPEED"
+                  color: Qt.darker(root.foreground, 1.4)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                Item {
+                  width: Math.max(0, parent.width - scrollSpeedTitle.implicitWidth
+                    - scrollSpeedValue.implicitWidth)
+                  height: 1
+                }
+                Text {
+                  id: scrollSpeedValue
+                  text: root.scrollSpeedLabel()
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: true
+                }
+              }
+
+              PanelSlider {
+                width: parent.width
+                bar: root.panelBar
+                minimum: 0.25
+                maximum: 3
+                step: 0.25
+                tickCount: 12
+                value: root.draftScrollSpeed
+                onMoved: function(value) {
+                  root.draftScrollSpeed = Api.normalizedScrollSpeed(value)
+                }
+                onReleased: function(value) {
+                  root.draftScrollSpeed = Api.normalizedScrollSpeed(value)
+                }
               }
             }
 

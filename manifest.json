@@ -32,6 +32,9 @@
       "deviceName": "Omarchy Spotify",
       "idleShutdownMinutes": 15,
       "showTrackTitle": "On",
+      "showArtistName": "Off",
+      "scrollBarText": "Off",
+      "scrollSpeed": "1",
       "audioQuality": "320 kbps"
     },
     "schema": [
@@ -61,6 +64,33 @@
           "Off"
         ],
         "defaultValue": "On"
+      },
+      {
+        "key": "showArtistName",
+        "type": "enum",
+        "label": "Show artist name in bar",
+        "options": [
+          "On",
+          "Off"
+        ],
+        "defaultValue": "Off"
+      },
+      {
+        "key": "scrollBarText",
+        "type": "enum",
+        "label": "Scroll long bar text",
+        "options": [
+          "On",
+          "Off"
+        ],
+        "defaultValue": "Off"
+      },
+      {
+        "key": "scrollSpeed",
+        "type": "string",
+        "label": "Bar text scroll speed",
+        "defaultValue": "1",
+        "description": "Multiplier from 0.25 to 3.00. The default speed is 1."
       },
       {
         "key": "audioQuality",

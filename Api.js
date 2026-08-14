@@ -101,6 +101,19 @@ function parseJson(text, fallback) {
   }
 }
 
+function barTrackText(title, artist, showArtist) {
+  var cleanTitle = String(title || "").trim()
+  var cleanArtist = String(artist || "").trim()
+  if (!cleanTitle) return showArtist ? cleanArtist : ""
+  return showArtist && cleanArtist ? cleanArtist + " - " + cleanTitle : cleanTitle
+}
+
+function normalizedScrollSpeed(value) {
+  var speed = Number(value)
+  if (!isFinite(speed)) speed = 1
+  return Math.round(Math.max(0.25, Math.min(3, speed)) * 4) / 4
+}
+
 function safeApiUrl(path) {
   var value = String(path || "")
   if (value.charAt(0) === "/") return API_BASE + value

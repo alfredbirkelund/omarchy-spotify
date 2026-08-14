@@ -14,12 +14,10 @@ BarWidget {
     ? bar.shell.serviceFor("quickshell.spotify") : null
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string surfaceKey: "spotify-popup-" + String(root)
-  readonly property bool iconOnly: !spotify || !spotify.showTrackTitle || vertical || !spotify.hasMedia
-  readonly property string displayText: {
-    var base = ""
-    if (root.iconOnly) return base
-    return base + "  " + spotify.title
-  }
+  readonly property string barText: spotify
+    ? Api.barTrackText(spotify.title, spotify.artist, spotify.showArtistName) : ""
+  readonly property bool iconOnly: !spotify || !spotify.showTrackTitle
+    || vertical || !spotify.hasMedia || barText === ""
   property bool popupOpen: false
   readonly property bool opened: popupOpen
 
@@ -47,7 +45,14 @@ BarWidget {
 
   TextMetrics {
     id: labelMetrics
-    text: root.displayText
+    text: root.barText
+    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+    font.pixelSize: Style.font.body
+  }
+
+  TextMetrics {
+    id: glyphMetrics
+    text: ""
     font.family: root.bar ? root.bar.fontFamily : Style.font.family
     font.pixelSize: Style.font.body
   }
@@ -56,7 +61,9 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.displayText
+    text: ""
+    labelVisible: root.iconOnly
+    hasVisualContent: true
     fontSize: root.iconOnly ? Style.font.bodySmall : Style.font.body
     active: root.spotify && root.spotify.playing
     // Keep the playing state legible on transparent bars. WidgetButton's
@@ -68,9 +75,61 @@ BarWidget {
       : "Omarchy Spotify"
     fixedWidth: root.vertical ? root.barSize
       : (root.iconOnly ? Style.bar.statusSlot
-        : Math.min(Style.space(240), Math.max(root.barSize, labelMetrics.advanceWidth + Style.space(18))))
+        : Math.min(Style.space(240), Math.max(root.barSize,
+          glyphMetrics.advanceWidth + labelMetrics.advanceWidth + Style.space(24))))
     fixedHeight: root.vertical && root.iconOnly ? Style.bar.statusSlot : -1
     clip: true
+
+    Row {
+      id: barContent
+      anchors.centerIn: parent
+      spacing: Style.space(6)
+      visible: !root.iconOnly
+      enabled: false
+
+      Text {
+        id: barGlyph
+        anchors.verticalCenter: parent.verticalCenter
+        text: ""
+        color: button.foreground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.body
+        renderType: Text.NativeRendering
+      }
+
+      Item {
+        id: scrollClip
+        width: Math.max(0, button.width - barGlyph.implicitWidth
+          - barContent.spacing - button.scaledHorizontalMargin * 2)
+        height: barGlyph.implicitHeight
+        anchors.verticalCenter: parent.verticalCenter
+        clip: true
+
+        Text {
+          id: barLabel
+          anchors.verticalCenter: parent.verticalCenter
+          text: root.barText
+          color: button.foreground
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.body
+          renderType: Text.NativeRendering
+
+          readonly property bool needsScroll: labelMetrics.advanceWidth > scrollClip.width
+
+          NumberAnimation on x {
+            id: barScrollAnimation
+            running: root.spotify && root.spotify.scrollBarText
+              && barLabel.needsScroll && !root.popupOpen && !root.vertical
+            loops: Animation.Infinite
+            duration: Math.round(Math.max(6000, labelMetrics.advanceWidth * 25)
+              / Math.max(0.25, root.spotify ? root.spotify.scrollSpeed : 1))
+            from: scrollClip.width
+            to: -labelMetrics.advanceWidth
+            easing.type: Easing.Linear
+          }
+        }
+      }
+    }
 
     onPressed: function(mouseButton) {
       if (mouseButton === Qt.MiddleButton) {
