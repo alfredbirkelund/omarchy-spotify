@@ -101,11 +101,17 @@ function parseJson(text, fallback) {
   }
 }
 
-function barTrackText(title, artist, showArtist) {
+function barTrackText(title, artist, showTitle, showArtist) {
   var cleanTitle = String(title || "").trim()
   var cleanArtist = String(artist || "").trim()
-  if (!cleanTitle) return showArtist ? cleanArtist : ""
-  return showArtist && cleanArtist ? cleanArtist + " - " + cleanTitle : cleanTitle
+  var parts = []
+  if (showArtist && cleanArtist) parts.push(cleanArtist)
+  if (showTitle && cleanTitle) parts.push(cleanTitle)
+  return parts.join(" - ")
+}
+
+function canScrollBarText(showTitle, showArtist) {
+  return showTitle === true || showArtist === true
 }
 
 function normalizedScrollSpeed(value) {

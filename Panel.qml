@@ -110,6 +110,11 @@ Item {
     return value.toFixed(2).replace(/\.00$/, "").replace(/0$/, "") + "×"
   }
 
+  function enforceScrollAvailability() {
+    if (!Api.canScrollBarText(draftShowTitle, draftShowArtist))
+      draftScrollBarText = false
+  }
+
   function connectionButtonText() {
     if (!service) return "Spotify unavailable"
     if (service.loginBusy) return service.loginProgress + "…"
@@ -3246,20 +3251,25 @@ Item {
                 text: root.draftShowTitle ? "Song title in bar · On" : "Song title in bar · Off"
                 foreground: root.foreground
                 selected: root.draftShowTitle
-                onClicked: root.draftShowTitle = !root.draftShowTitle
+                onClicked: {
+                  root.draftShowTitle = !root.draftShowTitle
+                  root.enforceScrollAvailability()
+                }
               }
               Button {
                 text: root.draftShowArtist ? "Artist name in bar · On" : "Artist name in bar · Off"
                 foreground: root.foreground
                 selected: root.draftShowArtist
-                enabled: root.draftShowTitle
-                onClicked: root.draftShowArtist = !root.draftShowArtist
+                onClicked: {
+                  root.draftShowArtist = !root.draftShowArtist
+                  root.enforceScrollAvailability()
+                }
               }
               Button {
                 text: root.draftScrollBarText ? "Scroll long bar text · On" : "Scroll long bar text · Off"
                 foreground: root.foreground
                 selected: root.draftScrollBarText
-                enabled: root.draftShowTitle
+                enabled: Api.canScrollBarText(root.draftShowTitle, root.draftShowArtist)
                 onClicked: root.draftScrollBarText = !root.draftScrollBarText
               }
               Button {
@@ -3281,7 +3291,8 @@ Item {
             Column {
               width: parent.width
               spacing: Style.space(4)
-              enabled: root.draftShowTitle && root.draftScrollBarText
+              enabled: Api.canScrollBarText(root.draftShowTitle, root.draftShowArtist)
+                && root.draftScrollBarText
               opacity: enabled ? 1 : 0.45
 
               Row {

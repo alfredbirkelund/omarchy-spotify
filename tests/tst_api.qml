@@ -11,15 +11,25 @@ TestCase {
       "q=AC%2FDC%20%26%20friends&z=last")
   }
 
-  function test_barTrackText_optionallyPrefixesArtist() {
-    compare(Api.barTrackText("Blue in Green", "Miles Davis", false), "Blue in Green")
-    compare(Api.barTrackText("Blue in Green", "Miles Davis", true),
+  function test_barTrackText_respectsIndependentTitleAndArtistSettings() {
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, false),
+      "Blue in Green")
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", false, true),
+      "Miles Davis")
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, true),
       "Miles Davis - Blue in Green")
-    compare(Api.barTrackText("  Blue in Green  ", "  Miles Davis  ", true),
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", false, false), "")
+    compare(Api.barTrackText("  Blue in Green  ", "  Miles Davis  ", true, true),
       "Miles Davis - Blue in Green")
-    compare(Api.barTrackText("Blue in Green", "", true), "Blue in Green")
-    compare(Api.barTrackText("", "Miles Davis", true), "Miles Davis")
-    compare(Api.barTrackText("", "Miles Davis", false), "")
+    compare(Api.barTrackText("Blue in Green", "", true, true), "Blue in Green")
+    compare(Api.barTrackText("", "Miles Davis", true, true), "Miles Davis")
+  }
+
+  function test_scrollAvailability_requiresAtLeastOneBarLabel() {
+    verify(Api.canScrollBarText(true, true))
+    verify(Api.canScrollBarText(true, false))
+    verify(Api.canScrollBarText(false, true))
+    verify(!Api.canScrollBarText(false, false))
   }
 
   function test_normalizedScrollSpeed_defaultsClampsAndSnaps() {

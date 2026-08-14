@@ -15,9 +15,10 @@ BarWidget {
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string surfaceKey: "spotify-popup-" + String(root)
   readonly property string barText: spotify
-    ? Api.barTrackText(spotify.title, spotify.artist, spotify.showArtistName) : ""
-  readonly property bool iconOnly: !spotify || !spotify.showTrackTitle
-    || vertical || !spotify.hasMedia || barText === ""
+    ? Api.barTrackText(spotify.title, spotify.artist,
+      spotify.showTrackTitle, spotify.showArtistName) : ""
+  readonly property bool iconOnly: !spotify || vertical || !spotify.hasMedia
+    || barText === ""
   property bool popupOpen: false
   readonly property bool opened: popupOpen
 

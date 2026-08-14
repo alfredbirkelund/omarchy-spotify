@@ -338,6 +338,8 @@ Item {
     next.showTrackTitle = String(next.showTrackTitle || "On") === "Off" ? "Off" : "On"
     next.showArtistName = String(next.showArtistName || "Off") === "On" ? "On" : "Off"
     next.scrollBarText = String(next.scrollBarText || "Off") === "On" ? "On" : "Off"
+    if (!Api.canScrollBarText(next.showTrackTitle === "On", next.showArtistName === "On"))
+      next.scrollBarText = "Off"
     next.scrollSpeed = String(Api.normalizedScrollSpeed(next.scrollSpeed))
     var quality = String(next.audioQuality || "320 kbps")
     next.audioQuality = quality.indexOf("96") === 0 ? "96 kbps"
