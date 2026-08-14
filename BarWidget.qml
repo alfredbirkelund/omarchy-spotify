@@ -127,6 +127,7 @@ BarWidget {
             from: scrollClip.width
             to: -labelMetrics.advanceWidth
             easing.type: Easing.Linear
+            onStopped: barLabel.x = 0
           }
         }
       }

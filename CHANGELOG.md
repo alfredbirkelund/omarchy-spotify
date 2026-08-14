@@ -4,7 +4,8 @@
 
 - Independently show the artist or song title in the bar, scroll long bar text
   so the complete label remains readable, and adjust its speed from 0.25× to
-  3×. Scrolling turns off automatically when both text fields are hidden.
+  3×. Scrolling turns off automatically when both text fields are hidden, and
+  stopping it restores the label to its starting position.
 - Keep this computer available in Spotify Connect while the mini player or full
   app is open, waking local playback and refreshing its device registration when
   either surface appears.
