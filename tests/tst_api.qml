@@ -46,6 +46,135 @@ TestCase {
       "blue in green artist:\"Miles Davis\"")
     compare(Api.catalogSearchText("AC/DC \"Live\"", ""),
       "artist:\"AC/DC Live\"")
+    compare(Api.artistPlaylistSearchText("Miles Davis", "blue in green"),
+      "blue in green Miles Davis")
+  }
+
+  function test_responsiveMediaRowsAndSearchColumnsUseMeasuredWidth() {
+    verify(Api.mediaRowShouldCompact(220, 180, 4))
+    verify(!Api.mediaRowShouldCompact(180, 220, 4))
+    verify(!Api.mediaRowShouldCompact(220, 180, 0))
+    compare(Api.responsiveResultColumns(1000, 760), 2)
+    compare(Api.responsiveResultColumns(500, 760), 1)
+  }
+
+  function test_artistSubtitleSuffix_keepsNonArtistAlbumDetails() {
+    compare(Api.artistSubtitleSuffix({
+      subtitle: "Jimi Hendrix · Album · 1967",
+      artists: [{ name: "Jimi Hendrix" }]
+    }), " · Album · 1967")
+    compare(Api.artistSubtitleSuffix({ subtitle: "Playlist", artists: [] }), "")
+  }
+
+  function test_artistForName_prefersAnExactArtist() {
+    var artists = [
+      { id: "tribute", type: "artist", name: "The Jimi Hendrix Experience Tribute" },
+      { id: "jimi", type: "artist", name: "Jimi Hendrix" }
+    ]
+    compare(Api.artistForName(artists, "jimi hendrix").id, "jimi")
+    compare(Api.artistForName(artists, "unknown").id, "tribute")
+    compare(Api.artistForName([{ type: "album", name: "Jimi Hendrix" }],
+      "Jimi Hendrix"), null)
+  }
+
+  function test_artistContextAvailable_onlyLinksTrackPerformers() {
+    verify(Api.artistContextAvailable("track", "", []))
+    verify(Api.artistContextAvailable("", "track-id", []))
+    verify(Api.artistContextAvailable("", "", [{ name: "Björk" }]))
+    verify(!Api.artistContextAvailable("episode", "", []))
+    verify(!Api.artistContextAvailable("chapter", "", []))
+  }
+
+  function test_lyricsSong_requiresATrackAndPreservesPlaybackMetadata() {
+    compare(Api.lyricsSong("", "Episode", "Podcast", "Show", 120, ""), null)
+    compare(Api.lyricsSong("track-id", "", "Artist", "Album", 180, ""), null)
+
+    var song = Api.lyricsSong("track-id", " Song ", " Artist ", " Album ",
+      183.5, "https://images.example/cover.jpg", 91.75)
+    compare(song.id, "spotify:track:track-id")
+    compare(song.title, "Song")
+    compare(song.artist, "Artist")
+    compare(song.album, "Album")
+    compare(song.duration, 183.5)
+    compare(song.coverUrl, "https://images.example/cover.jpg")
+    compare(song.positionSeconds, 91.75)
+
+    compare(Api.lyricsSong("track-id", "Song", "Artist", "", 180, "", -5)
+      .positionSeconds, 0)
+    compare(Api.lyricsSong("track-id", "Song", "Artist", "", 180, "", 200)
+      .positionSeconds, 180)
+  }
+
+  function test_optionalLyricsPluginRequiresConfirmationBeforeSetup() {
+    compare(Api.optionalPluginState(false, false), "missing")
+    compare(Api.optionalPluginState(true, false), "disabled")
+    compare(Api.optionalPluginState(true, true), "ready")
+
+    compare(Api.optionalPluginSetupCommand("missing", "stappmus.lyrics",
+      "https://github.com/stappmus/Omasing.git"), [
+        "omarchy", "plugin", "add",
+        "https://github.com/stappmus/Omasing.git", "--enable", "--yes"
+      ])
+    compare(Api.optionalPluginSetupCommand("disabled", "stappmus.lyrics",
+      "https://github.com/stappmus/Omasing.git"), [
+        "omarchy", "plugin", "enable", "stappmus.lyrics", "--section", "center"
+      ])
+    compare(Api.optionalPluginSetupCommand("ready", "stappmus.lyrics",
+      "https://github.com/stappmus/Omasing.git"), [])
+  }
+
+  function test_spotifyTrackId_acceptsUrisUrlsAndSpotifydObjectPaths() {
+    compare(Api.spotifyTrackId("spotify:track:14XWXWv5FoCbFzLksawpEe"),
+      "14XWXWv5FoCbFzLksawpEe")
+    compare(Api.spotifyTrackId("https://open.spotify.com/track/14XWXWv5FoCbFzLksawpEe"),
+      "14XWXWv5FoCbFzLksawpEe")
+    compare(Api.spotifyTrackId("/spotify/track/14XWXWv5FoCbFzLksawpEe"),
+      "14XWXWv5FoCbFzLksawpEe")
+    compare(Api.spotifyTrackId("/spotify/episode/not-a-track"), "")
+  }
+
+  function test_arrayValues_acceptsQmlSequenceShape() {
+    var sequence = ({ length: 2 })
+    sequence[0] = { name: "One" }
+    sequence[1] = { name: "Two" }
+
+    verify(!Array.isArray(sequence))
+    compare(Api.arrayValues(sequence).length, 2)
+    compare(Api.artistNames(sequence), "One, Two")
+  }
+
+  function test_searchScope_tracksTheOpenAreaAndSearchMode() {
+    var artist = Api.searchScope("detail", {
+      id: "artist-id", uri: "spotify:artist:artist-id",
+      type: "artist", name: "Björk"
+    }, null, "recent", "tracks")
+    verify(artist.available)
+    compare(artist.key, "detail:spotify:artist:artist-id")
+    compare(artist.label, "Björk")
+    compare(artist.mode, "artist")
+
+    var playlist = Api.searchScope("playlists", null, {
+      id: "playlist-id", type: "playlist", name: "Night drive"
+    }, "recent", "tracks")
+    verify(playlist.available)
+    compare(playlist.key, "playlist:playlist-id")
+    compare(playlist.label, "Night drive")
+    compare(playlist.mode, "filter")
+
+    compare(Api.searchScope("home", null, null, "artists", "tracks").label,
+      "Top artists")
+    compare(Api.searchScope("library", null, null, "recent", "albums").label,
+      "Saved albums")
+    verify(!Api.searchScope("search", null, null, "recent", "tracks").available)
+    verify(!Api.searchScope("devices", null, null, "recent", "tracks").available)
+  }
+
+  function test_universalSearchVisibility_isExplicitAndHiddenFromDevices() {
+    verify(Api.universalSearchVisible("search", false))
+    verify(Api.universalSearchVisible("setup", true))
+    verify(!Api.universalSearchVisible("setup", false))
+    verify(!Api.universalSearchVisible("devices", true))
+    verify(!Api.universalSearchVisible("login", true))
   }
 
   function test_tracksForArtist_filtersBroadSearchByStableArtistId() {
@@ -265,6 +394,61 @@ TestCase {
     ]))
   }
 
+  function test_playlistReorderBody_translatesFinalIndexesForSpotify() {
+    compare(JSON.stringify(Api.playlistReorderBody(1, 3, 4, "snapshot")),
+      JSON.stringify({
+        range_start: 1,
+        insert_before: 4,
+        range_length: 1,
+        snapshot_id: "snapshot"
+      }))
+    compare(JSON.stringify(Api.playlistReorderBody(3, 1, 4, "")),
+      JSON.stringify({ range_start: 3, insert_before: 1, range_length: 1 }))
+    compare(Api.playlistReorderBody(1, 1, 4, "snapshot"), null)
+    compare(Api.playlistReorderBody(-1, 2, 4, "snapshot"), null)
+    compare(Api.playlistReorderBody(0, 4, 4, "snapshot"), null)
+  }
+
+  function test_playlistReorder_preservesRawPositionsAcrossHiddenItems() {
+    var rows = [
+      { name: "one", playlistPosition: 0 },
+      { name: "two", playlistPosition: 2 },
+      { name: "three", playlistPosition: 3 },
+      { name: "four", playlistPosition: 4 }
+    ]
+    compare(JSON.stringify(Api.playlistReorderBodyForItems(
+      rows, 1, 3, 5, "snapshot")), JSON.stringify({
+        range_start: 2,
+        insert_before: 5,
+        range_length: 1,
+        snapshot_id: "snapshot"
+      }))
+
+    var movedDown = Api.reorderedPlaylistItemsAtPositions(rows, 2, 4)
+    compare(movedDown.map(function(item) { return item.name }).join(","),
+      "one,three,four,two")
+    compare(movedDown.map(function(item) { return item.playlistPosition }).join(","),
+      "0,2,3,4")
+
+    var movedUp = Api.reorderedPlaylistItemsAtPositions(rows, 4, 2)
+    compare(movedUp.map(function(item) { return item.name }).join(","),
+      "one,four,two,three")
+    compare(movedUp.map(function(item) { return item.playlistPosition }).join(","),
+      "0,2,3,4")
+    compare(rows[1].playlistPosition, 2)
+
+    var duplicates = [
+      { name: "one", playlistPosition: 0 },
+      { name: "duplicate", playlistPosition: 1 },
+      { name: "two", playlistPosition: 2 },
+      { name: "duplicate", playlistPosition: 3 }
+    ]
+    var oneOccurrence = Api.reorderedPlaylistItemsAtPositions(duplicates, 1, 3)
+    compare(oneOccurrence.map(function(item) { return item.name }).join(","),
+      "one,two,duplicate,duplicate")
+    compare(duplicates[1].playlistPosition, 1)
+  }
+
   function test_mergeSearchGroups_keepsUnchangedCategories() {
     var first = Api.searchGroups({
       tracks: { items: [{ id: "one", uri: "spotify:track:one", type: "track", name: "One" }], total: 2 },
@@ -362,6 +546,28 @@ TestCase {
 
     external.active = false
     compare(Api.preferredPlaybackDevice(devices, "", false).id, "omarchy")
+  }
+
+  function test_automaticLocalPlaybackDevice_selectsAnActiveLocalReceiver() {
+    var activeLocal = {
+      id: "omarchy", local: true, active: true, restricted: false
+    }
+    var inactiveLocal = {
+      id: "fallback", local: true, active: false, restricted: false
+    }
+    var activeRemote = {
+      id: "phone", local: false, active: true, restricted: false
+    }
+
+    compare(Api.automaticLocalPlaybackDevice("", activeLocal, activeLocal).id,
+      "omarchy")
+    compare(Api.automaticLocalPlaybackDevice("", inactiveLocal, inactiveLocal).id,
+      "fallback")
+    compare(Api.automaticLocalPlaybackDevice("", activeRemote, inactiveLocal), null)
+    compare(Api.automaticLocalPlaybackDevice("chosen", activeLocal, activeLocal), null)
+    compare(Api.automaticLocalPlaybackDevice("", null, {
+      id: "restricted", local: true, restricted: true
+    }), null)
   }
 
   function test_visibleUiStartsAndRefreshesLocalReceiver() {

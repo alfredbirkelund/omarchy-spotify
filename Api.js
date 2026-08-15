@@ -101,6 +101,19 @@ function parseJson(text, fallback) {
   }
 }
 
+// Nested arrays become array-like QML sequences after passing through a
+// ListView model. Preserve them instead of relying on Array.isArray(), which
+// returns false for that representation.
+function arrayValues(values) {
+  if (Array.isArray(values)) return values
+  if (!values || typeof values === "string") return []
+  var length = Number(values.length)
+  if (!isFinite(length) || length <= 0) return []
+  var result = []
+  for (var i = 0; i < Math.floor(length); i++) result.push(values[i])
+  return result
+}
+
 function safeApiUrl(path) {
   var value = String(path || "")
   if (value.charAt(0) === "/") return API_BASE + value
@@ -168,6 +181,17 @@ function preferredPlaybackDevice(devices, selectedId, explicitSelection, current
     if (values[l].local === true && values[l].restricted !== true && values[l].id)
       return values[l]
   return null
+}
+
+// Keep an active remote receiver untouched, but remember an active local
+// receiver as the implicit selection so the UI and subsequent playback agree.
+function automaticLocalPlaybackDevice(selectedId, preferredDevice, localDevice) {
+  if (String(selectedId || "")) return null
+  var current = preferredDevice || null
+  if (current && current.active === true && current.local !== true) return null
+  var candidate = current && current.local === true ? current : (localDevice || null)
+  return candidate && candidate.local === true && candidate.id
+      && candidate.restricted !== true ? candidate : null
 }
 
 // Omitting device_id tells Spotify to keep the user's active device. Address a
@@ -293,11 +317,142 @@ function imageFor(images, targetWidth) {
 }
 
 function artistNames(artists) {
-  if (!Array.isArray(artists)) return ""
+  var source = arrayValues(artists)
   var names = []
-  for (var i = 0; i < artists.length; i++)
-    if (artists[i] && artists[i].name) names.push(String(artists[i].name))
+  for (var i = 0; i < source.length; i++)
+    if (source[i] && source[i].name) names.push(String(source[i].name))
   return names.join(", ")
+}
+
+function artistSubtitleSuffix(item) {
+  var source = item || {}
+  var prefix = artistNames(source.artists)
+  var subtitle = String(source.subtitle || "")
+  return prefix && subtitle.indexOf(prefix) === 0
+    ? subtitle.substring(prefix.length) : ""
+}
+
+function artistForName(items, name) {
+  var rows = arrayValues(items)
+  var expected = String(name || "").trim().toLowerCase()
+  var fallback = null
+  for (var i = 0; i < rows.length; i++) {
+    var item = rows[i]
+    if (!item || item.type !== "artist" || !item.name) continue
+    if (!fallback) fallback = item
+    if (expected && String(item.name).trim().toLowerCase() === expected) return item
+  }
+  return fallback
+}
+
+function artistContextAvailable(mediaType, trackId, artists) {
+  return String(mediaType || "") === "track"
+    || String(trackId || "") !== "" || arrayValues(artists).length > 0
+}
+
+function spotifyTrackId(value) {
+  var match = String(value || "").match(
+    /(?:spotify:track:|spotify\/track\/|open\.spotify\.com\/track\/)([A-Za-z0-9]+)/)
+  return match ? match[1] : ""
+}
+
+function lyricsSong(trackId, title, artist, album, duration, coverUrl,
+    positionSeconds) {
+  var id = String(trackId || "").trim()
+  var songTitle = String(title || "").trim()
+  var songArtist = String(artist || "").trim()
+  if (!id || !songTitle || !songArtist) return null
+  var songDuration = Math.max(0, Number(duration) || 0)
+  var songPosition = Math.max(0, Number(positionSeconds) || 0)
+  if (songDuration > 0) songPosition = Math.min(songPosition, songDuration)
+  return {
+    id: "spotify:track:" + id,
+    title: songTitle,
+    artist: songArtist,
+    album: String(album || "").trim(),
+    duration: songDuration,
+    coverUrl: String(coverUrl || "").trim(),
+    positionSeconds: songPosition
+  }
+}
+
+function optionalPluginState(installed, enabled) {
+  if (installed !== true) return "missing"
+  return enabled === true ? "ready" : "disabled"
+}
+
+// Installation runs non-interactively only after the app's own confirmation
+// prompt. Keep the repository and plugin id as separate argv entries so no
+// user-controlled text is ever interpreted by a shell.
+function optionalPluginSetupCommand(state, pluginId, repositoryUrl) {
+  var availability = String(state || "")
+  var id = String(pluginId || "").trim()
+  var url = String(repositoryUrl || "").trim()
+  if (availability === "missing" && url)
+    return ["omarchy", "plugin", "add", url, "--enable", "--yes"]
+  if (availability === "disabled" && id)
+    return ["omarchy", "plugin", "enable", id, "--section", "center"]
+  return []
+}
+
+function universalSearchVisible(tab, active) {
+  var area = String(tab || "")
+  return area === "search"
+    || (active === true && area !== "login" && area !== "devices")
+}
+
+function searchScope(tab, detailItem, selectedPlaylist, homeType, libraryType) {
+  var area = String(tab || "")
+  var item = null
+  var label = ""
+  var key = ""
+  var mode = "filter"
+
+  if (area === "detail" && detailItem) {
+    item = detailItem
+    label = String(item.name || "").trim()
+    key = "detail:" + String(item.uri || item.id || "")
+    mode = item.type === "artist" ? "artist" : "filter"
+  } else if (area === "playlists" && selectedPlaylist) {
+    item = selectedPlaylist
+    label = String(item.name || "").trim()
+    key = "playlist:" + String(item.uri || item.id || "")
+  } else if (area === "home") {
+    var homeLabels = {
+      recent: "Recently played",
+      tracks: "Top songs",
+      artists: "Top artists"
+    }
+    var selectedHome = String(homeType || "recent")
+    label = homeLabels[selectedHome] || "For you"
+    key = "home:" + selectedHome
+  } else if (area === "discover") {
+    label = "Discover"
+    key = "discover"
+  } else if (area === "library") {
+    var libraryLabels = {
+      tracks: "Liked Songs",
+      albums: "Saved albums",
+      artists: "Followed artists",
+      shows: "Saved podcasts",
+      episodes: "Saved episodes",
+      audiobooks: "Saved books"
+    }
+    var selectedLibrary = String(libraryType || "tracks")
+    label = libraryLabels[selectedLibrary] || "Your Library"
+    key = "library:" + selectedLibrary
+  } else if (area === "queue") {
+    label = "Queue"
+    key = "queue"
+  }
+
+  return {
+    available: label !== "" && key !== "",
+    key: key,
+    label: label,
+    mode: mode,
+    item: item
+  }
 }
 
 function catalogSearchText(artistName, term) {
@@ -310,18 +465,41 @@ function catalogSearchText(artistName, term) {
   return query && filter ? query + " " + filter : (query || filter)
 }
 
+function artistPlaylistSearchText(artistName, term) {
+  function clean(value) {
+    return String(value || "").replace(/["\\]/g, " ").replace(/\s+/g, " ").trim()
+  }
+  var artist = clean(artistName)
+  var query = clean(term)
+  return query && artist ? query + " " + artist : (query || artist)
+}
+
+function mediaRowShouldCompact(titleWidth, availableWidth, actionCount) {
+  var title = Math.max(0, Number(titleWidth) || 0)
+  var available = Math.max(0, Number(availableWidth) || 0)
+  var actions = Math.max(0, Math.floor(Number(actionCount) || 0))
+  return actions > 0 && title > available
+}
+
+function responsiveResultColumns(width, twoColumnWidth) {
+  var available = Math.max(0, Number(width) || 0)
+  var breakpoint = Math.max(1, Number(twoColumnWidth) || 1)
+  return available >= breakpoint ? 2 : 1
+}
+
 function tracksForArtist(items, artist) {
-  var rows = Array.isArray(items) ? items : []
+  var rows = arrayValues(items)
   var target = artist || {}
   var targetId = String(target.id || "")
   var targetName = String(target.name || "").toLowerCase()
   var result = []
   for (var i = 0; i < rows.length; i++) {
     var track = rows[i]
-    if (!track || track.type !== "track" || !Array.isArray(track.artists)) continue
+    if (!track || track.type !== "track") continue
+    var performers = arrayValues(track.artists)
     var matched = false
-    for (var a = 0; a < track.artists.length; a++) {
-      var performer = track.artists[a] || {}
+    for (var a = 0; a < performers.length; a++) {
+      var performer = performers[a] || {}
       if ((targetId && String(performer.id || "") === targetId)
           || (!targetId && targetName
             && String(performer.name || "").toLowerCase() === targetName)) {
@@ -395,8 +573,8 @@ function radioSeedMatches(candidate, seed) {
   if (comparablePlaylistTitle(item.name) !== comparablePlaylistTitle(target.name))
     return false
 
-  var itemArtists = Array.isArray(item.artists) ? item.artists : []
-  var targetArtists = Array.isArray(target.artists) ? target.artists : []
+  var itemArtists = arrayValues(item.artists)
+  var targetArtists = arrayValues(target.artists)
   for (var i = 0; i < itemArtists.length; i++) {
     var itemArtist = itemArtists[i] || {}
     var itemArtistId = String(itemArtist.id || "")
@@ -478,11 +656,102 @@ function playlistItemUris(items) {
   return uris
 }
 
+// Spotify's insert_before index is measured against the playlist before the
+// selected range is removed. The UI works with the item's final index, so a
+// downward move needs to step over the source item once.
+function playlistReorderBody(sourceIndex, destinationIndex, itemCount, snapshotId) {
+  var sourceNumber = Number(sourceIndex)
+  var destinationNumber = Number(destinationIndex)
+  var countNumber = Number(itemCount)
+  if (!isFinite(sourceNumber) || !isFinite(destinationNumber) || !isFinite(countNumber))
+    return null
+  var source = Math.floor(sourceNumber)
+  var destination = Math.floor(destinationNumber)
+  var count = Math.floor(countNumber)
+  if (count < 2 || source < 0 || source >= count || destination < 0
+      || destination >= count || source === destination) return null
+  var body = {
+    range_start: source,
+    insert_before: source < destination ? destination + 1 : destination,
+    range_length: 1
+  }
+  var snapshot = String(snapshotId || "")
+  if (snapshot) body.snapshot_id = snapshot
+  return body
+}
+
+// Playlist payloads can contain unavailable entries that normalize out of the
+// visible list. Prefer the raw API position retained by Service in that case.
+function playlistPositionAt(items, index) {
+  var rows = Array.isArray(items) ? items : []
+  var visibleIndex = Math.floor(Number(index))
+  if (!isFinite(visibleIndex) || visibleIndex < 0 || visibleIndex >= rows.length)
+    return -1
+  var explicitValue = rows[visibleIndex]
+    ? rows[visibleIndex].playlistPosition : undefined
+  var explicitPosition = Number(explicitValue)
+  return explicitValue !== null && explicitValue !== undefined
+    && isFinite(explicitPosition) && explicitPosition >= 0
+    ? Math.floor(explicitPosition) : visibleIndex
+}
+
+function playlistReorderBodyForItems(items, sourceIndex, destinationIndex,
+    itemCount, snapshotId) {
+  var rows = Array.isArray(items) ? items : []
+  var sourcePosition = playlistPositionAt(rows, sourceIndex)
+  var destinationPosition = playlistPositionAt(rows, destinationIndex)
+  if (sourcePosition < 0 || destinationPosition < 0) return null
+  var requestedCount = Number(itemCount)
+  var count = isFinite(requestedCount) ? Math.floor(requestedCount) : rows.length
+  count = Math.max(count, rows.length, sourcePosition + 1, destinationPosition + 1)
+  return playlistReorderBody(sourcePosition, destinationPosition, count, snapshotId)
+}
+
+function reorderedPlaylistItemsAtPositions(items, sourcePosition,
+    destinationPosition) {
+  var rows = Array.isArray(items) ? items.slice() : []
+  var source = Math.floor(Number(sourcePosition))
+  var destination = Math.floor(Number(destinationPosition))
+  if (!isFinite(source) || !isFinite(destination) || source < 0
+      || destination < 0 || source === destination) return rows
+  var sourceIndex = -1
+  var destinationIndex = -1
+  for (var i = 0; i < rows.length; i++) {
+    var position = playlistPositionAt(rows, i)
+    if (position === source) sourceIndex = i
+    if (position === destination) destinationIndex = i
+  }
+  if (sourceIndex < 0 || destinationIndex < 0) return rows
+
+  var positioned = []
+  for (var r = 0; r < rows.length; r++) {
+    var item = rows[r]
+    var oldPosition = playlistPositionAt(rows, r)
+    var newPosition = oldPosition
+    if (oldPosition === source) newPosition = destination
+    else if (source < destination && oldPosition > source
+        && oldPosition <= destination) newPosition = oldPosition - 1
+    else if (source > destination && oldPosition >= destination
+        && oldPosition < source) newPosition = oldPosition + 1
+    if (item && typeof item === "object" && newPosition !== oldPosition) {
+      var copy = ({})
+      for (var propertyName in item) copy[propertyName] = item[propertyName]
+      copy.playlistPosition = newPosition
+      positioned.push(copy)
+    } else {
+      positioned.push(item)
+    }
+  }
+  var moved = positioned.splice(sourceIndex, 1)
+  positioned.splice(destinationIndex, 0, moved[0])
+  return positioned
+}
+
 function normalizedArtists(artists, imageWidth) {
-  if (!Array.isArray(artists)) return []
+  var sourceArtists = arrayValues(artists)
   var rows = []
-  for (var i = 0; i < artists.length; i++) {
-    var source = artists[i] || {}
+  for (var i = 0; i < sourceArtists.length; i++) {
+    var source = sourceArtists[i] || {}
     // Spotify's simplified artist object normally carries `type`, but some
     // playlist and cached payloads omit it. Artist links should still work.
     var artist = normalizeContext({

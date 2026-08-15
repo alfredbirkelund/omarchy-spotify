@@ -2,9 +2,57 @@
 
 ## Unreleased
 
+### Features
+
+- Replace separate Spotify, artist, and collection search fields with one
+  context-aware search bar throughout the app. The checked **In …** control
+  filters the open area and can be unchecked to search all of Spotify.
+- Add Spotify-style shortcuts for search, navigation, playback, seeking,
+  shuffle, repeat, mute, and volume, plus shortcut hints on matching controls.
+- Add a themed, scrollable keyboard-shortcut reference with `Ctrl+/`; playback
+  shortcuts automatically pause while typing in a text field.
+- Open artists directly from every artist label, including individual artists
+  on collaborations, album headers, media rows, and both players.
+- Open the current song directly in Omasing Lyrics from either player, passing
+  the exact recording metadata and playback position so lyrics can load without
+  another search and open near the current line.
+- Ask before installing and enabling Omasing when the optional lyrics plugin is
+  missing, with progress, retryable errors, and an explicit unsandboxed-plugin
+  notice.
+- Move playlist creation into a focused popup opened by the **+** beside
+  Playlists in the sidebar.
+- Rearrange songs in owned playlists by dragging their cards while using the
+  original playlist order, with edge auto-scroll and immediate feedback while
+  Spotify saves the new order.
+- Give artist-scoped searches a dedicated responsive results page for songs,
+  albums, and playlists, hiding empty categories instead of retaining the
+  artist-home layout.
+
+### Refinements
+
+- Streamline the sidebar by removing the redundant Search and Devices entries.
+  Search is available from the shared header, while Devices remains beside the
+  volume slider and is also available through `Alt+Shift+D`.
+- Make Escape dismiss popups and clear search first, then use a theme-colored
+  close-button warning before a second Escape closes the window.
+- Preserve universal-search results and their underlying page when opening an
+  item and going Back, and prevent an old query from covering Settings or a
+  newly selected page.
+- Release keyboard focus from search as soon as a selected song starts playing,
+  so playback shortcuts work immediately.
 - Keep this computer available in Spotify Connect while the mini player or full
   app is open, waking local playback and refreshing its device registration when
   either surface appears.
+- Automatically select this computer when it is already the active player and
+  no device was selected, while continuing to preserve an active remote target.
+- Keep podcast, show, and audiobook subtitles as plain text instead of treating
+  them as artist links.
+- Move an already-open full player to the current workspace when opening it
+  from the mini player, without requiring a second click.
+- Polish the shortcut reference with theme-native borders, enough room for its
+  scrollbar, and stable section sizing without layout-binding warnings.
+- Collapse a song row's secondary actions behind an expand button whenever
+  showing them would truncate its title.
 
 ## 1.0.1 — 2026-08-13
 

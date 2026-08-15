@@ -20,7 +20,8 @@ qml_test_runner=/usr/lib/qt6/bin/qmltestrunner
 omarchy plugin validate .
 qmllint -I /usr/share/omarchy/shell Api.js OAuth.js AuthManager.qml \
   SpotifyApi.qml SpotifyConnectManager.qml DaemonManager.qml Service.qml \
-  BarWidget.qml MediaRow.qml MediaCollection.qml Panel.qml
+  BarWidget.qml ArtistLinks.qml MediaByline.qml MediaRow.qml MediaCollection.qml \
+  ArtistSearchSection.qml LyricsInstallPrompt.qml Panel.qml
 
 QT_QPA_PLATFORM=offscreen "$qml_test_runner" \
   -input tests \

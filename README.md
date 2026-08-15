@@ -34,7 +34,9 @@ in the app.
 
 ## Highlights
 
-- Search songs, artists, albums, playlists, podcasts, episodes, and audiobooks.
+- Search from one bar across the app. It filters the artist, album, playlist,
+  library section, or other area you have open; uncheck **In …** for a full
+  Spotify search instead.
 - Discover Weekly, Release Radar, Daily Mixes, daylist, and fresh Spotify picks
   in a dedicated Discover tab when they are available for your account.
 - Browse Liked Songs, saved albums, followed artists, podcasts, and books.
@@ -94,22 +96,45 @@ needed and stops it again after the configured idle period.
   playlists or create a new playlist for it.
 - Right-click a song or other media row for more actions. Removing something
   from your library is intentionally kept in this menu.
+- Click any artist name—in a media row, album header, or either player—to open
+  that artist directly.
+- Use the lyrics button in either player to open the current song directly in
+  Omasing Lyrics with its title, artist, album, duration, artwork, and current
+  playback position. Omasing opens slightly before the estimated current line.
+  If the optional plugin is missing or disabled, Spotify asks before installing
+  or enabling it and explains that Omarchy plugins run unsandboxed.
 - Use **Devices** to move playback between this computer and Spotify Connect
   speakers or players.
 
 Keyboard shortcuts:
 
-- `Ctrl+K` or `/` — Search
+- `Ctrl+K` or `/` — Focus the unified search bar
+- `Ctrl+F` / `Ctrl+L` — Search in the open area / search all of Spotify
+- `Alt+Left` — Go back
+- `Ctrl+,` — Open Settings
+- `Alt+Shift+H` / `Alt+Shift+Q` / `Alt+Shift+D` — Open For You, Queue,
+  or Devices
 - `Space` — Play or pause
 - `Ctrl+Left` / `Ctrl+Right` — Previous or next
+- `M` — Mute or restore the previous volume
+- `Ctrl+S` / `Ctrl+R` — Toggle shuffle / cycle repeat
+- `Shift+Left` / `Shift+Right` — Seek backward / forward 10 seconds
+- `Ctrl+Up` / `Ctrl+Down` — Raise / lower volume by 5%
+- `Ctrl+/` — Open the keyboard-shortcut reference
 - Arrow keys and `Enter` — Move through and open lists
-- `Escape` — Close an open menu first, then go back or close the window
+- `Escape` — Close an open menu, clear search, or go back; from a top-level
+  view, press twice to close the window
+
+Playback shortcuts are suspended while typing. Hover a matching control to see
+its shortcut without opening the reference.
 
 ## Playlists
 
-Open **Playlists**, enter a name, and choose **Create**. To add music, use the
-playlist button on any song or podcast episode and choose the destination. The
-same picker can create a new private playlist and add the item in one step.
+Choose the **+** beside **Playlists**, enter a name in the popup, and choose
+**Create**. To add music, use the playlist button on any song or podcast episode
+and choose the destination. The same picker can create a new private playlist
+and add the item in one step. In a playlist you own, keep sorting set to
+**Original**, then drag a song card to place it anywhere in the loaded list.
 
 When a playlist belongs to someone else, choose **Turn into your own playlist**.
 The app creates a private copy, copies every song or episode Spotify provides,

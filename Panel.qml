@@ -14,6 +14,8 @@ Item {
   property var service: null
   property bool opened: false
   property bool closingFromHost: false
+  property bool escapeCloseArmed: false
+  property real volumeBeforeMute: 0.5
   property string currentTab: "home"
   property bool openedForLogin: false
 
@@ -27,7 +29,12 @@ Item {
   property string playlistSort: "default"
   property string detailFilter: ""
   property string detailSort: "default"
+  property string homeFilter: ""
+  property string discoverFilter: ""
+  property string queueFilter: ""
   property string artistSearchText: ""
+  property bool searchInContext: true
+  property bool universalSearchActive: false
   property var scrollPositions: ({})
   property var navigationStack: []
   property string restoredPlaylistId: ""
@@ -43,16 +50,33 @@ Item {
   property var contextPlaylist: null
   property var pendingPlaylistItem: null
   property string newPlaylistName: ""
+  property string createPlaylistName: ""
 
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.spotify"
+  readonly property string lyricsRequestKey: "spotify-panel-lyrics"
   readonly property color foreground: Color.foreground
   readonly property color background: Color.background
   readonly property color accent: Color.accent
+  readonly property color popupBackground: Color.popups.background
+  readonly property var popupBorderSpec: Border.flat(Color.popups.border,
+    Math.max(1, Style.normalBorderWidth))
+  readonly property int popupScrollbarGutter: Style.space(14)
   readonly property string fontFamily: Style.font.family
   readonly property bool fullyConnected: service && service.fullyConnected
   readonly property bool compactHeight: window.height < Style.space(620)
   readonly property bool compactWidth: window.width < Style.space(760)
+  readonly property var activeSearchScope: Api.searchScope(currentTab,
+    service ? service.detailItem : null,
+    service ? service.selectedPlaylist : null, homeType, libraryType)
+  readonly property bool showingUniversalSearch: Api.universalSearchVisible(
+    currentTab, universalSearchActive)
+  readonly property bool artistScopedSearchActive: currentTab === "detail"
+    && service && service.detailItem && service.detailItem.type === "artist"
+    && artistSearchText.trim() !== ""
+  readonly property bool shortcutsBlocked: mediaContextMenu.opened
+    || playlistPicker.opened || createPlaylistPopup.opened || sleepPopup.opened
+    || shortcutHelpPopup.opened || lyricsInstallPopup.opened
   readonly property var panelBar: QtObject {
     readonly property color foreground: root.foreground
     readonly property color background: root.background
@@ -143,6 +167,14 @@ Item {
   }
 
   function dismissTransientPopup() {
+    if (lyricsInstallPopup.opened && (!service || !service.lyricsPluginBusy)) {
+      lyricsInstallPopup.close()
+      return true
+    }
+    if (shortcutHelpPopup.opened) {
+      shortcutHelpPopup.close()
+      return true
+    }
     if (mediaContextMenu.opened) {
       mediaContextMenu.close()
       return true
@@ -151,11 +183,32 @@ Item {
       playlistPicker.close()
       return true
     }
+    if (createPlaylistPopup.opened) {
+      createPlaylistPopup.close()
+      return true
+    }
     if (sleepPopup.opened) {
       sleepPopup.close()
       return true
     }
     return false
+  }
+
+  function disarmEscapeClose() {
+    escapeCloseTimer.stop()
+    escapeCloseArmed = false
+  }
+
+  function armEscapeClose() {
+    escapeCloseArmed = true
+    escapeCloseTimer.restart()
+  }
+
+  function clearVisibleSearchForEscape() {
+    if (!unifiedSearchBar.visible || unifiedSearchText().trim() === "") return false
+    clearUnifiedSearch()
+    disarmEscapeClose()
+    return true
   }
 
   function turnPlaylistIntoOwn(playlist) {
@@ -188,7 +241,7 @@ Item {
     return Math.max(0, Number(scrollPositions[String(key || currentTab)]) || 0)
   }
 
-  function restoreUiState() {
+  function restoreUiState(restoreDetail) {
     if (!service) return
     var state = service.sessionState || ({})
     service.restoreLastRadioPlaylist(state.lastRadioPlaylist)
@@ -205,14 +258,19 @@ Item {
     playlistSort = String(state.playlistSort || "default")
     detailFilter = String(state.detailFilter || "")
     detailSort = String(state.detailSort || "default")
+    homeFilter = String(state.homeFilter || "")
+    discoverFilter = String(state.discoverFilter || "")
+    queueFilter = String(state.queueFilter || "")
     artistSearchText = String(state.artistSearchText || "")
+    searchInContext = true
+    universalSearchActive = false
     scrollPositions = state.scrollPositions && typeof state.scrollPositions === "object"
       ? state.scrollPositions : ({})
     restoredPlaylistId = String(state.selectedPlaylistId || "")
     var restoredTab = String(state.tab || "home")
     if (["home", "discover", "search", "library", "playlists", "detail", "queue", "devices", "setup"]
         .indexOf(restoredTab) >= 0) currentTab = restoredTab
-    if (currentTab === "detail" && state.detailItem)
+    if (restoreDetail !== false && currentTab === "detail" && state.detailItem)
       service.openDetail(state.detailItem, artistSearchText)
   }
 
@@ -230,6 +288,9 @@ Item {
       playlistSort: playlistSort,
       detailFilter: detailFilter,
       detailSort: detailSort,
+      homeFilter: homeFilter,
+      discoverFilter: discoverFilter,
+      queueFilter: queueFilter,
       artistSearchText: currentTab === "detail" && service.detailItem
         && service.detailItem.type === "artist" ? artistSearchText : "",
       scrollPositions: scrollPositions,
@@ -247,20 +308,35 @@ Item {
 
   function openItem(item) {
     if (!item) return
+    if (item.type === "artist" && !item.id) {
+      if (service) service.resolveArtist(item.name, function(resolved) {
+        root.openItem(resolved)
+      })
+      return
+    }
     if (item.kind !== "context") {
-      if (service) service.playItem(item, [item], "")
+      activateMedia(item, [item], "")
       return
     }
     var stack = navigationStack.slice()
     stack.push({
       tab: currentTab,
       item: currentTab === "detail" && service ? service.detailItem : null,
+      universalSearchActive: universalSearchActive,
+      searchInContext: searchInContext,
       artistSearchText: currentTab === "detail" && service && service.detailItem
-        && service.detailItem.type === "artist" ? artistSearchText : ""
+        && service.detailItem.type === "artist" ? artistSearchText : "",
+      detailFilter: currentTab === "detail" && service && service.detailItem
+        && service.detailItem.type !== "artist" ? detailFilter : ""
     })
     navigationStack = stack
+    unifiedSearchDelay.stop()
+    searchInContext = true
+    universalSearchActive = false
+    if (service) service.cancelSearch(false)
     currentTab = "detail"
     if (item.type === "artist") artistSearchText = ""
+    else detailFilter = ""
     if (service) service.openDetail(item)
   }
 
@@ -272,17 +348,29 @@ Item {
     var stack = navigationStack.slice()
     var destination = stack.pop()
     navigationStack = stack
+    unifiedSearchDelay.stop()
+    if (service) service.cancelSearch(false)
     currentTab = destination.tab || "search"
+    universalSearchActive = destination.universalSearchActive === true
+    searchInContext = destination.searchInContext === undefined
+      ? !universalSearchActive : destination.searchInContext === true
     if (currentTab === "detail" && destination.item && service) {
       artistSearchText = destination.item.type === "artist"
         ? String(destination.artistSearchText || "") : ""
+      detailFilter = destination.item.type === "artist"
+        ? "" : String(destination.detailFilter || "")
       service.openDetail(destination.item, artistSearchText)
     }
-    else if (service) service.openView(currentTab, false)
+    if (service && (currentTab === "search" || universalSearchActive)) {
+      if (searchText.trim() === "") service.clearSearch()
+      else service.search(searchText)
+    }
+    else if (service && currentTab !== "detail") service.openView(currentTab, false)
   }
 
   function activateMedia(item, sourceItems, contextUri) {
     if (!item || !service) return
+    if (unifiedSearchField.activeFocus) focusScope.forceActiveFocus()
     service.playItem(item, sourceItems, contextUri)
   }
 
@@ -291,23 +379,245 @@ Item {
     return !!item && ("acceptableInput" in item || "echoMode" in item)
   }
 
-  function focusSearch() {
-    chooseTab("search")
+  function shortcutHint(label, keys) {
+    var text = String(label || "")
+    var shortcut = String(keys || "")
+    return shortcut ? text + " · " + shortcut : text
+  }
+
+  function primaryNavigationShortcut(id) {
+    if (id === "home") return "Alt+Shift+H"
+    if (id === "queue") return "Alt+Shift+Q"
+    return ""
+  }
+
+  function shortcutRows() {
+    return [
+      { section: "SEARCH", action: "Focus search", keys: "Ctrl+K or /" },
+      { action: "Search in the current area", keys: "Ctrl+F" },
+      { action: "Search all of Spotify", keys: "Ctrl+L" },
+      { action: "Clear search", keys: "Esc" },
+      { section: "NAVIGATION", action: "Go back", keys: "Alt+Left" },
+      { action: "Open Settings", keys: "Ctrl+," },
+      { action: "Open For You", keys: "Alt+Shift+H" },
+      { action: "Open Queue", keys: "Alt+Shift+Q" },
+      { action: "Open Devices", keys: "Alt+Shift+D" },
+      { action: "Move through lists", keys: "Arrow keys" },
+      { action: "Open the selected item", keys: "Enter" },
+      { section: "PLAYBACK", action: "Play or pause", keys: "Space" },
+      { action: "Previous item", keys: "Ctrl+Left" },
+      { action: "Next item", keys: "Ctrl+Right" },
+      { action: "Mute or restore volume", keys: "M" },
+      { action: "Toggle shuffle", keys: "Ctrl+S" },
+      { action: "Cycle repeat", keys: "Ctrl+R" },
+      { action: "Seek back 10 seconds", keys: "Shift+Left" },
+      { action: "Seek forward 10 seconds", keys: "Shift+Right" },
+      { action: "Raise volume 5%", keys: "Ctrl+Up" },
+      { action: "Lower volume 5%", keys: "Ctrl+Down" },
+      { section: "WINDOW", action: "Arm close / close", keys: "Esc, Esc" },
+      { action: "Show this reference", keys: "Ctrl+/" }
+    ]
+  }
+
+  function scopedSearchText() {
+    if (currentTab === "home") return homeFilter
+    if (currentTab === "discover") return discoverFilter
+    if (currentTab === "library") return libraryFilter
+    if (currentTab === "playlists") return playlistFilter
+    if (currentTab === "queue") return queueFilter
+    if (currentTab === "detail") return activeSearchScope.mode === "artist"
+      ? artistSearchText : detailFilter
+    return ""
+  }
+
+  function setScopedSearchText(value) {
+    var text = String(value || "")
+    if (currentTab === "home") homeFilter = text
+    else if (currentTab === "discover") discoverFilter = text
+    else if (currentTab === "library") libraryFilter = text
+    else if (currentTab === "playlists") playlistFilter = text
+    else if (currentTab === "queue") queueFilter = text
+    else if (currentTab === "detail") {
+      if (activeSearchScope.mode === "artist") artistSearchText = text
+      else detailFilter = text
+    }
+  }
+
+  function unifiedSearchText() {
+    return activeSearchScope.available && searchInContext
+      ? scopedSearchText() : searchText
+  }
+
+  function searchScopeButtonText() {
+    var label = activeSearchScope && activeSearchScope.label
+      ? String(activeSearchScope.label) : "this area"
+    if (label.length > 24) label = label.substring(0, 23) + "…"
+    return "In " + label
+  }
+
+  function runUnifiedSearch() {
+    unifiedSearchDelay.stop()
+    if (!service) return
+    if (activeSearchScope.available && searchInContext) {
+      if (activeSearchScope.mode === "artist")
+        service.findArtistMusic(artistSearchText)
+      return
+    }
+    if (currentTab !== "search" && searchText.trim() !== "")
+      universalSearchActive = true
+    if (searchText.trim() === "") service.clearSearch()
+    else service.search(searchText)
+  }
+
+  function editUnifiedSearch(value) {
+    unifiedSearchDelay.stop()
+    var text = String(value || "")
+    if (activeSearchScope.available && searchInContext) {
+      setScopedSearchText(text)
+      if (activeSearchScope.mode === "artist") {
+        if (text.trim() === "" && service) service.findArtistMusic("")
+        else unifiedSearchDelay.restart()
+      }
+      return
+    }
+    searchText = text
+    if (currentTab !== "search" && !activeSearchScope.available)
+      universalSearchActive = text.trim() !== ""
+    if (!service) return
+    if (text.trim() === "") service.clearSearch()
+    else unifiedSearchDelay.restart()
+  }
+
+  function clearUnifiedSearch() {
+    unifiedSearchDelay.stop()
+    if (activeSearchScope.available && searchInContext) {
+      setScopedSearchText("")
+      if (activeSearchScope.mode === "artist" && service)
+        service.findArtistMusic("")
+    } else {
+      searchText = ""
+      if (service) service.clearSearch()
+      if (currentTab !== "search") {
+        universalSearchActive = false
+        if (activeSearchScope.available) {
+          searchInContext = true
+          setScopedSearchText("")
+          if (activeSearchScope.mode === "artist" && service)
+            service.findArtistMusic("")
+        }
+      }
+    }
+    Qt.callLater(function() { unifiedSearchField.forceActiveFocus() })
+  }
+
+  function toggleSearchScope() {
+    if (!activeSearchScope.available) return
+    unifiedSearchDelay.stop()
+    var text = unifiedSearchText()
+    if (searchInContext) {
+      searchText = text
+      searchInContext = false
+      universalSearchActive = true
+      if (service) {
+        if (searchText.trim() === "") service.clearSearch()
+        else service.search(searchText)
+      }
+    } else {
+      searchInContext = true
+      universalSearchActive = false
+      setScopedSearchText(text)
+      if (service) {
+        service.cancelSearch(false)
+        if (activeSearchScope.mode === "artist")
+          service.findArtistMusic(text)
+      }
+    }
     Qt.callLater(function() {
-      if (pageLoader.item && typeof pageLoader.item.focusSearch === "function")
-        pageLoader.item.focusSearch()
+      unifiedSearchField.selectAll()
+      unifiedSearchField.forceActiveFocus()
     })
+  }
+
+  function focusSearch() {
+    if (!unifiedSearchBar.visible) return
+    unifiedSearchField.selectAll()
+    unifiedSearchField.forceActiveFocus()
+  }
+
+  function focusContextSearch() {
+    if (!unifiedSearchBar.visible || !activeSearchScope.available) return
+    if (!searchInContext) toggleSearchScope()
+    else focusSearch()
+  }
+
+  function focusUniversalSearch() {
+    if (!unifiedSearchBar.visible) return
+    if (activeSearchScope.available && searchInContext) toggleSearchScope()
+    else {
+      if (currentTab !== "search") universalSearchActive = true
+      searchInContext = false
+      focusSearch()
+    }
+  }
+
+  function seekBy(seconds) {
+    if (!service || !service.playbackControllable) return
+    service.seekSeconds(service.positionSeconds + Number(seconds || 0))
+  }
+
+  function setPanelVolume(value) {
+    if (!service || !service.volumeSupported) return
+    var next = Math.max(0, Math.min(1, Number(value) || 0))
+    if (next > 0.001) volumeBeforeMute = next
+    service.setVolume(next)
+  }
+
+  function adjustVolume(delta) {
+    if (!service) return
+    setPanelVolume(service.volume + Number(delta || 0))
+  }
+
+  function toggleMute() {
+    if (!service || !service.volumeSupported) return
+    var current = Math.max(0, Math.min(1, Number(service.volume) || 0))
+    if (current > 0.001) {
+      volumeBeforeMute = current
+      service.setVolume(0)
+    } else service.setVolume(Math.max(0.05, volumeBeforeMute))
+  }
+
+  function toggleShortcutHelp() {
+    disarmEscapeClose()
+    if (shortcutHelpPopup.opened) shortcutHelpPopup.close()
+    else shortcutHelpPopup.open()
+  }
+
+  function openLyrics() {
+    if (!service || !service.currentLyricsSong) return
+    var result = service.requestLyrics(lyricsRequestKey)
+    if (result !== "opening") lyricsInstallPopup.open()
   }
 
   function open(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(String(payloadJson || "{}")) || ({}) } catch (e) {}
     var requestedTab = String(payload.tab || "")
-    restoreUiState()
-    if (["home", "discover", "search", "library", "playlists", "queue", "devices", "setup"].indexOf(requestedTab) >= 0)
+    var requestedDetail = requestedTab === "detail" && payload.detailItem
+      ? payload.detailItem : null
+    restoreUiState(!requestedDetail)
+    if (requestedDetail) {
+      currentTab = "detail"
+      navigationStack = []
+      searchInContext = true
+      universalSearchActive = false
+      artistSearchText = ""
+      detailFilter = ""
+    } else if (["home", "discover", "search", "library", "playlists", "queue", "devices", "setup"].indexOf(requestedTab) >= 0)
       currentTab = requestedTab
     if (!fullyConnected) {
       currentTab = "login"
+      universalSearchActive = false
+      searchInContext = true
       openedForLogin = true
     } else {
       openedForLogin = false
@@ -318,6 +628,8 @@ Item {
     if (service) {
       service.setUiVisible("full-panel", true)
       service.activate(currentTab)
+      if (currentTab === "detail" && requestedDetail)
+        service.openDetail(requestedDetail)
       if (currentTab === "search" && searchText && service.searchQuery !== searchText)
         service.search(searchText)
     }
@@ -338,6 +650,7 @@ Item {
   }
 
   function requestClose() {
+    disarmEscapeClose()
     if (shell && typeof shell.hide === "function") shell.hide(pluginId)
     else close()
   }
@@ -348,7 +661,11 @@ Item {
       openedForLogin = true
       return
     }
-    if (currentTab === "search" && tab !== "search" && service) service.cancelSearch(false)
+    disarmEscapeClose()
+    unifiedSearchDelay.stop()
+    if (showingUniversalSearch && tab !== "search" && service) service.cancelSearch(false)
+    searchInContext = true
+    universalSearchActive = false
     currentTab = tab
     if (tab !== "detail") navigationStack = []
     openedForLogin = false
@@ -371,10 +688,7 @@ Item {
       label: service.lastRadioPlaying ? "Current radio" : "Last radio",
       icon: "󰎆"
     })
-    items.push(
-      { id: "search", label: "Search", icon: "󰍉" },
-      { id: "queue", label: "Queue", icon: "󰐕" },
-      { id: "devices", label: "Devices", icon: "󰋋" })
+    items.push({ id: "queue", label: "Queue", icon: "󰐕" })
     return items
   }
 
@@ -388,12 +702,16 @@ Item {
     if (!opened) return
     if (!fullyConnected) {
       currentTab = "login"
+      universalSearchActive = false
+      searchInContext = true
       openedForLogin = true
       return
     }
     if (openedForLogin || currentTab === "login") {
       openedForLogin = false
       currentTab = "home"
+      universalSearchActive = false
+      searchInContext = true
       if (service) service.openView("home", false)
     }
   }
@@ -417,6 +735,7 @@ Item {
 
   function pageComponent() {
     if (currentTab === "login") return loginPage
+    if (showingUniversalSearch) return searchPage
     if (currentTab === "setup") return setupPage
     if (currentTab === "home") return homePage
     if (currentTab === "discover") return discoverPage
@@ -430,6 +749,7 @@ Item {
 
   function pageTitle() {
     if (currentTab === "login") return "Log in to Spotify"
+    if (showingUniversalSearch) return "Search Spotify"
     if (currentTab === "home") return "For you"
     if (currentTab === "discover") return "Discover"
     if (currentTab === "library") return "Your Library"
@@ -437,13 +757,18 @@ Item {
     if (currentTab === "queue") return "Queue"
     if (currentTab === "devices") return "Spotify Connect"
     if (currentTab === "setup") return "Settings"
-    if (currentTab === "detail") return service && service.detailItem
-      ? service.detailItem.name : "Loading…"
+    if (currentTab === "detail") {
+      if (artistScopedSearchActive) return "Search in " + service.detailItem.name
+      return service && service.detailItem ? service.detailItem.name : "Loading…"
+    }
     return "Search"
   }
 
   function pageSubtitle() {
     if (currentTab === "login") return "Connect your Spotify account to get started"
+    if (showingUniversalSearch) return activeSearchScope.available
+      ? "Searching everywhere — enable the area checkmark to narrow the results"
+      : "Songs, artists, albums, playlists, podcasts and audiobooks"
     if (currentTab === "home") return "Recently played and your personal favorites"
     if (currentTab === "discover") return "Personal mixes and fresh music from Spotify"
     if (currentTab === "library") return "Songs, albums, artists, podcasts and audiobooks"
@@ -451,8 +776,12 @@ Item {
     if (currentTab === "queue") return "What plays next"
     if (currentTab === "devices") return "Speakers and players"
     if (currentTab === "setup") return "Account, playback and app preferences"
-    if (currentTab === "detail") return service && service.detailItem
-      ? String(service.detailItem.type || "Spotify item") : "Spotify item"
+    if (currentTab === "detail") {
+      if (artistScopedSearchActive)
+        return "Songs, albums and playlists matching “" + artistSearchText.trim() + "”"
+      return service && service.detailItem
+        ? String(service.detailItem.type || "Spotify item") : "Spotify item"
+    }
     return "Songs, artists, albums, playlists, podcasts and audiobooks"
   }
 
@@ -508,6 +837,24 @@ Item {
     playlistPicker.open()
   }
 
+  function openCreatePlaylistPopup() {
+    if (!service || !fullyConnected) return
+    createPlaylistName = ""
+    createPlaylistPopup.open()
+  }
+
+  function createNamedPlaylist() {
+    var name = String(createPlaylistName || "").trim()
+    if (!service || !name || service.playlistActionBusy) return
+    service.createPlaylist(name, function(playlist) {
+      createPlaylistPopup.close()
+      createPlaylistName = ""
+      if (!playlist) return
+      root.chooseTab("playlists")
+      root.service.openPlaylist(playlist)
+    })
+  }
+
   Component.onDestruction: {
     if (service) {
       persistUiState()
@@ -517,29 +864,229 @@ Item {
   }
 
   Popup {
+    id: shortcutHelpPopup
+    parent: window.contentItem
+    x: Math.max(Style.space(8), (window.width - width) / 2)
+    y: Math.max(Style.space(8), (window.height - height) / 2)
+    width: Math.min(Style.space(640), window.width - Style.space(32))
+    height: Math.min(Style.space(560), window.height - Style.space(24))
+    padding: Style.space(12)
+    modal: true
+    focus: true
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+    onOpened: root.disarmEscapeClose()
+    onClosed: Qt.callLater(function() { focusScope.forceActiveFocus() })
+
+    background: BorderSurface {
+      color: root.popupBackground
+      radius: Style.cornerRadius
+      borderSpec: root.popupBorderSpec
+    }
+
+    contentItem: Column {
+      id: shortcutHelpContent
+      spacing: Style.space(7)
+
+      Row {
+        id: shortcutHelpHeader
+        width: parent.width
+        spacing: Style.space(6)
+
+        Column {
+          width: Math.max(80, parent.width - shortcutHelpClose.width - parent.spacing)
+          spacing: Style.space(1)
+
+          Text {
+            width: parent.width
+            text: "Keyboard shortcuts"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.title
+            font.bold: true
+            elide: Text.ElideRight
+          }
+
+          Text {
+            width: parent.width
+            text: "Playback shortcuts pause while you are typing."
+            color: Qt.darker(root.foreground, 1.4)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            elide: Text.ElideRight
+          }
+        }
+
+        Button {
+          id: shortcutHelpClose
+          anchors.verticalCenter: parent.verticalCenter
+          iconText: "󰅖"
+          foreground: root.foreground
+          tooltipText: root.shortcutHint("Close", "Esc")
+          focusable: true
+          onClicked: shortcutHelpPopup.close()
+        }
+      }
+
+      PanelSeparator {
+        id: shortcutHelpSeparator
+        width: parent.width
+        foreground: root.foreground
+      }
+
+      ScrollView {
+        id: shortcutHelpScroll
+        width: parent.width
+        height: Math.max(80, parent.height - shortcutHelpHeader.height
+          - shortcutHelpSeparator.height - parent.spacing * 2)
+        rightPadding: root.popupScrollbarGutter
+        clip: true
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+        Column {
+          id: shortcutHelpList
+          width: shortcutHelpScroll.availableWidth
+          spacing: Style.space(3)
+
+          Repeater {
+            model: root.shortcutRows()
+
+            delegate: Column {
+              id: shortcutRow
+              required property var modelData
+              width: shortcutHelpList.width
+              spacing: Style.space(2)
+
+              Text {
+                width: parent.width
+                visible: String(shortcutRow.modelData.section || "") !== ""
+                topPadding: visible ? Style.space(3) : 0
+                text: String(shortcutRow.modelData.section || "")
+                color: root.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              Row {
+                width: parent.width
+                spacing: Style.space(6)
+
+                Text {
+                  width: Math.max(80, parent.width - shortcutKey.width - parent.spacing)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: String(shortcutRow.modelData.action || "")
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  elide: Text.ElideRight
+                }
+
+                BorderSurface {
+                  id: shortcutKey
+                  width: shortcutKeyText.implicitWidth + Style.space(12)
+                  height: shortcutKeyText.implicitHeight + Style.space(6)
+                  radius: Style.cornerRadius
+                  color: Style.normalFillFor(root.foreground, root.accent)
+                  borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
+
+                  Text {
+                    id: shortcutKeyText
+                    anchors.centerIn: parent
+                    text: String(shortcutRow.modelData.keys || "")
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  Popup {
+    id: lyricsInstallPopup
+    parent: window.contentItem
+    x: Math.max(Style.space(8), (window.width - width) / 2)
+    y: Math.max(Style.space(8), (window.height - height) / 2)
+    width: Math.min(Style.space(400), window.width - Style.space(32))
+    height: lyricsInstallContent.implicitHeight + padding * 2
+    padding: Style.space(10)
+    modal: true
+    focus: true
+    closePolicy: root.service && root.service.lyricsPluginBusy
+      ? Popup.NoAutoClose
+      : Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+    onOpened: root.disarmEscapeClose()
+    onClosed: {
+      if (root.service && !root.service.lyricsPluginBusy)
+        root.service.cancelLyricsPlugin(root.lyricsRequestKey)
+      Qt.callLater(function() { focusScope.forceActiveFocus() })
+    }
+
+    background: BorderSurface {
+      color: root.popupBackground
+      radius: Style.cornerRadius
+      borderSpec: root.popupBorderSpec
+    }
+
+    contentItem: LyricsInstallPrompt {
+      id: lyricsInstallContent
+      width: parent.width
+      service: root.service
+      foreground: root.foreground
+      surfaceKey: root.lyricsRequestKey
+      onCanceled: lyricsInstallPopup.close()
+    }
+  }
+
+  Connections {
+    target: root.service
+    ignoreUnknownSignals: true
+    function onLyricsPluginPromptRequested(surface, availability) {
+      if (String(surface) === root.lyricsRequestKey) lyricsInstallPopup.open()
+    }
+    function onLyricsPluginOpened(surface) {
+      if (String(surface) === root.lyricsRequestKey) lyricsInstallPopup.close()
+    }
+  }
+
+  Popup {
     id: mediaContextMenu
     parent: window.contentItem
-    width: Style.space(270)
-    height: contextMenuContent.implicitHeight + padding * 2
+    width: Math.min(Style.space(310), window.width - Style.space(24))
+    height: Math.min(window.height - Style.space(24),
+      contextMenuContent.implicitHeight + padding * 2)
     padding: Style.space(6)
     modal: true
     dim: false
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    Keys.onEscapePressed: function(event) {
-      mediaContextMenu.close()
-      event.accepted = true
-    }
 
     background: BorderSurface {
-      color: root.background
+      color: root.popupBackground
       radius: Style.cornerRadius
-      borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
+      borderSpec: root.popupBorderSpec
     }
 
-    contentItem: Column {
-      id: contextMenuContent
-      spacing: Style.space(3)
+    contentItem: ScrollView {
+      id: contextMenuScroll
+      clip: true
+      rightPadding: contextMenuContent.implicitHeight > height
+        ? root.popupScrollbarGutter : 0
+      ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+      ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+      Column {
+        id: contextMenuContent
+        width: contextMenuScroll.availableWidth
+        spacing: Style.space(3)
 
       Text {
         width: parent.width
@@ -577,8 +1124,8 @@ Item {
         leftAlign: true
         onClicked: {
           mediaContextMenu.close()
-          if (root.service) root.service.playItem(root.contextItem,
-            root.contextSourceItems, root.contextSourceUri)
+          root.activateMedia(root.contextItem, root.contextSourceItems,
+            root.contextSourceUri)
         }
       }
 
@@ -785,6 +1332,7 @@ Item {
           root.openExternal(root.contextItem)
         }
       }
+      }
     }
   }
 
@@ -793,7 +1341,7 @@ Item {
     parent: window.contentItem
     x: Math.max(Style.space(8), (window.width - width) / 2)
     y: Math.max(Style.space(8), (window.height - height) / 2)
-    width: Style.space(360)
+    width: Math.min(Style.space(410), window.width - Style.space(32))
     height: Math.min(Style.space(520), pickerContent.implicitHeight + padding * 2)
     padding: Style.space(8)
     modal: true
@@ -801,9 +1349,9 @@ Item {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     background: BorderSurface {
-      color: root.background
+      color: root.popupBackground
       radius: Style.cornerRadius
-      borderSpec: Border.controlSpec("selected", root.foreground, root.accent)
+      borderSpec: root.popupBorderSpec
     }
 
     contentItem: Column {
@@ -873,13 +1421,15 @@ Item {
         model: root.service ? root.service.editablePlaylists() : []
         clip: true
         spacing: Style.space(2)
-        ScrollBar.vertical: ScrollBar { }
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
         FastScrollHandler { parent: playlistPickerList; flickable: playlistPickerList }
 
         delegate: Button {
           required property var modelData
-          width: ListView.view.width
+          width: Math.max(80, ListView.view.width
+            - (playlistPickerList.contentHeight > playlistPickerList.height
+              ? root.popupScrollbarGutter : 0))
           text: modelData.name || "Playlist"
           iconText: "󰲸"
           foreground: root.foreground
@@ -895,11 +1445,97 @@ Item {
   }
 
   Popup {
+    id: createPlaylistPopup
+    parent: window.contentItem
+    x: Math.max(Style.space(8), (window.width - width) / 2)
+    y: Math.max(Style.space(8), (window.height - height) / 2)
+    width: Math.min(Style.space(400), window.width - Style.space(24))
+    height: createPlaylistContent.implicitHeight + padding * 2
+    padding: Style.space(9)
+    modal: true
+    focus: true
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+    onOpened: Qt.callLater(function() {
+      createPlaylistNameField.selectAll()
+      createPlaylistNameField.forceActiveFocus()
+    })
+    onClosed: root.createPlaylistName = ""
+
+    background: BorderSurface {
+      color: root.popupBackground
+      radius: Style.cornerRadius
+      borderSpec: root.popupBorderSpec
+    }
+
+    contentItem: Column {
+      id: createPlaylistContent
+      spacing: Style.space(8)
+
+      Text {
+        width: parent.width
+        text: "Create a new playlist"
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.subtitle
+        font.bold: true
+      }
+
+      Text {
+        width: parent.width
+        text: "Give your new private playlist a name."
+        color: Qt.darker(root.foreground, 1.4)
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        wrapMode: Text.WordWrap
+      }
+
+      TextField {
+        id: createPlaylistNameField
+        width: parent.width
+        foreground: root.foreground
+        placeholderText: "Playlist name"
+        text: root.createPlaylistName
+        maximumLength: 100
+        onTextEdited: root.createPlaylistName = text
+        onAccepted: root.createNamedPlaylist()
+      }
+
+      Row {
+        width: parent.width
+        spacing: Style.space(6)
+
+        Button {
+          width: (parent.width - parent.spacing) / 2
+          text: "Cancel"
+          foreground: root.foreground
+          focusable: true
+          enabled: !root.service || !root.service.playlistActionBusy
+          onClicked: createPlaylistPopup.close()
+        }
+
+        Button {
+          id: confirmNewPlaylistButton
+          width: (parent.width - parent.spacing) / 2
+          text: root.service && root.service.playlistActionBusy ? "Creating…" : "Create"
+          iconText: "󰐕"
+          foreground: root.foreground
+          selected: true
+          focusable: true
+          enabled: root.service && root.createPlaylistName.trim() !== ""
+            && !root.service.playlistActionBusy
+          onClicked: root.createNamedPlaylist()
+        }
+      }
+    }
+  }
+
+  Popup {
     id: sleepPopup
     parent: window.contentItem
     x: Math.max(Style.space(8), window.width - width - Style.space(24))
     y: Math.max(Style.space(8), window.height - height - Style.space(130))
-    width: Style.space(245)
+    width: Math.min(Style.space(270), window.width - Style.space(24))
     height: sleepContent.implicitHeight + padding * 2
     padding: Style.space(7)
     modal: false
@@ -907,9 +1543,9 @@ Item {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     background: BorderSurface {
-      color: root.background
+      color: root.popupBackground
       radius: Style.cornerRadius
-      borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
+      borderSpec: root.popupBorderSpec
     }
 
     contentItem: Column {
@@ -996,35 +1632,143 @@ Item {
       focus: true
       Keys.onEscapePressed: function(event) {
         if (root.dismissTransientPopup()) {
+          root.disarmEscapeClose()
           event.accepted = true
           return
         }
-        if (root.currentTab === "detail" || root.navigationStack.length) root.goBack()
-        else root.requestClose()
+        if (root.clearVisibleSearchForEscape()) {
+          event.accepted = true
+          return
+        }
+        if (root.showingUniversalSearch && root.currentTab !== "search") {
+          if (root.activeSearchScope.available && !root.searchInContext)
+            root.toggleSearchScope()
+          else root.clearUnifiedSearch()
+          root.disarmEscapeClose()
+          event.accepted = true
+          return
+        }
+        if (root.currentTab === "detail" || root.navigationStack.length) {
+          root.disarmEscapeClose()
+          root.goBack()
+        } else if (root.escapeCloseArmed) root.requestClose()
+        else root.armEscapeClose()
         event.accepted = true
       }
 
       Shortcut {
         sequence: "Ctrl+K"
+        enabled: unifiedSearchBar.visible && !root.shortcutsBlocked
         onActivated: root.focusSearch()
       }
       Shortcut {
         sequence: "/"
-        enabled: !root.textInputFocused()
+        enabled: unifiedSearchBar.visible && !root.shortcutsBlocked
+          && !root.textInputFocused()
         onActivated: root.focusSearch()
       }
       Shortcut {
+        sequence: "Ctrl+F"
+        enabled: unifiedSearchBar.visible && root.activeSearchScope.available
+          && !root.shortcutsBlocked
+        onActivated: root.focusContextSearch()
+      }
+      Shortcut {
+        sequence: "Ctrl+L"
+        enabled: unifiedSearchBar.visible && !root.shortcutsBlocked
+        onActivated: root.focusUniversalSearch()
+      }
+      Shortcut {
+        sequence: "Alt+Left"
+        enabled: !root.shortcutsBlocked
+          && (root.currentTab === "detail" || root.navigationStack.length > 0)
+        onActivated: root.goBack()
+      }
+      Shortcut {
+        sequence: "Ctrl+,"
+        enabled: root.fullyConnected && !root.shortcutsBlocked
+        onActivated: root.chooseTab("setup")
+      }
+      Shortcut {
+        sequence: "Alt+Shift+H"
+        enabled: root.fullyConnected && !root.shortcutsBlocked
+        onActivated: root.chooseTab("home")
+      }
+      Shortcut {
+        sequence: "Alt+Shift+Q"
+        enabled: root.fullyConnected && !root.shortcutsBlocked
+        onActivated: root.chooseTab("queue")
+      }
+      Shortcut {
+        sequence: "Alt+Shift+D"
+        enabled: root.fullyConnected && !root.shortcutsBlocked
+        onActivated: root.chooseTab("devices")
+      }
+      Shortcut {
         sequence: "Space"
-        enabled: !root.textInputFocused()
+        enabled: !root.shortcutsBlocked && !root.textInputFocused()
+          && root.service && root.service.playbackControllable
         onActivated: if (root.service) root.service.togglePlayback()
       }
       Shortcut {
         sequence: "Ctrl+Right"
+        enabled: !root.shortcutsBlocked && !root.textInputFocused()
+          && root.service && root.service.playbackControllable
         onActivated: if (root.service) root.service.next()
       }
       Shortcut {
         sequence: "Ctrl+Left"
+        enabled: !root.shortcutsBlocked && !root.textInputFocused()
+          && root.service && root.service.playbackControllable
         onActivated: if (root.service) root.service.previous()
+      }
+      Shortcut {
+        sequence: "M"
+        enabled: !root.shortcutsBlocked && !root.textInputFocused()
+          && root.service && root.service.volumeSupported
+        onActivated: root.toggleMute()
+      }
+      Shortcut {
+        sequence: "Ctrl+S"
+        enabled: !root.shortcutsBlocked && !root.textInputFocused()
+          && root.service && root.service.playbackControllable
+        onActivated: root.service.setShuffle(!root.service.shuffle)
+      }
+      Shortcut {
+        sequence: "Ctrl+R"
+        enabled: !root.shortcutsBlocked && !root.textInputFocused()
+          && root.service && root.service.playbackControllable
+        onActivated: root.service.cycleRepeat()
+      }
+      Shortcut {
+        sequence: "Shift+Left"
+        enabled: !root.shortcutsBlocked && !root.textInputFocused()
+          && root.service && root.service.playbackControllable
+        onActivated: root.seekBy(-10)
+      }
+      Shortcut {
+        sequence: "Shift+Right"
+        enabled: !root.shortcutsBlocked && !root.textInputFocused()
+          && root.service && root.service.playbackControllable
+        onActivated: root.seekBy(10)
+      }
+      Shortcut {
+        sequence: "Ctrl+Up"
+        enabled: !root.shortcutsBlocked && !root.textInputFocused()
+          && root.service && root.service.volumeSupported
+        onActivated: root.adjustVolume(0.05)
+      }
+      Shortcut {
+        sequence: "Ctrl+Down"
+        enabled: !root.shortcutsBlocked && !root.textInputFocused()
+          && root.service && root.service.volumeSupported
+        onActivated: root.adjustVolume(-0.05)
+      }
+      Shortcut {
+        sequence: "Ctrl+/"
+        enabled: !root.textInputFocused()
+          && (!root.shortcutsBlocked || shortcutHelpPopup.opened)
+        onActivated: root.toggleShortcutHelp()
       }
 
       Item {
@@ -1125,7 +1869,8 @@ Item {
                   focusable: true
                   tooltipText: radioEntry && root.service && root.service.lastRadioPlaylist
                     ? modelData.label + " · " + root.service.lastRadioPlaylist.name
-                    : modelData.label
+                    : root.shortcutHint(modelData.label,
+                      root.primaryNavigationShortcut(modelData.id))
                   onClicked: {
                     if (radioEntry) root.openLastRadio()
                     else root.chooseTab(modelData.id)
@@ -1179,16 +1924,37 @@ Item {
                 onClicked: root.chooseTab("library")
               }
 
-              Button {
+              Row {
                 width: parent.width
-                text: root.compactWidth ? "" : "Playlists"
-                iconText: "󱁐"
-                foreground: root.foreground
-                selected: root.currentTab === "playlists"
-                leftAlign: !root.compactWidth
-                focusable: true
-                tooltipText: "Playlists"
-                onClicked: root.chooseTab("playlists")
+                spacing: Style.space(2)
+
+                Button {
+                  width: Math.max(20, parent.width - createPlaylistShortcut.width
+                    - parent.spacing)
+                  text: root.compactWidth ? "" : "Playlists"
+                  iconText: "󱁐"
+                  foreground: root.foreground
+                  selected: root.currentTab === "playlists"
+                  leftAlign: !root.compactWidth
+                  focusable: true
+                  tooltipText: "Playlists"
+                  onClicked: root.chooseTab("playlists")
+                }
+
+                Button {
+                  id: createPlaylistShortcut
+                  width: root.compactWidth
+                    ? Math.max(20, (parent.width - parent.spacing) / 2) : implicitWidth
+                  text: "+"
+                  foreground: root.foreground
+                  fontSize: Style.font.subtitle
+                  horizontalPadding: Style.space(7)
+                  focusable: true
+                  tooltipText: "Create a new playlist"
+                  enabled: root.fullyConnected && root.service
+                    && !root.service.playlistActionBusy
+                  onClicked: root.openCreatePlaylistPopup()
+                }
               }
             }
 
@@ -1252,7 +2018,7 @@ Item {
               selected: root.currentTab === "setup"
               leftAlign: !root.compactWidth
               focusable: true
-              tooltipText: "Settings"
+              tooltipText: root.shortcutHint("Settings", "Ctrl+,")
               onClicked: root.chooseTab("setup")
             }
           }
@@ -1276,7 +2042,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: "󰁍"
                 foreground: root.foreground
-                tooltipText: "Back"
+                tooltipText: root.shortcutHint("Back", "Alt+Left")
                 focusable: true
                 onClicked: root.goBack()
               }
@@ -1284,7 +2050,8 @@ Item {
               Column {
                 width: Math.max(80, parent.width
                   - (backButton.visible ? backButton.width + parent.spacing : 0)
-                  - refreshButton.width - closeButton.width - parent.spacing * 2)
+                  - shortcutHelpButton.width - refreshButton.width - closeButton.width
+                  - parent.spacing * 3)
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(1)
 
@@ -1309,6 +2076,17 @@ Item {
               }
 
               Button {
+                id: shortcutHelpButton
+                anchors.verticalCenter: parent.verticalCenter
+                text: "?"
+                foreground: root.foreground
+                fontSize: Style.font.subtitle
+                tooltipText: root.shortcutHint("Keyboard shortcuts", "Ctrl+/")
+                focusable: true
+                onClicked: root.toggleShortcutHelp()
+              }
+
+              Button {
                 id: refreshButton
                 visible: root.currentTab !== "login" && root.currentTab !== "setup"
                 anchors.verticalCenter: parent.verticalCenter
@@ -1318,8 +2096,11 @@ Item {
                 focusable: true
                 onClicked: {
                   if (!root.service) return
-                  if (root.currentTab === "detail" && root.service.detailItem)
-                    root.service.openDetail(root.service.detailItem)
+                  if (root.showingUniversalSearch) root.runUnifiedSearch()
+                  else if (root.currentTab === "detail" && root.service.detailItem)
+                    root.service.openDetail(root.service.detailItem,
+                      root.service.detailItem.type === "artist"
+                        ? root.artistSearchText : "")
                   else if (root.currentTab === "library")
                     root.service.loadLibrary(root.libraryType, false, true)
                   else root.service.refreshView(root.currentTab)
@@ -1330,8 +2111,14 @@ Item {
                 id: closeButton
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: "󰅖"
-                foreground: root.foreground
-                tooltipText: "Close"
+                foreground: root.escapeCloseArmed ? Color.urgent : root.foreground
+                bordered: root.escapeCloseArmed
+                borderSpec: root.escapeCloseArmed
+                  ? Border.flat(Color.urgent, Math.max(1, Style.normalBorderWidth))
+                  : closeButton._borderSpec
+                tooltipText: root.escapeCloseArmed
+                  ? "Press Esc again to close"
+                  : root.shortcutHint("Close", "Esc, Esc")
                 focusable: true
                 onClicked: root.requestClose()
               }
@@ -1365,11 +2152,68 @@ Item {
               }
             }
 
+            Row {
+              id: unifiedSearchBar
+              visible: root.currentTab !== "login" && root.currentTab !== "devices"
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.top: statusBanner.visible ? statusBanner.bottom : pageHeader.bottom
+              anchors.topMargin: visible ? Style.space(8) : 0
+              height: visible ? Style.space(38) : 0
+              spacing: Style.space(6)
+
+              TextField {
+                id: unifiedSearchField
+                width: searchScopeButton.visible
+                  ? Math.max(0, parent.width - searchScopeButton.width
+                    - parent.spacing)
+                  : parent.width
+                height: parent.height
+                foreground: root.foreground
+                placeholderText: root.activeSearchScope.available && root.searchInContext
+                  ? "Search in " + root.activeSearchScope.label : "Search Spotify"
+                text: root.unifiedSearchText()
+                enabled: root.service && root.service.auth.loggedIn
+                onTextEdited: root.editUnifiedSearch(text)
+                onAccepted: root.runUnifiedSearch()
+
+                PanelToolTip {
+                  visible: unifiedSearchField.hovered
+                  text: root.activeSearchScope.available
+                    ? "Focus search · Ctrl+K or /\nCurrent area · Ctrl+F    All Spotify · Ctrl+L"
+                    : "Focus search · Ctrl+K or /\nAll Spotify · Ctrl+L"
+                }
+              }
+
+              Button {
+                id: searchScopeButton
+                visible: root.activeSearchScope.available
+                width: visible ? Math.min(parent.width * 0.4,
+                  Math.max(parent.width * 0.2, implicitWidth)) : 0
+                height: parent.height
+                clip: true
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.searchScopeButtonText()
+                iconText: root.searchInContext ? "󰄬" : "󰄱"
+                foreground: root.foreground
+                selected: root.searchInContext
+                bordered: true
+                focusable: true
+                horizontalPadding: Style.space(8)
+                tooltipText: root.searchInContext
+                  ? root.shortcutHint("Search all of Spotify", "Ctrl+L")
+                  : root.shortcutHint("Search only in "
+                    + root.activeSearchScope.label, "Ctrl+F")
+                onClicked: root.toggleSearchScope()
+              }
+            }
+
             Loader {
               id: pageLoader
               anchors.left: parent.left
               anchors.right: parent.right
-              anchors.top: statusBanner.visible ? statusBanner.bottom : pageHeader.bottom
+              anchors.top: unifiedSearchBar.visible ? unifiedSearchBar.bottom
+                : (statusBanner.visible ? statusBanner.bottom : pageHeader.bottom)
               anchors.topMargin: Style.space(8)
               anchors.bottom: parent.bottom
               sourceComponent: root.pageComponent()
@@ -1456,25 +2300,25 @@ Item {
                   elide: Text.ElideRight
                 }
 
-                Text {
+                ArtistLinks {
                   width: parent.width
-                  text: root.service && root.service.artist
+                  artists: root.service ? root.service.currentArtists : []
+                  fallbackText: root.service && root.service.artist
                     ? root.service.artist : "Choose something to play"
-                  color: root.service && root.service.artist ? root.accent
+                  fallbackClickable: root.service && root.service.artist !== ""
+                    && root.service.currentArtistContextAvailable
+                    && artists.length === 0
+                  color: root.service && root.service.artist
+                    && root.service.currentArtistContextAvailable ? root.accent
                     : Qt.darker(root.foreground, 1.38)
+                  accent: root.accent
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
-
-                  MouseArea {
-                    anchors.fill: parent
-                    enabled: root.service && root.service.artist !== ""
-                      && root.service.currentTrackId() !== ""
-                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: root.service.currentContext("artist", function(item) {
+                  onArtistRequested: function(item) { root.openItem(item) }
+                  onFallbackRequested: if (root.service)
+                    root.service.currentContext("artist", function(item) {
                       root.openItem(item)
                     })
-                  }
                 }
 
                 Text {
@@ -1512,14 +2356,14 @@ Item {
                   iconText: "󰒟"
                   foreground: root.foreground
                   selected: root.service && root.service.shuffle
-                  tooltipText: "Shuffle"
+                  tooltipText: root.shortcutHint("Shuffle", "Ctrl+S")
                   enabled: root.service && root.service.playbackControllable
                   onClicked: if (root.service) root.service.setShuffle(!root.service.shuffle)
                 }
                 Button {
                   iconText: "󰒮"
                   foreground: root.foreground
-                  tooltipText: "Previous"
+                  tooltipText: root.shortcutHint("Previous", "Ctrl+Left")
                   enabled: root.service && root.service.playbackControllable
                   onClicked: if (root.service) root.service.previous()
                 }
@@ -1527,14 +2371,15 @@ Item {
                   iconText: root.service && root.service.playing ? "󰏤" : "󰐊"
                   iconSize: Style.font.iconLarge
                   foreground: root.foreground
-                  tooltipText: root.service && root.service.playing ? "Pause" : "Play"
+                  tooltipText: root.shortcutHint(
+                    root.service && root.service.playing ? "Pause" : "Play", "Space")
                   enabled: root.service && root.service.playbackControllable
                   onClicked: if (root.service) root.service.togglePlayback()
                 }
                 Button {
                   iconText: "󰒭"
                   foreground: root.foreground
-                  tooltipText: "Next"
+                  tooltipText: root.shortcutHint("Next", "Ctrl+Right")
                   enabled: root.service && root.service.playbackControllable
                   onClicked: if (root.service) root.service.next()
                 }
@@ -1542,9 +2387,17 @@ Item {
                   iconText: root.service && root.service.repeatMode === "track" ? "󰑘" : "󰑖"
                   foreground: root.foreground
                   selected: root.service && root.service.repeatMode !== "off"
-                  tooltipText: "Repeat: " + (root.service ? root.service.repeatMode : "off")
+                  tooltipText: root.shortcutHint("Repeat: "
+                    + (root.service ? root.service.repeatMode : "off"), "Ctrl+R")
                   enabled: root.service && root.service.playbackControllable
                   onClicked: if (root.service) root.service.cycleRepeat()
+                }
+                Button {
+                  iconText: "󰎈"
+                  foreground: root.foreground
+                  tooltipText: "Open lyrics in Omasing"
+                  enabled: root.service && root.service.lyricsAvailable
+                  onClicked: root.openLyrics()
                 }
               }
 
@@ -1562,6 +2415,7 @@ Item {
                 }
 
                 PanelSlider {
+                  id: positionSlider
                   width: Math.max(30, parent.width - positionFooterTime.implicitWidth
                     - durationFooterTime.implicitWidth - Style.space(12))
                   anchors.verticalCenter: parent.verticalCenter
@@ -1572,6 +2426,12 @@ Item {
                   value: root.service ? root.service.positionSeconds : 0
                   onReleased: function(value) {
                     if (root.service) root.service.seekSeconds(value)
+                  }
+
+                  HoverHandler { id: positionSliderHover }
+                  PanelToolTip {
+                    visible: positionSliderHover.hovered
+                    text: "Seek 10 seconds · Shift+Left / Shift+Right"
                   }
                 }
 
@@ -1599,7 +2459,7 @@ Item {
                 Button {
                   iconText: "󰋋"
                   foreground: root.foreground
-                  tooltipText: "Devices"
+                  tooltipText: root.shortcutHint("Devices", "Alt+Shift+D")
                   onClicked: root.chooseTab("devices")
                 }
 
@@ -1612,6 +2472,7 @@ Item {
                 }
 
                 PanelSlider {
+                  id: volumeSlider
                   width: Math.max(35, parent.width - Style.space(74))
                   anchors.verticalCenter: parent.verticalCenter
                   enabled: root.service && root.service.volumeSupported
@@ -1620,8 +2481,13 @@ Item {
                   maximum: 1
                   step: 0.05
                   value: root.service ? root.service.volume : 0
-                  onReleased: function(value) {
-                    if (root.service) root.service.setVolume(value)
+                  onReleased: function(value) { root.setPanelVolume(value) }
+                  onRightClicked: root.toggleMute()
+
+                  HoverHandler { id: volumeSliderHover }
+                  PanelToolTip {
+                    visible: volumeSliderHover.hovered
+                    text: "Volume · Ctrl+Up / Ctrl+Down · M to mute"
                   }
                 }
               }
@@ -1630,6 +2496,20 @@ Item {
         }
       }
     }
+  }
+
+  Timer {
+    id: unifiedSearchDelay
+    interval: 300
+    repeat: false
+    onTriggered: root.runUnifiedSearch()
+  }
+
+  Timer {
+    id: escapeCloseTimer
+    interval: 1500
+    repeat: false
+    onTriggered: root.escapeCloseArmed = false
   }
 
   Timer {
@@ -1674,6 +2554,7 @@ Item {
           height: Math.max(40, parent.height - homeTypes.height - parent.spacing)
           service: root.service
           sourceItems: root.service ? root.service.homeItems(root.homeType) : []
+          filterText: root.homeFilter
           showFilter: false
           showQueue: true
           showSave: true
@@ -1683,7 +2564,9 @@ Item {
           restoredContentY: root.scrollFor("home:" + root.homeType)
           stateKey: "home:" + root.homeType
           emptyMessage: root.service && root.service.homeLoading
-            ? "Loading your listening history…" : "No listening history is available yet."
+            ? "Loading your listening history…"
+            : (root.homeFilter.trim() ? "No matches in " + root.activeSearchScope.label + "."
+              : "No listening history is available yet.")
           onActivated: function(item, items, uri) {
             root.activateMedia(item, items, uri)
           }
@@ -1710,6 +2593,7 @@ Item {
         anchors.fill: parent
         service: root.service
         sourceItems: root.service ? root.service.discoverPlaylists : []
+        filterText: root.discoverFilter
         showFilter: false
         showQueue: false
         showPlaylist: false
@@ -1721,8 +2605,9 @@ Item {
         stateKey: "discover"
         emptyMessage: root.service && root.service.discoverLoading
           ? "Finding playlists picked for you…"
-          : (root.service && root.service.discoverMessage
-            ? root.service.discoverMessage : "No discovery playlists are available yet.")
+          : (root.discoverFilter.trim() ? "No matches in Discover."
+            : (root.service && root.service.discoverMessage
+            ? root.service.discoverMessage : "No discovery playlists are available yet."))
         onActivated: function(item, items, uri) {
           root.activateMedia(item, items, uri)
         }
@@ -1745,6 +2630,12 @@ Item {
       id: detailRoot
       readonly property bool isArtist: root.service && root.service.detailItem
         && root.service.detailItem.type === "artist"
+      readonly property bool searchActive: isArtist && root.artistScopedSearchActive
+      readonly property bool searchLoading: root.service
+        && root.service.artistCatalogLoading
+      readonly property int searchResultCount: root.service
+        ? root.service.artistSongs.length + root.service.artistAlbums.length
+          + root.service.artistPlaylists.length : 0
 
       Column {
         anchors.fill: parent
@@ -1753,7 +2644,8 @@ Item {
         BorderSurface {
           id: detailHero
           width: parent.width
-          height: Style.space(132)
+          height: visible ? Style.space(132) : 0
+          visible: !detailRoot.searchActive
           radius: Style.cornerRadius
           color: Style.normalFillFor(root.foreground, root.accent)
           borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
@@ -1775,7 +2667,7 @@ Item {
                 anchors.fill: parent
                 anchors.margins: Style.space(2)
                 source: root.service && root.service.detailItem
-                  ? root.service.detailItem.imageUrl : ""
+                  ? String(root.service.detailItem.imageUrl || "") : ""
                 sourceSize.width: 256
                 sourceSize.height: 256
                 fillMode: Image.PreserveAspectFit
@@ -1809,14 +2701,19 @@ Item {
                 font.bold: true
                 elide: Text.ElideRight
               }
-              Text {
+              ArtistLinks {
                 width: parent.width
-                text: root.service && root.service.detailItem
+                artists: root.service && root.service.detailItem
+                  ? root.service.detailItem.artists : []
+                fallbackText: root.service && root.service.detailItem
                   ? root.service.detailItem.subtitle : ""
+                suffixText: root.service && root.service.detailItem
+                  ? Api.artistSubtitleSuffix(root.service.detailItem) : ""
                 color: root.accent
+                accent: root.accent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
-                elide: Text.ElideRight
+                onArtistRequested: function(item) { root.openItem(item) }
               }
               Text {
                 width: parent.width
@@ -1847,9 +2744,9 @@ Item {
                     || root.service.detailItems.length > 0)
                 onClicked: {
                   if (["show", "audiobook"].indexOf(root.service.detailItem.type) >= 0)
-                    root.service.playItem(root.service.detailItems[0],
+                    root.activateMedia(root.service.detailItems[0],
                       root.service.detailItems, "")
-                  else root.service.playItem(root.service.detailItem)
+                  else root.activateMedia(root.service.detailItem)
                 }
               }
               Button {
@@ -1896,82 +2793,21 @@ Item {
         Column {
           id: artistCatalog
           width: parent.width
-          height: Math.max(40, parent.height - detailHero.height - detailNotice.height
-            - parent.spacing * 2)
-          visible: detailRoot.isArtist
+          height: visible ? Math.max(40, parent.height - detailHero.height
+            - detailNotice.height - parent.spacing * 2) : 0
+          visible: detailRoot.isArtist && !detailRoot.searchActive
           spacing: Style.space(7)
-
-          Row {
-            id: artistSearchRow
-            width: parent.width
-            spacing: Style.space(6)
-
-            TextField {
-              id: artistSearchField
-              width: Math.max(80, parent.width - clearArtistSearch.width - parent.spacing)
-              foreground: root.foreground
-              placeholderText: "Find any album, EP, or song by this artist"
-              text: root.artistSearchText
-              onTextEdited: {
-                root.artistSearchText = text
-                artistSearchDelay.restart()
-              }
-              onAccepted: {
-                artistSearchDelay.stop()
-                if (root.service) root.service.findArtistMusic(text)
-              }
-            }
-
-            Button {
-              id: clearArtistSearch
-              iconText: "󰅖"
-              foreground: root.foreground
-              tooltipText: "Show top music"
-              enabled: root.artistSearchText !== ""
-              onClicked: {
-                artistSearchDelay.stop()
-                root.artistSearchText = ""
-                artistSearchField.text = ""
-                if (root.service) root.service.findArtistMusic("")
-                artistSearchField.forceActiveFocus()
-              }
-            }
-          }
 
           Row {
             id: artistLists
             width: parent.width
-            height: Math.max(40, parent.height - artistSearchRow.height - parent.spacing)
+            height: parent.height
             spacing: Style.space(10)
 
             Column {
               width: Math.max(80, (parent.width - parent.spacing) / 2)
               height: parent.height
               spacing: Style.space(5)
-
-              MediaRow {
-                id: artistThisIsRow
-                width: parent.width
-                height: visible ? implicitHeight : 0
-                visible: root.service && root.service.artistThisIsPlaylist
-                itemData: root.service ? root.service.artistThisIsPlaylist : null
-                foreground: root.foreground
-                accent: root.accent
-                fontFamily: root.fontFamily
-                browseOnActivate: true
-                showQueue: false
-                showPlaylist: false
-                showSave: true
-                saved: root.service && root.service.isSaved(itemData)
-                onActivated: function(item) { root.activateMedia(item, [item], item.uri) }
-                onOpenRequested: function(item) { root.openItem(item) }
-                onSaveRequested: function(item) {
-                  if (root.service) root.service.toggleSaved(item)
-                }
-                onContextRequested: function(item, sceneX, sceneY) {
-                  root.openMediaContext(item, sceneX, sceneY, [item], item.uri, 0)
-                }
-              }
 
               Text {
                 id: artistAlbumsHeading
@@ -1985,9 +2821,8 @@ Item {
 
               MediaCollection {
                 width: parent.width
-                height: Math.max(30, parent.height - artistThisIsRow.height
-                  - artistAlbumsHeading.height - parent.spacing
-                  * (artistThisIsRow.visible ? 2 : 1))
+                height: Math.max(30, parent.height - artistAlbumsHeading.height
+                  - parent.spacing)
                 service: root.service
                 sourceItems: root.service ? root.service.artistAlbums : []
                 showFilter: false
@@ -2028,7 +2863,9 @@ Item {
 
               MediaCollection {
                 width: parent.width
-                height: Math.max(30, parent.height - artistSongsHeading.height - parent.spacing)
+                height: Math.max(30, parent.height - artistSongsHeading.height
+                  - artistThisIsRow.height - parent.spacing
+                  * (artistThisIsRow.visible ? 2 : 1))
                 service: root.service
                 sourceItems: root.service ? root.service.artistSongs : []
                 showFilter: false
@@ -2051,15 +2888,170 @@ Item {
                 }
                 onLoadMoreRequested: if (root.service) root.service.loadMoreArtistSongs()
               }
+
+              MediaRow {
+                id: artistThisIsRow
+                width: parent.width
+                height: visible ? implicitHeight : 0
+                visible: root.service && root.service.artistThisIsPlaylist
+                itemData: root.service ? root.service.artistThisIsPlaylist : null
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                browseOnActivate: true
+                showQueue: false
+                showPlaylist: false
+                showSave: true
+                saved: root.service && root.service.isSaved(itemData)
+                onActivated: function(item) { root.activateMedia(item, [item], item.uri) }
+                onOpenRequested: function(item) { root.openItem(item) }
+                onSaveRequested: function(item) {
+                  if (root.service) root.service.toggleSaved(item)
+                }
+                onContextRequested: function(item, sceneX, sceneY) {
+                  root.openMediaContext(item, sceneX, sceneY, [item], item.uri, 0)
+                }
+              }
             }
           }
 
-          Timer {
-            id: artistSearchDelay
-            interval: 300
-            repeat: false
-            onTriggered: if (root.service)
-              root.service.findArtistMusic(root.artistSearchText)
+        }
+
+        Item {
+          id: artistSearchPage
+          width: parent.width
+          height: visible ? Math.max(40, parent.height - detailNotice.height
+            - parent.spacing) : 0
+          visible: detailRoot.searchActive
+
+          Flickable {
+            id: artistSearchFlick
+            anchors.fill: parent
+            property string queryKey: root.artistSearchText
+            contentWidth: width
+            contentHeight: artistSearchContent.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
+            interactive: contentHeight > height
+            onQueryKeyChanged: contentY = originY
+
+            Column {
+              id: artistSearchContent
+              width: Math.max(1, artistSearchFlick.width - Style.space(10))
+              spacing: Style.space(12)
+
+              Text {
+                width: parent.width
+                text: detailRoot.searchLoading
+                  ? "Searching " + (root.service && root.service.detailItem
+                    ? root.service.detailItem.name : "this artist") + "…"
+                  : detailRoot.searchResultCount
+                    + (detailRoot.searchResultCount === 1 ? " result" : " results")
+                color: Qt.darker(root.foreground, 1.35)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              ArtistSearchSection {
+                width: parent.width
+                service: root.service
+                heading: "SONGS"
+                sourceItems: root.service ? root.service.artistSongs : []
+                loading: root.service && root.service.artistSongsLoading
+                hasMore: root.service && root.service.artistSongsNext !== ""
+                browseContexts: false
+                showQueue: true
+                showSave: true
+                onActivated: function(item, items, uri) {
+                  root.activateMedia(item, items, uri)
+                }
+                onOpened: function(item) { root.openItem(item) }
+                onQueued: function(item) {
+                  if (root.service) root.service.addToQueue(item)
+                }
+                onPlaylistRequested: function(item) { root.openPlaylistPicker(item) }
+                onSaveToggled: function(item) {
+                  if (root.service) root.service.toggleSaved(item)
+                }
+                onContextRequested: function(item, x, y, index, items, uri) {
+                  root.openMediaContext(item, x, y, items, uri, index)
+                }
+                onLoadMoreRequested: if (root.service)
+                  root.service.loadMoreArtistSongs()
+              }
+
+              ArtistSearchSection {
+                width: parent.width
+                service: root.service
+                heading: "ALBUMS & EPS"
+                sourceItems: root.service ? root.service.artistAlbums : []
+                loading: root.service && root.service.artistAlbumsLoading
+                hasMore: root.service && root.service.artistAlbumsNext !== ""
+                browseContexts: true
+                showQueue: false
+                showPlaylist: false
+                showSave: true
+                onActivated: function(item, items, uri) {
+                  root.activateMedia(item, items, uri)
+                }
+                onOpened: function(item) { root.openItem(item) }
+                onSaveToggled: function(item) {
+                  if (root.service) root.service.toggleSaved(item)
+                }
+                onContextRequested: function(item, x, y, index, items, uri) {
+                  root.openMediaContext(item, x, y, items, uri, index)
+                }
+                onLoadMoreRequested: if (root.service)
+                  root.service.loadMoreArtistAlbums()
+              }
+
+              ArtistSearchSection {
+                width: parent.width
+                service: root.service
+                heading: "PLAYLISTS"
+                sourceItems: root.service ? root.service.artistPlaylists : []
+                loading: root.service && root.service.artistPlaylistsLoading
+                hasMore: root.service && root.service.artistPlaylistsNext !== ""
+                browseContexts: true
+                showQueue: false
+                showPlaylist: false
+                showSave: true
+                onActivated: function(item, items, uri) {
+                  root.activateMedia(item, items, uri)
+                }
+                onOpened: function(item) { root.openItem(item) }
+                onSaveToggled: function(item) {
+                  if (root.service) root.service.toggleSaved(item)
+                }
+                onContextRequested: function(item, x, y, index, items, uri) {
+                  root.openMediaContext(item, x, y, items, uri, index)
+                }
+                onLoadMoreRequested: if (root.service)
+                  root.service.loadMoreArtistPlaylists()
+              }
+
+              Text {
+                width: parent.width
+                visible: !detailRoot.searchLoading
+                  && detailRoot.searchResultCount === 0
+                text: "No songs, albums, or playlists matched this search."
+                color: Qt.darker(root.foreground, 1.4)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+              }
+
+              Item { width: 1; height: Style.space(8) }
+            }
+
+            FastScrollHandler {
+              parent: artistSearchFlick
+              flickable: artistSearchFlick
+            }
+
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
           }
         }
 
@@ -2076,8 +3068,13 @@ Item {
           contextUri: root.service && root.service.detailItem
             ? root.service.detailItem.uri : ""
           showQueue: true
+          showFilter: false
+          showSort: true
           showSave: true
           browseContexts: true
+          allowReorder: root.service && root.service.detailItem
+            && root.service.playlistOwned(root.service.detailItem)
+          reorderBusy: root.service && root.service.playlistActionBusy
           loading: root.service && root.service.detailLoading
           hasMore: root.service && root.service.detailNext !== ""
           restoredContentY: root.scrollFor("detail:" + (root.service && root.service.detailItem
@@ -2095,6 +3092,12 @@ Item {
           onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
           onContextRequested: function(item, x, y, index, items, uri) {
             root.openMediaContext(item, x, y, items, uri, index)
+          }
+          onReorderRequested: function(sourceIndex, destinationIndex) {
+            if (root.service && root.service.detailItem)
+              root.service.reorderPlaylistItem(sourceIndex, destinationIndex,
+                root.service.detailItem, root.service.detailItems.length,
+                root.service.detailItems)
           }
           onLoadMoreRequested: if (root.service) root.service.loadMoreDetail()
           onViewStateChanged: function(filter, sort, y) {
@@ -2114,11 +3117,6 @@ Item {
     Item {
       id: searchRoot
 
-      function focusSearch() {
-        searchField.selectAll()
-        searchField.forceActiveFocus()
-      }
-
       Component.onDestruction: {
         if (root.service) root.service.cancelSearch(false)
       }
@@ -2126,47 +3124,6 @@ Item {
       Column {
         anchors.fill: parent
         spacing: Style.space(7)
-
-        Row {
-          width: parent.width
-          spacing: Style.space(6)
-
-          TextField {
-            id: searchField
-            width: Math.max(80, parent.width - clearSearchButton.width - parent.spacing)
-            foreground: root.foreground
-            placeholderText: "Search Spotify"
-            text: root.searchText
-            enabled: root.service && root.service.auth.loggedIn
-            onTextEdited: {
-              root.searchText = text
-              if (!root.service) return
-              if (String(text).trim() === "") {
-                searchDelay.stop()
-                root.service.clearSearch()
-              } else searchDelay.restart()
-            }
-            onAccepted: {
-              searchDelay.stop()
-              root.searchText = text
-              if (root.service) root.service.search(text)
-            }
-          }
-
-          Button {
-            id: clearSearchButton
-            iconText: "󰅖"
-            foreground: root.foreground
-            tooltipText: "Clear search"
-            enabled: root.searchText !== ""
-            onClicked: {
-              root.searchText = ""
-              searchField.text = ""
-              if (root.service) root.service.clearSearch()
-              searchField.forceActiveFocus()
-            }
-          }
-        }
 
         Row {
           id: searchTypes
@@ -2233,8 +3190,8 @@ Item {
                 foreground: root.foreground
                 onClicked: {
                   root.searchText = modelData
-                  searchField.text = modelData
                   root.service.search(modelData)
+                  Qt.callLater(function() { unifiedSearchField.forceActiveFocus() })
                 }
               }
             }
@@ -2254,8 +3211,7 @@ Item {
         MediaCollection {
           id: resultsView
           width: parent.width
-          height: Math.max(40, parent.height - searchField.height - searchTypes.height
-            - Style.space(20))
+          height: Math.max(40, parent.height - searchTypes.height - parent.spacing)
           visible: root.searchText.trim() !== ""
           service: root.service
           sourceItems: root.service ? root.service.searchItems(root.searchType) : []
@@ -2286,13 +3242,6 @@ Item {
         }
       }
 
-      Timer {
-        id: searchDelay
-        interval: 300
-        repeat: false
-        onTriggered: if (root.service && root.service.searchQuery !== root.searchText.trim())
-          root.service.search(root.searchText)
-      }
     }
   }
 
@@ -2342,6 +3291,8 @@ Item {
           sourceItems: root.service ? root.service.libraryItems(root.libraryType) : []
           filterText: root.libraryFilter
           sortKey: root.librarySort
+          showFilter: false
+          showSort: true
           showQueue: true
           showSave: true
           browseContexts: true
@@ -2441,7 +3392,7 @@ Item {
               iconText: "󰐊"
               text: "Play"
               foreground: root.foreground
-              onClicked: root.service.playItem(root.service.selectedPlaylist)
+              onClicked: root.activateMedia(root.service.selectedPlaylist)
             }
 
             Button {
@@ -2456,33 +3407,6 @@ Item {
                 root.openMediaContext(root.service.selectedPlaylist, point.x, point.y,
                   [], root.service.selectedPlaylist.uri, -1)
               }
-            }
-          }
-
-          Row {
-            id: createPlaylistRow
-            width: Math.min(parent.width, Style.space(390))
-            spacing: Style.space(5)
-
-            TextField {
-              id: inlinePlaylistName
-              width: Math.max(70, parent.width - inlineCreateButton.width - parent.spacing)
-              foreground: root.foreground
-              placeholderText: "Name a new playlist"
-              onAccepted: inlineCreateButton.clicked()
-            }
-            Button {
-              id: inlineCreateButton
-              text: "Create"
-              iconText: "󰐕"
-              foreground: root.foreground
-              tooltipText: "Create playlist"
-              enabled: root.service && inlinePlaylistName.text.trim() !== ""
-                && !root.service.playlistActionBusy
-              onClicked: root.service.createPlaylist(inlinePlaylistName.text, function(playlist) {
-                inlinePlaylistName.text = ""
-                root.service.openPlaylist(playlist)
-              })
             }
           }
 
@@ -2513,8 +3437,13 @@ Item {
           contextUri: root.service && root.service.selectedPlaylist
             ? root.service.selectedPlaylist.uri : ""
           showQueue: true
+          showFilter: false
+          showSort: true
           showSave: true
           browseContexts: false
+          allowReorder: root.service && root.service.selectedPlaylist
+            && root.service.playlistOwned(root.service.selectedPlaylist)
+          reorderBusy: root.service && root.service.playlistActionBusy
           loading: root.service && root.service.playlistItemsLoading
           hasMore: root.service && root.service.playlistItemsNext !== ""
           emptyMessage: root.service && root.service.selectedPlaylist
@@ -2526,7 +3455,7 @@ Item {
           stateKey: "playlist:" + (root.service && root.service.selectedPlaylist
             ? root.service.selectedPlaylist.id : "")
           onActivated: function(item, items, uri) {
-            if (root.service) root.service.playItem(item, items, uri)
+            root.activateMedia(item, items, uri)
           }
           onOpened: function(item) { root.openItem(item) }
           onQueued: function(item) { if (root.service) root.service.addToQueue(item) }
@@ -2534,6 +3463,12 @@ Item {
           onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
           onContextRequested: function(item, x, y, index, items, uri) {
             root.openMediaContext(item, x, y, items, uri, index)
+          }
+          onReorderRequested: function(sourceIndex, destinationIndex) {
+            if (root.service && root.service.selectedPlaylist)
+              root.service.reorderPlaylistItem(sourceIndex, destinationIndex,
+                root.service.selectedPlaylist, root.service.playlistItems.length,
+                root.service.playlistItems)
           }
           onLoadMoreRequested: if (root.service) root.service.loadMorePlaylistItems()
           onViewStateChanged: function(filter, sort, y) {
@@ -2551,6 +3486,10 @@ Item {
     id: queuePage
 
     Item {
+      id: queueRoot
+      readonly property var visibleItems: Api.filteredSorted(
+        root.service ? root.service.queue : [], root.queueFilter, "default")
+
       Column {
         anchors.fill: parent
         spacing: Style.space(8)
@@ -2582,7 +3521,7 @@ Item {
           id: queueList
           width: parent.width
           height: Math.max(60, parent.height - Style.space(44))
-          model: root.service ? root.service.queue : []
+          model: queueRoot.visibleItems
           clip: true
           spacing: Style.space(3)
           reuseItems: true
@@ -2602,7 +3541,7 @@ Item {
             showSave: true
             saved: root.service && root.service.isSaved(modelData)
             onActivated: function(item) {
-              if (root.service) root.service.playItem(item, root.service.queue, "")
+              root.activateMedia(item, queueRoot.visibleItems, "")
             }
             onArtistRequested: function(item) { root.openItem(item) }
             onAlbumRequested: function(item) { root.openItem(item) }
@@ -2611,7 +3550,7 @@ Item {
             onSaveRequested: function(item) { if (root.service) root.service.toggleSaved(item) }
             onContextRequested: function(item, sceneX, sceneY) {
               root.openMediaContext(item, sceneX, sceneY,
-                root.service ? root.service.queue : [], "", index)
+                queueRoot.visibleItems, "", index)
             }
           }
         }
