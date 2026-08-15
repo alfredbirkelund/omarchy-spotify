@@ -14,6 +14,8 @@ Item {
   property alias maximumLineCount: label.maximumLineCount
   property alias elide: label.elide
   property color accent: color
+  readonly property bool linkHovered: linkMouseArea.containsMouse
+    && root.linkAt(linkMouseArea.mouseX, linkMouseArea.mouseY) !== ""
 
   signal artistRequested(var artist)
   signal fallbackRequested(string name)
@@ -33,6 +35,13 @@ Item {
     for (var i = 0; i < source.length; i++)
       if (source[i] && source[i].name) result.push(source[i])
     return result
+  }
+
+  function displayText() {
+    var values = artistValues()
+    var parts = []
+    for (var i = 0; i < values.length; i++) parts.push(values[i].name)
+    return (parts.length ? parts.join(", ") : fallbackText) + suffixText
   }
 
   function markup() {
@@ -59,7 +68,7 @@ Item {
     if (index >= 0 && index < values.length) artistRequested(values[index])
   }
 
-  function linkAt(x, y) { return label.linkAt(x, y) }
+  function linkAt(x, y) { return linkMap.linkAt(x, y) }
 
   implicitWidth: label.implicitWidth
   implicitHeight: label.implicitHeight
@@ -69,14 +78,26 @@ Item {
   Text {
     id: label
     anchors.fill: parent
-    text: root.markup()
-    textFormat: Text.StyledText
-    linkColor: root.accent
+    text: root.displayText()
+    textFormat: Text.PlainText
     maximumLineCount: 1
     elide: Text.ElideRight
+    font.underline: root.linkHovered
+  }
+
+  Text {
+    id: linkMap
+    anchors.fill: parent
+    text: root.markup()
+    textFormat: Text.StyledText
+    font: label.font
+    maximumLineCount: label.maximumLineCount
+    elide: label.elide
+    opacity: 0
   }
 
   MouseArea {
+    id: linkMouseArea
     anchors.fill: parent
     z: 1
     acceptedButtons: Qt.LeftButton
