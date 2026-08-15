@@ -27,7 +27,7 @@
       "player"
     ],
     "allowMultiple": false,
-    "defaultSection": "center",
+    "defaultSection": "left",
     "defaults": {
       "deviceName": "Omarchy Spotify",
       "idleShutdownMinutes": 15,

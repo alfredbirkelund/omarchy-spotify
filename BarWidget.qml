@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import qs.Commons
 import qs.Ui
@@ -106,28 +107,72 @@ BarWidget {
         anchors.verticalCenter: parent.verticalCenter
         clip: true
 
-        Text {
-          id: barLabel
-          anchors.verticalCenter: parent.verticalCenter
-          text: root.barText
-          color: button.foreground
-          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.pixelSize: Style.font.body
-          renderType: Text.NativeRendering
+        // Use a wide enough ramp to read as a deliberate fade at bar scale.
+        readonly property real fadeStop: width > 0
+          ? Math.min(0.2, Style.space(28) / width) : 0
 
-          readonly property bool needsScroll: labelMetrics.advanceWidth > scrollClip.width
+        Item {
+          id: labelLayer
+          anchors.fill: parent
+          layer.enabled: barLabel.needsScroll
+          layer.smooth: true
+          layer.effect: MultiEffect {
+            autoPaddingEnabled: false
+            maskEnabled: true
+            maskSource: scrollFadeMask
+            maskThresholdMin: 0.5
+            maskSpreadAtMin: 1
+          }
 
-          NumberAnimation on x {
-            id: barScrollAnimation
-            running: root.spotify && root.spotify.scrollBarText
-              && barLabel.needsScroll && !root.popupOpen && !root.vertical
-            loops: Animation.Infinite
-            duration: Math.round(Math.max(6000, labelMetrics.advanceWidth * 25)
-              / Math.max(0.25, root.spotify ? root.spotify.scrollSpeed : 1))
-            from: scrollClip.width
-            to: -labelMetrics.advanceWidth
-            easing.type: Easing.Linear
-            onStopped: barLabel.x = 0
+          Text {
+            id: barLabel
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.barText
+            color: button.foreground
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.body
+            renderType: Text.NativeRendering
+
+            readonly property bool needsScroll: labelMetrics.advanceWidth > scrollClip.width
+
+            NumberAnimation on x {
+              id: barScrollAnimation
+              running: root.spotify && root.spotify.scrollBarText
+                && barLabel.needsScroll && !root.popupOpen && !root.vertical
+              loops: Animation.Infinite
+              duration: Math.round(Math.max(6000, labelMetrics.advanceWidth * 25)
+                / Math.max(0.25, root.spotify ? root.spotify.scrollSpeed : 1))
+              from: scrollClip.width
+              to: -labelMetrics.advanceWidth
+              easing.type: Easing.Linear
+              onStopped: barLabel.x = 0
+            }
+          }
+        }
+
+        Rectangle {
+          id: scrollFadeMask
+          anchors.fill: parent
+          visible: false
+          layer.enabled: true
+          gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop {
+              position: 0
+              color: barScrollAnimation.running ? "transparent" : "white"
+            }
+            GradientStop {
+              position: scrollClip.fadeStop
+              color: "white"
+            }
+            GradientStop {
+              position: 1 - scrollClip.fadeStop
+              color: "white"
+            }
+            GradientStop {
+              position: 1
+              color: "transparent"
+            }
           }
         }
       }

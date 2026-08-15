@@ -29,8 +29,8 @@ closed, the plugin adds only **1.6 MiB PSS** to the existing Omarchy shell.
 omarchy plugin add https://github.com/stappmus/Omarchy-Spotify.git --enable
 ```
 
-After installation, click the Spotify icon in the bar and follow the setup shown
-in the app.
+After installation, click the Spotify icon in the left side of the bar and follow
+the setup shown in the app. You can move it later with Omarchy's bar controls.
 
 ## Highlights
 
