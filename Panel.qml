@@ -42,6 +42,9 @@ Item {
   property string draftDeviceName: "Omarchy Spotify"
   property string draftIdleMinutes: "15"
   property bool draftShowTitle: true
+  property bool draftShowArtist: false
+  property bool draftScrollBarText: false
+  property real draftScrollSpeed: 1
   property string draftAudioQuality: "320 kbps"
   property var contextItem: null
   property var contextSourceItems: []
@@ -92,6 +95,9 @@ Item {
     draftDeviceName = service.deviceName
     draftIdleMinutes = String(service.idleShutdownMinutes)
     draftShowTitle = service.showTrackTitle
+    draftShowArtist = service.showArtistName
+    draftScrollBarText = service.scrollBarText
+    draftScrollSpeed = service.scrollSpeed
     draftAudioQuality = service.audioQuality
   }
 
@@ -102,6 +108,9 @@ Item {
       idleShutdownMinutes: Math.max(0, Math.min(1440,
         Math.floor(Number(draftIdleMinutes) || 0))),
       showTrackTitle: draftShowTitle ? "On" : "Off",
+      showArtistName: draftShowArtist ? "On" : "Off",
+      scrollBarText: draftScrollBarText ? "On" : "Off",
+      scrollSpeed: Api.normalizedScrollSpeed(draftScrollSpeed),
       audioQuality: draftAudioQuality
     }
     service.persistSettings(values)
@@ -118,6 +127,16 @@ Item {
     if (draftAudioQuality === "96 kbps") return "Standard · 96 kbps"
     if (draftAudioQuality === "320 kbps") return "Very high · 320 kbps"
     return "High · 160 kbps"
+  }
+
+  function scrollSpeedLabel() {
+    var value = Api.normalizedScrollSpeed(draftScrollSpeed)
+    return value.toFixed(2).replace(/\.00$/, "").replace(/0$/, "") + "×"
+  }
+
+  function enforceScrollAvailability() {
+    if (!Api.canScrollBarText(draftShowTitle, draftShowArtist))
+      draftScrollBarText = false
   }
 
   function connectionButtonText() {
@@ -4050,8 +4069,10 @@ Item {
           PanelSeparator { foreground: root.foreground }
 
           Column {
+            id: localPlaybackSetup
             width: parent.width
             spacing: Style.space(7)
+            visible: root.service && !root.service.daemon.playbackReady
 
             Text {
               text: "PLAYBACK ON THIS COMPUTER"
@@ -4103,7 +4124,10 @@ Item {
             }
           }
 
-          PanelSeparator { foreground: root.foreground }
+          PanelSeparator {
+            foreground: root.foreground
+            visible: localPlaybackSetup.visible
+          }
 
           Column {
             width: parent.width
@@ -4112,6 +4136,14 @@ Item {
             Text {
               text: "PREFERENCES"
               color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            Text {
+              text: "SPOTIFY CONNECT"
+              color: Qt.darker(root.foreground, 1.4)
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               font.bold: true
@@ -4163,29 +4195,130 @@ Item {
               }
             }
 
-            Row {
+            Column {
               width: parent.width
-              spacing: Style.space(8)
+              spacing: Style.space(6)
 
-              Button {
-                text: root.draftShowTitle ? "Song title in bar · On" : "Song title in bar · Off"
-                foreground: root.foreground
-                selected: root.draftShowTitle
-                onClicked: root.draftShowTitle = !root.draftShowTitle
+              Text {
+                text: "BAR TEXT"
+                color: Qt.darker(root.foreground, 1.4)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
               }
+
+              Flow {
+                width: parent.width
+                spacing: Style.space(8)
+
+                Button {
+                  text: "Title · " + (root.draftShowTitle ? "On" : "Off")
+                  foreground: root.foreground
+                  selected: root.draftShowTitle
+                  tooltipText: "Show the song title in the top bar"
+                  onClicked: {
+                    root.draftShowTitle = !root.draftShowTitle
+                    root.enforceScrollAvailability()
+                  }
+                }
+                Button {
+                  text: "Artist · " + (root.draftShowArtist ? "On" : "Off")
+                  foreground: root.foreground
+                  selected: root.draftShowArtist
+                  tooltipText: "Show the artist name in the top bar"
+                  onClicked: {
+                    root.draftShowArtist = !root.draftShowArtist
+                    root.enforceScrollAvailability()
+                  }
+                }
+                Button {
+                  text: "Scroll overflow · " + (root.draftScrollBarText ? "On" : "Off")
+                  foreground: root.foreground
+                  selected: root.draftScrollBarText
+                  enabled: Api.canScrollBarText(root.draftShowTitle, root.draftShowArtist)
+                  tooltipText: "Scroll bar text only when it is too wide to fit"
+                  onClicked: root.draftScrollBarText = !root.draftScrollBarText
+                }
+              }
+
+              Column {
+                width: parent.width
+                spacing: Style.space(4)
+                visible: Api.canScrollBarText(root.draftShowTitle, root.draftShowArtist)
+                  && root.draftScrollBarText
+
+                Row {
+                  width: parent.width
+
+                  Text {
+                    id: scrollSpeedTitle
+                    text: "SCROLL SPEED"
+                    color: Qt.darker(root.foreground, 1.4)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+                  Item {
+                    width: Math.max(0, parent.width - scrollSpeedTitle.implicitWidth
+                      - scrollSpeedValue.implicitWidth)
+                    height: 1
+                  }
+                  Text {
+                    id: scrollSpeedValue
+                    text: root.scrollSpeedLabel()
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                  }
+                }
+
+                PanelSlider {
+                  width: parent.width
+                  bar: root.panelBar
+                  minimum: 0.25
+                  maximum: 3
+                  step: 0.25
+                  tickCount: 12
+                  value: root.draftScrollSpeed
+                  onMoved: function(value) {
+                    root.draftScrollSpeed = Api.normalizedScrollSpeed(value)
+                  }
+                  onReleased: function(value) {
+                    root.draftScrollSpeed = Api.normalizedScrollSpeed(value)
+                  }
+                }
+              }
+
+              Text {
+                width: parent.width
+                visible: root.draftScrollBarText
+                text: "Long labels fade at the edges and scroll only when they exceed the available bar space."
+                color: Qt.darker(root.foreground, 1.45)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
+            }
+
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Text {
+                text: "PLAYBACK"
+                color: Qt.darker(root.foreground, 1.4)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
               Button {
                 text: "Audio quality · " + root.audioQualityLabel()
                 iconText: "󰎈"
                 foreground: root.foreground
                 tooltipText: "Change streaming quality"
                 onClicked: root.cycleAudioQuality()
-              }
-              Button {
-                text: "Save changes"
-                iconText: "󰆓"
-                foreground: root.foreground
-                selected: true
-                onClicked: root.saveSettings()
               }
             }
 
@@ -4196,6 +4329,23 @@ Item {
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
+            }
+
+            Row {
+              width: parent.width
+
+              Item {
+                width: Math.max(0, parent.width - saveChangesButton.implicitWidth)
+                height: 1
+              }
+              Button {
+                id: saveChangesButton
+                text: "Save changes"
+                iconText: "󰆓"
+                foreground: root.foreground
+                selected: true
+                onClicked: root.saveSettings()
+              }
             }
           }
         }

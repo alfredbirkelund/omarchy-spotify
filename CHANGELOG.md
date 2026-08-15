@@ -4,6 +4,10 @@
 
 ### Features
 
+- Independently show the artist or song title in the bar, scroll long bar text
+  so the complete label remains readable, and adjust its speed from 0.25× to
+  3×. Scrolling turns off automatically when both text fields are hidden, and
+  stopping it restores the label to its starting position.
 - Replace separate Spotify, artist, and collection search fields with one
   context-aware search bar throughout the app. The checked **In …** control
   filters the open area and can be unchecked to search all of Spotify.
@@ -30,6 +34,9 @@
 
 ### Refinements
 
+- Fade overflowing bar text at its viewport edges, organize preferences into
+  clearer groups, hide completed playback setup, and place new installations
+  in the left bar section by default.
 - Streamline the sidebar by removing the redundant Search and Devices entries.
   Search is available from the shared header, while Devices remains beside the
   volume slider and is also available through `Alt+Shift+D`.

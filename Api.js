@@ -101,6 +101,25 @@ function parseJson(text, fallback) {
   }
 }
 
+function barTrackText(title, artist, showTitle, showArtist) {
+  var cleanTitle = String(title || "").trim()
+  var cleanArtist = String(artist || "").trim()
+  var parts = []
+  if (showArtist && cleanArtist) parts.push(cleanArtist)
+  if (showTitle && cleanTitle) parts.push(cleanTitle)
+  return parts.join(" - ")
+}
+
+function canScrollBarText(showTitle, showArtist) {
+  return showTitle === true || showArtist === true
+}
+
+function normalizedScrollSpeed(value) {
+  var speed = Number(value)
+  if (!isFinite(speed)) speed = 1
+  return Math.round(Math.max(0.25, Math.min(3, speed)) * 4) / 4
+}
+
 // Nested arrays become array-like QML sequences after passing through a
 // ListView model. Preserve them instead of relying on Array.isArray(), which
 // returns false for that representation.

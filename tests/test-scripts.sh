@@ -177,9 +177,11 @@ grep -q 'readonly property string redirectUri: "http://127.0.0.1:"' \
 ! grep -q '"oauthPort"' "$source_root/manifest.json"
 grep -q 'window.close()' "$source_root/OAuth.js"
 jq -e '.version == "1.0.1"
+  and .barWidget.defaultSection == "left"
   and .barWidget.defaults.audioQuality == "320 kbps"
   and (.barWidget.schema[] | select(.key == "audioQuality").defaultValue) == "320 kbps"' \
   "$source_root/manifest.json" >/dev/null
+grep -qx 'section=left' "$source_root/scripts/install-local.sh"
 grep -qx 'bitrate = 320' "$source_root/config/spotifyd.conf"
 
 echo "Script tests passed."

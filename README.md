@@ -80,8 +80,9 @@ The essentials are always one click away, without reopening the full app.
 omarchy plugin add https://github.com/stappmus/Omarchy-Spotify.git --enable
 ```
 
-Click the Spotify icon in the bar, choose **Set up and continue**, and finish
-the Spotify sign-in in your browser. That is it.
+Click the Spotify icon on the left side of the bar, choose **Set up and
+continue**, and finish the Spotify sign-in in your browser. You can move the
+widget later with Omarchy's bar controls.
 
 > Requires Omarchy 4 and a personal Spotify Premium account.
 
@@ -93,6 +94,8 @@ the Spotify sign-in in your browser. That is it.
   into your own editable copies when Spotify makes their contents available.
 - Build a queue, start track radio, use shuffle and repeat, or set a sleep timer.
 - Listen on this computer or switch to another Spotify Connect speaker or player.
+- Choose whether the bar shows the title, artist, or both, and softly scroll
+  overflowing text at an adjustable speed.
 - Choose up to 320 kbps for local playback.
 
 Your Spotify password is entered only on Spotify's own page. Omarchy Spotify

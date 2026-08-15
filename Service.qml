@@ -28,6 +28,9 @@ Item {
     deviceName: "Omarchy Spotify",
     idleShutdownMinutes: 15,
     showTrackTitle: "On",
+    showArtistName: "Off",
+    scrollBarText: "Off",
+    scrollSpeed: "1",
     audioQuality: "320 kbps",
     searchHistory: "[]",
     sessionState: "{}"
@@ -37,6 +40,9 @@ Item {
   readonly property int idleShutdownMinutes: Math.max(0, Math.min(1440,
     Math.floor(Number(settings.idleShutdownMinutes) || 0)))
   readonly property bool showTrackTitle: String(settings.showTrackTitle || "On") !== "Off"
+  readonly property bool showArtistName: String(settings.showArtistName || "Off") === "On"
+  readonly property bool scrollBarText: String(settings.scrollBarText || "Off") === "On"
+  readonly property real scrollSpeed: Api.normalizedScrollSpeed(settings.scrollSpeed)
   readonly property int bitrateKbps: String(settings.audioQuality || "320 kbps").indexOf("96") === 0
     ? 96 : (String(settings.audioQuality || "320 kbps").indexOf("160") === 0 ? 160 : 320)
   readonly property string audioQuality: bitrateKbps + " kbps"
@@ -332,6 +338,9 @@ Item {
       deviceName: "Omarchy Spotify",
       idleShutdownMinutes: 15,
       showTrackTitle: "On",
+      showArtistName: "Off",
+      scrollBarText: "Off",
+      scrollSpeed: "1",
       audioQuality: "320 kbps",
       searchHistory: "[]",
       sessionState: "{}"
@@ -350,6 +359,9 @@ Item {
     if (source.idleShutdownMinutes !== undefined)
       next.idleShutdownMinutes = source.idleShutdownMinutes
     if (source.showTrackTitle !== undefined) next.showTrackTitle = source.showTrackTitle
+    if (source.showArtistName !== undefined) next.showArtistName = source.showArtistName
+    if (source.scrollBarText !== undefined) next.scrollBarText = source.scrollBarText
+    if (source.scrollSpeed !== undefined) next.scrollSpeed = source.scrollSpeed
     if (source.audioQuality !== undefined) next.audioQuality = source.audioQuality
     if (source.searchHistory !== undefined)
       next.searchHistory = JSON.stringify(Api.parseStringList(source.searchHistory, 12))
@@ -364,6 +376,11 @@ Item {
     next.idleShutdownMinutes = Math.max(0, Math.min(1440,
       Math.floor(Number(next.idleShutdownMinutes) || 0)))
     next.showTrackTitle = String(next.showTrackTitle || "On") === "Off" ? "Off" : "On"
+    next.showArtistName = String(next.showArtistName || "Off") === "On" ? "On" : "Off"
+    next.scrollBarText = String(next.scrollBarText || "Off") === "On" ? "On" : "Off"
+    if (!Api.canScrollBarText(next.showTrackTitle === "On", next.showArtistName === "On"))
+      next.scrollBarText = "Off"
+    next.scrollSpeed = String(Api.normalizedScrollSpeed(next.scrollSpeed))
     var quality = String(next.audioQuality || "320 kbps")
     next.audioQuality = quality.indexOf("96") === 0 ? "96 kbps"
       : (quality.indexOf("160") === 0 ? "160 kbps" : "320 kbps")
