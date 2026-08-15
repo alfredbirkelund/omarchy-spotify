@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import Quickshell.Services.Mpris
 
 import "Api.js" as Api
@@ -16,6 +17,7 @@ Item {
 
   property var shell: null
   property var manifest: null
+  property var pluginRegistry: null
 
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "quickshell.spotify"
@@ -86,6 +88,37 @@ Item {
   property int playbackPositionTick: 0
   property string remoteControlDiscoveryKey: ""
   readonly property var remoteTrack: remotePlayback ? remotePlayback.item : null
+  readonly property var currentArtists: remoteTrack
+    && (useRemotePlayback || (currentTrackId() !== ""
+      && String(remoteTrack.id || "") === currentTrackId()))
+    ? Api.arrayValues(remoteTrack.artists) : []
+  readonly property bool currentArtistContextAvailable: Api.artistContextAvailable(
+    useRemotePlayback && remoteTrack ? remoteTrack.type : "",
+    currentTrackId(), currentArtists)
+  readonly property var currentLyricsSong: Api.lyricsSong(currentTrackId(),
+    title, artist, album, lengthSeconds, artUrl, positionSeconds)
+  readonly property bool lyricsAvailable: currentLyricsSong !== null
+  readonly property string lyricsPluginId: "stappmus.lyrics"
+  readonly property string lyricsPluginUrl: "https://github.com/stappmus/Omasing.git"
+  readonly property string lyricsPluginAvailability: {
+    var plugins = pluginRegistry && pluginRegistry.installedPlugins
+      ? pluginRegistry.installedPlugins : ({})
+    var installed = !!plugins[lyricsPluginId]
+    var enabled = installed && pluginRegistry
+      && typeof pluginRegistry.inBar === "function"
+      && pluginRegistry.inBar(lyricsPluginId)
+    return Api.optionalPluginState(installed, enabled)
+  }
+  property bool lyricsPluginBusy: false
+  property string lyricsPluginOperation: ""
+  property string lyricsPluginError: ""
+  property string lyricsPluginRequestSurface: ""
+  property var pendingLyricsSong: null
+  property int lyricsPluginLaunchAttempts: 0
+  readonly property var currentAlbumItem: remoteTrack
+    && (useRemotePlayback || (currentTrackId() !== ""
+      && String(remoteTrack.id || "") === currentTrackId()))
+    ? remoteTrack.albumItem : null
   readonly property var remoteDevice: remotePlayback ? remotePlayback.device : null
   readonly property bool remotePlaybackIsLocal: !!remoteDevice
     && Api.isLocalPlaybackDevice(remoteDevice, deviceName,
@@ -223,10 +256,15 @@ Item {
   property var artistSongs: []
   property string artistSongsNext: ""
   property bool artistSongsLoading: false
+  property var artistPlaylists: []
+  property string artistPlaylistsNext: ""
+  property bool artistPlaylistsLoading: false
   property var artistThisIsPlaylist: null
   property bool artistThisIsLoading: false
   property string artistCatalogQuery: ""
   property int artistCatalogSerial: 0
+  readonly property bool artistCatalogLoading: artistAlbumsLoading
+    || artistSongsLoading || artistPlaylistsLoading
 
   property bool playlistActionBusy: false
   property bool playlistConversionBusy: false
@@ -292,6 +330,8 @@ Item {
 
   signal operationFailed(string reason)
   signal radioPlaylistReady(var playlist)
+  signal lyricsPluginPromptRequested(string surface, string availability)
+  signal lyricsPluginOpened(string surface)
 
   function defaults() {
     var fallback = {
@@ -481,6 +521,84 @@ Item {
     statusMessage = String(message || "")
     if (statusMessage) statusClearTimer.restart()
     else statusClearTimer.stop()
+  }
+
+  function requestLyrics(surface) {
+    if (!currentLyricsSong) return "unavailable"
+    lyricsPluginRequestSurface = String(surface || "")
+    pendingLyricsSong = currentLyricsSong
+    lyricsPluginError = ""
+    lyricsPluginLaunchAttempts = 0
+    if (lyricsPluginAvailability === "ready") {
+      launchLyricsPlugin()
+      return "opening"
+    }
+    lyricsPluginPromptRequested(lyricsPluginRequestSurface,
+      lyricsPluginAvailability)
+    return lyricsPluginAvailability
+  }
+
+  function confirmLyricsPlugin(surface) {
+    if (lyricsPluginBusy) return false
+    if (surface) lyricsPluginRequestSurface = String(surface)
+    if (!pendingLyricsSong) pendingLyricsSong = currentLyricsSong
+    if (!pendingLyricsSong) return false
+    lyricsPluginError = ""
+
+    if (lyricsPluginAvailability === "ready") {
+      lyricsPluginLaunchAttempts = 0
+      launchLyricsPlugin()
+      return true
+    }
+
+    var command = Api.optionalPluginSetupCommand(lyricsPluginAvailability,
+      lyricsPluginId, lyricsPluginUrl)
+    if (!command.length) {
+      lyricsPluginError = "Omasing could not be prepared for installation."
+      return false
+    }
+    lyricsPluginOperation = lyricsPluginAvailability
+    lyricsPluginBusy = true
+    lyricsPluginSetupProcess.command = command
+    lyricsPluginSetupProcess.running = true
+    return true
+  }
+
+  function cancelLyricsPlugin(surface) {
+    if (lyricsPluginBusy) return
+    if (surface && String(surface) !== lyricsPluginRequestSurface) return
+    lyricsPluginRequestSurface = ""
+    pendingLyricsSong = null
+    lyricsPluginError = ""
+  }
+
+  function launchLyricsPlugin() {
+    if (!pendingLyricsSong || lyricsPluginLaunchProcess.running) return
+    lyricsPluginLaunchAttempts++
+    lyricsPluginLaunchProcess.command = ["omarchy-shell", lyricsPluginId,
+      "lyrics", JSON.stringify(pendingLyricsSong)]
+    lyricsPluginLaunchProcess.running = true
+  }
+
+  function finishLyricsPluginLaunch(exitCode) {
+    if (Number(exitCode) === 0) {
+      var openedSurface = lyricsPluginRequestSurface
+      pendingLyricsSong = null
+      lyricsPluginRequestSurface = ""
+      lyricsPluginError = ""
+      lyricsPluginLaunchAttempts = 0
+      lyricsPluginOpened(openedSurface)
+      return
+    }
+    if (lyricsPluginLaunchAttempts < 8) {
+      lyricsPluginLaunchRetry.restart()
+      return
+    }
+    var detail = String(lyricsPluginLaunchStderr.text || "").trim()
+    lyricsPluginError = safeError(detail
+      || "Omasing is installed, but its lyrics window could not be opened.")
+    lyricsPluginPromptRequested(lyricsPluginRequestSurface,
+      lyricsPluginAvailability)
   }
 
   function noteActivity() {
@@ -1150,10 +1268,22 @@ Item {
         if (!root.selectedPlaylist || String(root.selectedPlaylist.id) !== playlistId) return
         if (error) root.fail(error)
         else {
+          var fallbackPosition = append && root.playlistItems.length
+            ? Api.playlistPositionAt(root.playlistItems,
+              root.playlistItems.length - 1) + 1 : 0
+          var responseOffset = Number(payload && payload.offset)
+          var nextPlaylistPosition = isFinite(responseOffset)
+            ? Math.max(0, Math.floor(responseOffset)) : fallbackPosition
           var page = Api.normalizePage(payload, function(value) {
-            return Api.normalizeTrack(value, 96)
+            var position = nextPlaylistPosition++
+            var normalized = Api.normalizeTrack(value, 96)
+            if (normalized) normalized.playlistPosition = position
+            return normalized
           })
-          root.playlistItems = (append ? Api.mergeUnique(root.playlistItems, page.items) : page.items)
+          // A playlist can intentionally contain the same track more than
+          // once. Preserve every occurrence so visible indexes continue to
+          // match the positions accepted by Spotify's reorder endpoint.
+          root.playlistItems = (append ? root.playlistItems.concat(page.items) : page.items)
             .slice(0, root.cacheLimit)
           root.playlistItemsNext = root.playlistItems.length >= root.cacheLimit ? "" : page.next
         }
@@ -1350,25 +1480,71 @@ Item {
       })
   }
 
-  function movePlaylistItem(index, delta, playlist, count) {
+  function requestPlaylistItemReorder(sourceIndex, destinationIndex, playlist, count,
+      sourceItems) {
     var target = playlist || selectedPlaylist
-    var source = Math.max(0, Math.floor(Number(index) || 0))
-    var direction = Number(delta || 0) < 0 ? -1 : 1
+    if (!playlistEditable(target) || playlistActionBusy) return
     var length = Math.max(0, Math.floor(Number(count) || playlistItems.length))
-    if (!playlistEditable(target) || playlistActionBusy || length < 2
-        || (direction < 0 && source === 0) || (direction > 0 && source >= length - 1)) return
-    var insertBefore = direction < 0 ? source - 1 : source + 2
+    var playlistId = String(target.id || "")
+    var selectedMatches = selectedPlaylist
+      && String(selectedPlaylist.id || "") === playlistId
+    var detailMatches = detailItem && detailItem.type === "playlist"
+      && String(detailItem.id || "") === playlistId
+    var orderingItems = Array.isArray(sourceItems) ? sourceItems
+      : (selectedMatches ? playlistItems : (detailMatches ? detailItems : []))
+    var body = orderingItems.length
+      ? Api.playlistReorderBodyForItems(orderingItems, sourceIndex,
+        destinationIndex, Math.max(length, Number(target.total) || 0),
+        target.snapshotId)
+      : Api.playlistReorderBody(sourceIndex, destinationIndex, length,
+        target ? target.snapshotId : "")
+    if (!body) return
+
+    var sourcePosition = orderingItems.length
+      ? Api.playlistPositionAt(orderingItems, sourceIndex) : sourceIndex
+    var destinationPosition = orderingItems.length
+      ? Api.playlistPositionAt(orderingItems, destinationIndex) : destinationIndex
+    var previousPlaylistItems = playlistItems
+    var previousDetailItems = detailItems
+    if (selectedMatches)
+      playlistItems = Api.reorderedPlaylistItemsAtPositions(playlistItems,
+        sourcePosition, destinationPosition)
+    if (detailMatches)
+      detailItems = Api.reorderedPlaylistItemsAtPositions(detailItems,
+        sourcePosition, destinationPosition)
+
     playlistActionBusy = true
-    var body = { range_start: source, insert_before: insertBefore, range_length: 1 }
-    if (target.snapshotId) body.snapshot_id = target.snapshotId
     spotifyApi.request("PUT", "/playlists/" + encodeURIComponent(String(target.id)) + "/items",
       null, body, function(status, payload, error) {
         root.playlistActionBusy = false
-        if (error) { root.fail(error); return }
+        if (error) {
+          if (selectedMatches && root.selectedPlaylist
+              && String(root.selectedPlaylist.id || "") === playlistId)
+            root.playlistItems = previousPlaylistItems
+          if (detailMatches && root.detailItem && root.detailItem.type === "playlist"
+              && String(root.detailItem.id || "") === playlistId)
+            root.detailItems = previousDetailItems
+          root.fail(error)
+          return
+        }
         root.updatePlaylistSnapshot(target.id, payload && payload.snapshot_id)
         root.succeed("Playlist order updated")
-        root.reloadPlaylist(target)
       })
+  }
+
+  function reorderPlaylistItem(sourceIndex, destinationIndex, playlist, count,
+      sourceItems) {
+    var target = playlist || selectedPlaylist
+    if (!playlistOwned(target)) return
+    requestPlaylistItemReorder(sourceIndex, destinationIndex, target, count,
+      sourceItems)
+  }
+
+  function movePlaylistItem(index, delta, playlist, count) {
+    var source = Math.max(0, Math.floor(Number(index) || 0))
+    var direction = Number(delta || 0) < 0 ? -1 : 1
+    requestPlaylistItemReorder(source, source + direction,
+      playlist || selectedPlaylist, count)
   }
 
   function detailPageFromPayload(payload, type, parent) {
@@ -1379,9 +1555,15 @@ Item {
     else if (type === "show") container = payload && payload.episodes ? payload.episodes : container
     else if (type === "audiobook")
       container = payload && payload.chapters ? payload.chapters : container
+    var nextPlaylistPosition = Math.max(0,
+      Math.floor(Number(container.offset) || 0))
     return Api.normalizePage(container, function(value) {
-      return type === "artist" ? Api.normalizeContext(value, 96)
+      var position = nextPlaylistPosition++
+      var normalized = type === "artist" ? Api.normalizeContext(value, 96)
         : Api.normalizeTrack(value, 96, parent)
+      if (normalized && type === "playlist")
+        normalized.playlistPosition = position
+      return normalized
     })
   }
 
@@ -1403,6 +1585,9 @@ Item {
     artistSongs = []
     artistSongsNext = ""
     artistSongsLoading = false
+    artistPlaylists = []
+    artistPlaylistsNext = ""
+    artistPlaylistsLoading = false
     artistThisIsPlaylist = null
     artistThisIsLoading = false
     detailLoading = true
@@ -1462,24 +1647,35 @@ Item {
     artistCatalogQuery = String(query || "").trim()
     artistAlbums = []
     artistAlbumsNext = ""
+    artistAlbumsLoading = false
     artistSongs = []
     artistSongsNext = ""
+    artistSongsLoading = false
+    artistPlaylists = []
+    artistPlaylistsNext = ""
+    artistPlaylistsLoading = false
     detailMessage = ""
     detailLoading = true
     requestArtistCatalog("album", false, expectedDetail, expectedCatalog, parent)
-    if (artistCatalogQuery) requestArtistCatalog("track", false,
-      expectedDetail, expectedCatalog, parent)
-    else requestArtistTopSongs(false, expectedDetail, expectedCatalog, parent, 0)
+    if (artistCatalogQuery) {
+      requestArtistCatalog("track", false, expectedDetail, expectedCatalog, parent)
+      requestArtistCatalog("playlist", false, expectedDetail, expectedCatalog, parent)
+    } else requestArtistTopSongs(false, expectedDetail, expectedCatalog, parent, 0)
   }
 
   function requestArtistCatalog(type, append, expectedDetail, expectedCatalog, artist) {
     var albums = type === "album"
-    var path = append ? (albums ? artistAlbumsNext : artistSongsNext) : "/search"
+    var playlists = type === "playlist"
+    var path = append ? (albums ? artistAlbumsNext
+      : (playlists ? artistPlaylistsNext : artistSongsNext)) : "/search"
     if (!path) return
     if (albums) artistAlbumsLoading = true
+    else if (playlists) artistPlaylistsLoading = true
     else artistSongsLoading = true
     var query = append ? null : {
-      q: Api.catalogSearchText(artist.name, artistCatalogQuery),
+      q: playlists
+        ? Api.artistPlaylistSearchText(artist.name, artistCatalogQuery)
+        : Api.catalogSearchText(artist.name, artistCatalogQuery),
       type: type,
       limit: 10
     }
@@ -1487,14 +1683,21 @@ Item {
       if (expectedDetail !== root.detailSerial || expectedCatalog !== root.artistCatalogSerial)
         return
       if (albums) root.artistAlbumsLoading = false
+      else if (playlists) root.artistPlaylistsLoading = false
       else root.artistSongsLoading = false
-      root.detailLoading = root.artistAlbumsLoading || root.artistSongsLoading
+      root.detailLoading = root.artistCatalogLoading
       if (error) { root.fail(error); return }
       var page = Api.normalizeSearchPage(payload, type, 96)
       if (albums) {
         root.artistAlbums = (append ? Api.mergeUnique(root.artistAlbums, page.items) : page.items)
           .slice(0, root.cacheLimit)
         root.artistAlbumsNext = root.artistAlbums.length >= root.cacheLimit ? "" : page.next
+      } else if (playlists) {
+        root.artistPlaylists = (append
+          ? Api.mergeUnique(root.artistPlaylists, page.items) : page.items)
+          .slice(0, root.cacheLimit)
+        root.artistPlaylistsNext = root.artistPlaylists.length >= root.cacheLimit
+          ? "" : page.next
       } else {
         root.artistSongs = (append ? Api.mergeUnique(root.artistSongs, page.items) : page.items)
           .slice(0, root.cacheLimit)
@@ -1520,7 +1723,7 @@ Item {
         return
       if (error) {
         root.artistSongsLoading = false
-        root.detailLoading = root.artistAlbumsLoading
+        root.detailLoading = root.artistCatalogLoading
         root.fail(error)
         return
       }
@@ -1536,7 +1739,7 @@ Item {
       }
       root.artistSongsNext = ""
       root.artistSongsLoading = false
-      root.detailLoading = root.artistAlbumsLoading
+      root.detailLoading = root.artistCatalogLoading
     })
   }
 
@@ -1548,6 +1751,12 @@ Item {
   function loadMoreArtistSongs() {
     if (!artistSongsNext || artistSongsLoading || !detailItem) return
     requestArtistCatalog("track", true, detailSerial, artistCatalogSerial, detailItem)
+  }
+
+  function loadMoreArtistPlaylists() {
+    if (!artistPlaylistsNext || artistPlaylistsLoading || !detailItem) return
+    requestArtistCatalog("playlist", true, detailSerial, artistCatalogSerial,
+      detailItem)
   }
 
   function loadMoreDetail() {
@@ -1563,21 +1772,45 @@ Item {
       root.detailLoading = false
       if (error) { root.fail(error); return }
       var page = root.detailPageFromPayload(payload, type, parent)
-      root.detailItems = Api.mergeUnique(root.detailItems, page.items).slice(0, root.cacheLimit)
+      root.detailItems = (type === "playlist"
+        ? root.detailItems.concat(page.items)
+        : Api.mergeUnique(root.detailItems, page.items)).slice(0, root.cacheLimit)
       root.detailNext = root.detailItems.length >= root.cacheLimit ? "" : page.next
       root.checkSavedItems(page.items)
     })
   }
 
   function currentTrackId() {
-    var value = String(currentUri || "")
-    var match = value.match(/(?:spotify:track:|open\.spotify\.com\/track\/)([A-Za-z0-9]+)/)
-    return match ? match[1] : ""
+    var id = Api.spotifyTrackId(currentUri)
+    if (id) return id
+
+    // spotifyd exposes the recording as an MPRIS object path such as
+    // /spotify/track/<id>, but does not currently publish xesam:url.
+    id = Api.spotifyTrackId(metadataString("mpris:trackid"))
+    if (id) return id
+
+    return remoteTrack && remotePlaybackIsLocal
+      ? String(remoteTrack.id || "").trim() : ""
   }
 
   function currentContext(kind, callback) {
+    if (typeof callback !== "function") return
+    if (kind === "artist" && currentArtists.length) {
+      var cachedArtist = currentArtists[0]
+      if (cachedArtist.id) callback(cachedArtist)
+      else resolveArtist(cachedArtist.name, callback)
+      return
+    }
+    if (kind === "album" && currentAlbumItem && currentAlbumItem.id) {
+      callback(currentAlbumItem)
+      return
+    }
     var id = currentTrackId()
-    if (!id || typeof callback !== "function") return
+    if (!id) {
+      if (kind === "artist" && currentArtistContextAvailable)
+        resolveArtist(artist, callback)
+      return
+    }
     spotifyApi.request("GET", "/tracks/" + encodeURIComponent(id), null, null,
       function(status, payload, error) {
         if (error) { root.fail(error); return }
@@ -1586,6 +1819,26 @@ Item {
         if (kind === "album" && track.albumItem) callback(track.albumItem)
         else if (kind === "artist" && track.artists.length) callback(track.artists[0])
       })
+  }
+
+  function resolveArtist(name, callback) {
+    var term = String(name || "").trim()
+    if (!term || typeof callback !== "function") return
+    spotifyApi.request("GET", "/search", {
+      q: term,
+      type: "artist",
+      limit: 10
+    }, null, function(status, payload, error) {
+      if (error) { root.fail(error); return }
+      var page = Api.normalizeSearchPage(payload, "artist", 128)
+      var match = Api.artistForName(page.items, term)
+      if (!match) {
+        root.fail("Spotify could not find that artist")
+        return
+      }
+      root.checkSavedItems([match])
+      callback(match)
+    })
   }
 
   function finishHomeRequest(error) {
@@ -2019,6 +2272,19 @@ Item {
       selectedDeviceExplicit, remoteDevice)
   }
 
+  // An active Spotify Connect receiver already represents the user's current
+  // target. Otherwise, make the local receiver the visible default as soon as
+  // it is available, so the first playback click needs no trip through Devices.
+  function autoselectLocalDevice() {
+    var current = chooseDevice()
+    var local = Api.automaticLocalPlaybackDevice(
+      selectedDeviceId, current, localDevice())
+    if (!local) return null
+    selectedDeviceId = local.id
+    selectedDeviceExplicit = false
+    return local
+  }
+
   function beginConnectAuthorization(device) {
     if (!device || !device.id || pendingConnectDeviceId !== device.id) return
     pendingConnectWakeTried = false
@@ -2129,7 +2395,7 @@ Item {
 
   function dispatchPendingPlayback(playbackSerial) {
     if (playbackSerial !== pendingPlaybackSerial || !pendingPlaybackBody) return
-    var target = chooseDevice()
+    var target = autoselectLocalDevice() || chooseDevice()
     if (target && !target.local) {
       localActivationRequested = false
       sendPendingPlayback(Api.playbackTargetDeviceId(target, selectedDeviceExplicit))
@@ -2186,7 +2452,8 @@ Item {
     if (!pendingPlayback && !localActivationRequested) return
     loadDevices(function() {
       if (!root.pendingPlayback && !root.localActivationRequested) return
-      var target = root.pendingPlayback ? root.chooseDevice() : null
+      var target = root.pendingPlayback
+        ? (root.autoselectLocalDevice() || root.chooseDevice()) : null
       if (target && !target.local) {
         root.localActivationRequested = false
         root.sendPendingPlayback(Api.playbackTargetDeviceId(
@@ -2753,6 +3020,9 @@ Item {
     artistSongs = []
     artistSongsNext = ""
     artistSongsLoading = false
+    artistPlaylists = []
+    artistPlaylistsNext = ""
+    artistPlaylistsLoading = false
     artistThisIsPlaylist = null
     artistThisIsLoading = false
     playlistsLoading = false
@@ -2944,6 +3214,44 @@ Item {
     id: settingsSync
     interval: 0
     onTriggered: root.syncSettings()
+  }
+
+  Timer {
+    id: lyricsPluginLaunchRetry
+    interval: 180
+    repeat: false
+    onTriggered: root.launchLyricsPlugin()
+  }
+
+  Process {
+    id: lyricsPluginSetupProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: lyricsPluginSetupStdout; waitForEnd: true }
+    stderr: StdioCollector { id: lyricsPluginSetupStderr; waitForEnd: true }
+    onExited: function(exitCode) {
+      root.lyricsPluginBusy = false
+      if (Number(exitCode) === 0) {
+        root.lyricsPluginOperation = ""
+        root.lyricsPluginError = ""
+        root.lyricsPluginLaunchAttempts = 0
+        lyricsPluginLaunchRetry.restart()
+        return
+      }
+      var detail = String(lyricsPluginSetupStderr.text
+        || lyricsPluginSetupStdout.text || "").trim()
+      root.lyricsPluginError = root.safeError(detail
+        || "Omasing could not be installed.")
+    }
+  }
+
+  Process {
+    id: lyricsPluginLaunchProcess
+    running: false
+    command: []
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { id: lyricsPluginLaunchStderr; waitForEnd: true }
+    onExited: function(exitCode) { root.finishLyricsPluginLaunch(exitCode) }
   }
 
   Timer {

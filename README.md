@@ -1,194 +1,110 @@
 # Omarchy Spotify
 
-**The Spotify app built for Omarchy.**
+**Spotify in Quickshell—not Chromium.**
 
-Designed to feel like the original Spotify client, with the familiar sidebar,
-browsing views, playlists and persistent player—just way snappier and dramatically
-less resource-heavy.
+Omarchy Spotify brings the Spotify experience you already know into a fast,
+beautiful Omarchy plugin. It uses about **60 MB of RAM** instead of roughly
+**950 MB** for the Spotify desktop client, follows your active Omarchy theme,
+and keeps your music close with an integrated mini player.
 
-It talks directly to Spotify's API instead of controlling or embedding the official
-client, so the Spotify desktop app does not need to be installed or running. The
-entire interface automatically follows your active Omarchy theme, including light
-themes.
+Pair it with **Omasing** and lyrics for the song you are playing are fetched
+for you, ready when you want them.
 
-A populated Omarchy Spotify window used **54.8 MiB PSS**, compared with **912.2 MiB**
-across the official Spotify client's processes: **94% less memory**. With its window
-closed, the plugin adds only **1.6 MiB PSS** to the existing Omarchy shell.
+## Why you will love it
 
-![Omarchy Spotify playlists](docs/pr-assets/matte-black-playlists.png)
+- **Lightweight by design.** Enjoy your music without keeping a browser-sized
+  desktop client running.
+- **Made for Omarchy.** Every color follows your current theme automatically,
+  including light themes.
+- **Always within reach.** Play, pause, skip, seek, change volume, or open
+  lyrics from the mini player in your bar.
+- **Your full music library.** Search Spotify, browse artists and albums,
+  manage playlists and the queue, and move playback between Spotify Connect
+  devices.
+- **Lyrics with Omasing.** Open the current song in Omasing and let it find the
+  right lyrics and playback position automatically.
 
-![Omarchy Spotify search](docs/pr-assets/matte-black-search.png)
+## Familiar from the first click
 
-![Omarchy Spotify discover](docs/pr-assets/matte-black-discover.png)
+The layout is inspired by the Spotify client, so there is almost nothing new
+to learn. Your library and playlists live in the sidebar, search stays at the
+top, the player stays at the bottom, and artist and album names take you
+straight to their pages.
 
-> Requires Omarchy 4 and a personal Spotify Premium account.
+Prefer to keep your hands on the keyboard? The whole app is designed for that
+too.
 
-## Add to Omarchy
+| Shortcut | What it does |
+| --- | --- |
+| `Ctrl+K` or `/` | Jump to search |
+| `Ctrl+F` / `Ctrl+L` | Search this page / all of Spotify |
+| `Space` | Play or pause |
+| `Ctrl+Left` / `Ctrl+Right` | Previous or next song |
+| `Shift+Left` / `Shift+Right` | Seek 10 seconds |
+| `Ctrl+Up` / `Ctrl+Down` | Change volume |
+| `M` | Mute or restore volume |
+| `Ctrl+/` | See every keyboard shortcut |
+
+## See it in action
+
+### Your playlists, instantly familiar
+
+Everything is where you expect it to be—just faster, lighter, and dressed in
+your Omarchy theme.
+
+![Vietnam War Music playlist in Omarchy Spotify](docs/screenshots/vietnam-war-playlist.png)
+
+### Everything from an artist, in one view
+
+Top albums and EPs sit beside the artist's ten biggest songs, with their
+**This Is** playlist and full catalog only a search away.
+
+![Red Hot Chili Peppers artist page with Under the Bridge playing](docs/screenshots/red-hot-chili-peppers-under-the-bridge.png)
+
+### Lyrics, already matched to the song
+
+One click sends the current track to Omasing, where the lyrics are fetched and
+lined up with your playback position—ready to auto-scroll as you listen.
+
+![Omarchy Spotify beside Omasing lyrics for Under the Bridge](docs/screenshots/omasing-lyrics-under-the-bridge.png)
+
+### A mini player that belongs in your desktop
+
+The essentials are always one click away, without reopening the full app.
+
+![Omarchy Spotify mini player playing Under the Bridge](docs/screenshots/mini-player-under-the-bridge.png)
+
+## Add it to Omarchy
 
 ```bash
 omarchy plugin add https://github.com/stappmus/Omarchy-Spotify.git --enable
 ```
 
-After installation, click the Spotify icon in the left side of the bar and follow
-the setup shown in the app. You can move it later with Omarchy's bar controls.
+Click the Spotify icon on the left side of the bar, choose **Set up and
+continue**, and finish the Spotify sign-in in your browser. You can move the
+widget later with Omarchy's bar controls.
 
-## Highlights
+> Requires Omarchy 4 and a personal Spotify Premium account.
 
-- Search songs, artists, albums, playlists, podcasts, episodes, and audiobooks.
-- Discover Weekly, Release Radar, Daily Mixes, daylist, and fresh Spotify picks
-  in a dedicated Discover tab when they are available for your account.
+## More music, less app
+
+- Discover Weekly, Release Radar, Daily Mixes, daylist, and more in **Discover**.
 - Browse Liked Songs, saved albums, followed artists, podcasts, and books.
-- Open an artist for their **This Is** playlist, top albums and EPs, and top 10
-  songs, then search within that artist's catalog.
-- Create and edit playlists, manage the queue, and start track radio.
-- Turn a followed playlist into your own editable private copy when Spotify
-  makes its contents available.
-- Play on this computer or switch to another Spotify Connect device.
-- Control shuffle, repeat, position, volume, and a flexible sleep timer.
-- Match every Omarchy theme automatically, including light themes.
-- Stay lightweight: no embedded browser, Electron app, or always-on background
-  worker.
-
-## First-run setup
-
-On first launch:
-
-1. Click the Spotify icon in the bar.
-2. Choose **Set up and continue**. If the small playback component is missing,
-   Omarchy asks for your computer password before installing it.
-3. Finish the Spotify approval pages in your browser. Spotify may show two pages
-   the first time; complete both and the app brings you back automatically.
-
-That is the whole setup. Playback on this computer starts when the mini player
-or full app opens, or when local playback is needed. It stays available in
-Spotify Connect while either view is open and stops automatically after it has
-been idle with both views closed.
-
-### Why setup may request administrator access
-
-The `omarchy plugin add` command only clones, validates, installs, and enables
-the plugin. It does not run setup hooks or privileged code.
-
-After you explicitly choose **Set up and continue**, Omarchy Spotify checks for
-the local `spotifyd` playback component. If it is missing, Polkit shows the
-system authorization prompt before the plugin runs this fixed command:
-
-```bash
-pkexec /usr/bin/pacman -S --needed --noconfirm spotifyd
-```
-
-The package name and command are not assembled from remote input, and the setup
-does not download or pipe a remote script into a shell. Everything after that
-runs without administrator privileges: the plugin writes a private config and
-a static systemd user unit under your user configuration directory. The unit is
-not enabled at login; Omarchy Spotify starts it only when local playback is
-needed and stops it again after the configured idle period.
-
-## Everyday controls
-
-- Left-click the bar widget for now playing and quick controls.
-- Middle-click to play or pause.
-- Right-click to open the full app.
-- Scroll over the widget for previous or next.
-- Use the playlist button on any song or episode to add it to one of your
-  playlists or create a new playlist for it.
-- Right-click a song or other media row for more actions. Removing something
-  from your library is intentionally kept in this menu.
-- Use **Devices** to move playback between this computer and Spotify Connect
-  speakers or players.
-
-Keyboard shortcuts:
-
-- `Ctrl+K` or `/` — Search
-- `Space` — Play or pause
-- `Ctrl+Left` / `Ctrl+Right` — Previous or next
-- Arrow keys and `Enter` — Move through and open lists
-- `Escape` — Close an open menu first, then go back or close the window
-
-## Playlists
-
-Open **Playlists**, enter a name, and choose **Create**. To add music, use the
-playlist button on any song or podcast episode and choose the destination. The
-same picker can create a new private playlist and add the item in one step.
-
-When a playlist belongs to someone else, choose **Turn into your own playlist**.
-The app creates a private copy, copies every song or episode Spotify provides,
-and removes the followed original only after the copy succeeds. If Spotify does
-not expose that playlist's contents, nothing is removed.
-
-## Settings
-
-Open **Settings** in the app to:
-
-- reconnect Spotify or log out;
-- rename how this computer appears in Spotify Connect;
-- choose when local playback goes to sleep;
-- show or hide the song title and artist independently in the bar;
-- scroll long bar text so the full artist and title remain readable, with an
-  adjustable speed from 0.25× to 3×; and
-- choose standard, high, or very high audio quality. New installs default to
-  very high (320 kbps).
-
-Set idle minutes to `0` only if you want this computer to remain available as a
-Spotify Connect target all the time.
-
-## Privacy and security
+- Create playlists, add songs, reorder tracks, and turn followed playlists
+  into your own editable copies when Spotify makes their contents available.
+- Build a queue, start track radio, use shuffle and repeat, or set a sleep timer.
+- Listen on this computer or switch to another Spotify Connect speaker or player.
+- Choose whether the bar shows the title, artist, or both, and softly scroll
+  overflowing text at an adjustable speed.
+- Choose up to 320 kbps for local playback.
 
 Your Spotify password is entered only on Spotify's own page. Omarchy Spotify
-never sees it.
+stores your saved session in GNOME Keyring and clears it when you log out.
 
-The saved Spotify session is stored in GNOME Keyring. Short-lived access data
-stays in the Omarchy shell process, sign-in listens only on this computer, and
-sensitive values are removed from any error shown in the app. Logging out stops
-local playback and clears all saved Spotify sessions.
-
-Like every Omarchy shell plugin, this code runs inside `omarchy-shell` rather
-than a sandbox. Install plugins only from sources you trust.
-
-## Troubleshooting
-
-- **A Spotify feature stopped working:** open **Settings** and choose
-  **Reconnect Spotify**.
-- **Music will not start on this computer:** open **Settings** and check the
-  playback status. If offered, choose **Set up playback**.
-- **Sign-in did not return to the app:** close any old Spotify approval tabs and
-  try again. Another local sign-in already in progress can block the return.
-- **A speaker is missing:** make sure it is awake and on the same network, then
-  open **Devices** and choose **Refresh**.
-- **A Sonos speaker will not connect:** choose it while it is awake. The app
-  first wakes its existing session and asks for an extra Spotify approval only
-  when the speaker has actually signed out. If it is already playing, the app
-  recognizes its current track without reconnecting it.
-- **Spotify reports a temporary limit:** wait for the time shown in the app,
-  then try again.
-
-## Remove
-
-Log out from **Settings** first, then remove the plugin from Omarchy's plugin
-manager. The small playback package is kept because another Spotify client may
-also use it; inactive local setup files are harmless.
-
-For complete runtime cleanup, see the [technical notes](docs/TECHNICAL.md#complete-removal).
-
-## Known limits
-
-- Spotify requires Premium for playback control and Spotify Connect transfers.
-- Some playlists that you do not own may not expose their contents, but can
-  still be played as a playlist. Spotify must expose the contents before the
-  app can turn one into your own copy.
-- Speaker availability is ultimately controlled by Spotify and the device.
-- Spotify marks some players, including Sonos in some states, as restricted.
-  For a locally discovered Sonos, the app uses its LAN controls for transport,
-  seeking, playback mode, and volume. Other restricted-device actions remain
-  subject to Spotify and the speaker.
-- The local playback component is community-maintained and is not an official
-  Spotify desktop client.
+Want the details? Read the [technical notes](docs/TECHNICAL.md) or see the
+[memory benchmark](docs/BENCHMARK.md).
 
 Omarchy Spotify is an independent project and is not affiliated with Spotify.
 Spotify is a trademark of Spotify AB.
-
-Technical architecture, development setup, and verification are documented in
-[Technical notes](docs/TECHNICAL.md). Resource measurements are in
-[Benchmark](docs/BENCHMARK.md).
 
 Licensed under the [MIT License](LICENSE).

@@ -15,21 +15,65 @@ BarWidget {
     ? bar.shell.serviceFor("quickshell.spotify") : null
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string surfaceKey: "spotify-popup-" + String(root)
+  readonly property string lyricsRequestKey: surfaceKey + "-lyrics"
   readonly property string barText: spotify
     ? Api.barTrackText(spotify.title, spotify.artist,
       spotify.showTrackTitle, spotify.showArtistName) : ""
   readonly property bool iconOnly: !spotify || vertical || !spotify.hasMedia
     || barText === ""
   property bool popupOpen: false
+  property bool lyricsInstallPromptVisible: false
   readonly property bool opened: popupOpen
 
   function open() { popupOpen = true }
   function close() { popupOpen = false }
   function toggle() { popupOpen = !popupOpen }
 
-  function openFullPanel() {
+  function openFullPanel(payload) {
     close()
-    if (bar && bar.shell) bar.shell.toggle("quickshell.spotify", "{}")
+    if (!bar || !bar.shell) return
+    var encoded = JSON.stringify(payload || ({}))
+    if (typeof bar.shell.hide === "function"
+        && typeof bar.shell.summon === "function") {
+      // Remap an existing full player onto the workspace containing this bar.
+      // Splitting hide and summon across event-loop turns lets Wayland finish
+      // unmapping the old surface before the shell opens it here.
+      bar.shell.hide("quickshell.spotify")
+      Qt.callLater(function() {
+        if (root.bar && root.bar.shell)
+          root.bar.shell.summon("quickshell.spotify", encoded)
+      })
+    } else if (payload && typeof bar.shell.summon === "function")
+      bar.shell.summon("quickshell.spotify", encoded)
+    else bar.shell.toggle("quickshell.spotify", encoded)
+  }
+
+  function openCurrentArtist() {
+    if (!spotify || !bar || !bar.shell || spotify.artist === ""
+        || !spotify.currentArtistContextAvailable) return
+    spotify.currentContext("artist", function(item) {
+      root.openArtist(item)
+    })
+  }
+
+  function openArtist(item) {
+    if (!item || !spotify) return
+    if (item.id) {
+      openFullPanel({ tab: "detail", detailItem: item })
+      return
+    }
+    spotify.resolveArtist(item.name, function(resolved) {
+      if (resolved) root.openFullPanel({ tab: "detail", detailItem: resolved })
+    })
+  }
+
+  function openLyrics() {
+    if (!spotify || !spotify.currentLyricsSong) return
+    var result = spotify.requestLyrics(lyricsRequestKey)
+    if (result !== "opening") {
+      lyricsInstallPromptVisible = true
+      popupOpen = true
+    }
   }
 
   function syncSettings() {
@@ -41,7 +85,14 @@ BarWidget {
 
   onSettingsChanged: syncSettings()
   onSpotifyChanged: syncSettings()
-  onPopupOpenChanged: if (spotify) spotify.setUiVisible(surfaceKey, popupOpen)
+  onPopupOpenChanged: {
+    if (spotify) spotify.setUiVisible(surfaceKey, popupOpen)
+    if (!popupOpen && lyricsInstallPromptVisible
+        && (!spotify || !spotify.lyricsPluginBusy)) {
+      if (spotify) spotify.cancelLyricsPlugin(lyricsRequestKey)
+      lyricsInstallPromptVisible = false
+    }
+  }
   Component.onCompleted: syncSettings()
   Component.onDestruction: if (spotify) spotify.setUiVisible(surfaceKey, false)
 
@@ -213,6 +264,7 @@ BarWidget {
       Row {
         width: parent.width
         spacing: Style.space(12)
+        visible: !root.lyricsInstallPromptVisible
 
         BorderSurface {
           width: Style.space(78)
@@ -260,14 +312,19 @@ BarWidget {
             elide: Text.ElideRight
           }
 
-          Text {
+          ArtistLinks {
             width: parent.width
-            text: root.spotify ? root.spotify.artist : ""
+            artists: root.spotify ? root.spotify.currentArtists : []
+            fallbackText: root.spotify ? root.spotify.artist : ""
+            fallbackClickable: fallbackText !== "" && artists.length === 0
+              && root.spotify && root.spotify.currentArtistContextAvailable
             color: Qt.darker(root.foreground, 1.35)
+            accent: Color.accent
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
-            elide: Text.ElideRight
-            visible: text !== ""
+            visible: fallbackText !== "" || artists.length > 0
+            onArtistRequested: function(item) { root.openArtist(item) }
+            onFallbackRequested: root.openCurrentArtist()
           }
 
           Text {
@@ -285,7 +342,8 @@ BarWidget {
       Column {
         width: parent.width
         spacing: Style.space(3)
-        visible: root.spotify && root.spotify.lengthSeconds > 0
+        visible: !root.lyricsInstallPromptVisible
+          && root.spotify && root.spotify.lengthSeconds > 0
 
         PanelSlider {
           width: parent.width
@@ -325,6 +383,7 @@ BarWidget {
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: Style.space(5)
+        visible: !root.lyricsInstallPromptVisible
 
         Button {
           iconText: "󰒟"
@@ -368,12 +427,21 @@ BarWidget {
           enabled: root.spotify && root.spotify.playbackControllable
           onClicked: if (root.spotify) root.spotify.cycleRepeat()
         }
+
+        Button {
+          iconText: "󰎈"
+          foreground: root.foreground
+          tooltipText: "Open lyrics in Omasing"
+          enabled: root.spotify && root.spotify.lyricsAvailable
+          onClicked: root.openLyrics()
+        }
       }
 
       Row {
         width: parent.width
         spacing: Style.space(8)
-        visible: root.spotify && root.spotify.hasPlayer
+        visible: !root.lyricsInstallPromptVisible
+          && root.spotify && root.spotify.hasPlayer
 
         Text {
           anchors.verticalCenter: parent.verticalCenter
@@ -398,11 +466,15 @@ BarWidget {
         }
       }
 
-      PanelSeparator { foreground: root.foreground }
+      PanelSeparator {
+        foreground: root.foreground
+        visible: !root.lyricsInstallPromptVisible
+      }
 
       Row {
         width: parent.width
         spacing: Style.space(6)
+        visible: !root.lyricsInstallPromptVisible
 
         Text {
           width: parent.width - openButton.width - Style.space(6)
@@ -427,6 +499,33 @@ BarWidget {
           onClicked: root.openFullPanel()
         }
       }
+
+      LyricsInstallPrompt {
+        width: parent.width
+        visible: root.lyricsInstallPromptVisible
+        service: root.spotify
+        foreground: root.foreground
+        surfaceKey: root.lyricsRequestKey
+        onCanceled: {
+          if (root.spotify) root.spotify.cancelLyricsPlugin(root.lyricsRequestKey)
+          root.lyricsInstallPromptVisible = false
+        }
+      }
+    }
+  }
+
+  Connections {
+    target: root.spotify
+    ignoreUnknownSignals: true
+    function onLyricsPluginPromptRequested(surface, availability) {
+      if (String(surface) !== root.lyricsRequestKey) return
+      root.lyricsInstallPromptVisible = true
+      root.popupOpen = true
+    }
+    function onLyricsPluginOpened(surface) {
+      if (String(surface) !== root.lyricsRequestKey) return
+      root.lyricsInstallPromptVisible = false
+      root.close()
     }
   }
 

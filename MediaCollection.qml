@@ -14,6 +14,7 @@ Item {
   property string sortKey: "default"
   property string contextUri: ""
   property bool showFilter: true
+  property bool showSort: showFilter
   property bool showQueue: true
   property bool showPlaylist: true
   property bool showSave: true
@@ -24,9 +25,20 @@ Item {
   property real restoredContentY: 0
   property string stateKey: ""
   property bool restoreApplied: false
+  property bool allowReorder: false
+  property bool reorderBusy: false
+  property int dragSourceIndex: -1
+  property int dragDestinationIndex: -1
+  property real dragSceneY: 0
+  property int dragAutoScrollDirection: 0
 
   readonly property var visibleItems: Api.filteredSorted(sourceItems, filterText, sortKey)
   readonly property var sortKeys: ["default", "name", "artist", "album", "duration", "date"]
+  readonly property bool canReorder: allowReorder && !reorderBusy
+    && String(filterText || "").trim() === "" && sortKey === "default"
+    && visibleItems.length > 1
+  readonly property var dragItem: dragSourceIndex >= 0
+    && dragSourceIndex < visibleItems.length ? visibleItems[dragSourceIndex] : null
 
   signal activated(var item, var sourceItems, string contextUri)
   signal opened(var item)
@@ -35,6 +47,7 @@ Item {
   signal saveToggled(var item)
   signal contextRequested(var item, real sceneX, real sceneY, int index,
     var sourceItems, string contextUri)
+  signal reorderRequested(int sourceIndex, int destinationIndex)
   signal loadMoreRequested()
   signal viewStateChanged(string filterText, string sortKey, real contentY)
 
@@ -58,38 +71,125 @@ Item {
     if (mediaList.currentIndex < 0 && mediaList.count > 0) mediaList.currentIndex = 0
   }
 
+  function reorderIndexAtSceneY(sceneY) {
+    if (mediaList.count <= 0) return -1
+    var top = mediaList.mapToItem(null, 0, 0)
+    var bottom = mediaList.mapToItem(null, 0, mediaList.height)
+    var center = mediaList.mapToItem(null, mediaList.width / 2, 0)
+    var clampedY = Math.max(top.y + 1, Math.min(bottom.y - 1, sceneY))
+    var contentPoint = mediaList.contentItem.mapFromItem(null, center.x, clampedY)
+    var candidate = mediaList.indexAt(contentPoint.x, contentPoint.y)
+    if (candidate >= 0) return candidate
+
+    // The pointer can land in ListView.spacing, where indexAt() intentionally
+    // returns -1. Pick the nearest instantiated row in that case.
+    var closest = -1
+    var closestDistance = Number.MAX_VALUE
+    for (var i = 0; i < mediaList.count; i++) {
+      var row = mediaList.itemAtIndex(i)
+      if (!row) continue
+      var rowCenter = row.mapToItem(null, row.width / 2, row.height / 2)
+      var distance = Math.abs(rowCenter.y - clampedY)
+      if (distance < closestDistance) {
+        closest = i
+        closestDistance = distance
+      }
+    }
+    if (closest >= 0) return closest
+    return contentPoint.y <= mediaList.originY ? 0 : mediaList.count - 1
+  }
+
+  function updateReorder(sceneY) {
+    if (dragSourceIndex < 0) return
+    dragSceneY = sceneY
+    dragDestinationIndex = reorderIndexAtSceneY(sceneY)
+    var center = mediaList.mapToItem(null, mediaList.width / 2, 0)
+    var point = mediaList.mapFromItem(null, center.x, sceneY)
+    var edge = Math.min(Style.space(48), mediaList.height / 3)
+    dragAutoScrollDirection = point.y < edge ? -1
+      : (point.y > mediaList.height - edge ? 1 : 0)
+  }
+
+  function beginReorder(index, sceneY) {
+    if (!canReorder || index < 0 || index >= visibleItems.length) return
+    mediaList.cancelFlick()
+    dragSourceIndex = index
+    dragDestinationIndex = index
+    dragSceneY = sceneY
+    dragAutoScrollDirection = 0
+  }
+
+  function finishReorder(sceneY, canceled) {
+    if (dragSourceIndex < 0) return
+    if (!canceled) updateReorder(sceneY)
+    var source = dragSourceIndex
+    var destination = dragDestinationIndex
+    dragSourceIndex = -1
+    dragDestinationIndex = -1
+    dragAutoScrollDirection = 0
+    rememberView()
+    if (!canceled && destination >= 0 && destination !== source)
+      reorderRequested(source, destination)
+  }
+
+  function cancelReorder() {
+    finishReorder(dragSceneY, true)
+  }
+
   function rememberView() {
     viewStateChanged(filterText, sortKey, mediaList.contentY)
   }
 
   function restoreView() {
     if (restoreApplied || restoredContentY <= 0 || mediaList.count <= 0) return
-    Qt.callLater(function() {
-      if (root.restoreApplied || mediaList.count <= 0) return
+    restoreTimer.restart()
+  }
+
+  function resetRestore() {
+    restoreApplied = false
+    restoreTimer.restart()
+  }
+
+  Timer {
+    id: restoreTimer
+    interval: 0
+    onTriggered: {
+      if (root.restoreApplied) return
+      if (root.restoredContentY <= 0) {
+        mediaList.contentY = mediaList.originY
+        root.restoreApplied = true
+        return
+      }
+      if (mediaList.count <= 0) return
       var maximum = Math.max(mediaList.originY,
         mediaList.contentHeight - mediaList.height + mediaList.originY)
       mediaList.contentY = Math.max(mediaList.originY,
         Math.min(maximum, root.restoredContentY))
       root.restoreApplied = true
-    })
-  }
-
-  function resetRestore() {
-    restoreApplied = false
-    Qt.callLater(function() {
-      if (root.restoredContentY <= 0) {
-        mediaList.contentY = mediaList.originY
-        root.restoreApplied = true
-      } else {
-        root.restoreView()
-      }
-    })
+    }
   }
 
   Component.onCompleted: restoreView()
   onRestoredContentYChanged: resetRestore()
   onStateKeyChanged: resetRestore()
+  onCanReorderChanged: if (!canReorder) cancelReorder()
   Component.onDestruction: rememberView()
+
+  Timer {
+    interval: 30
+    repeat: true
+    running: root.dragSourceIndex >= 0 && root.dragAutoScrollDirection !== 0
+    onTriggered: {
+      var minimum = mediaList.originY
+      var maximum = Math.max(minimum,
+        mediaList.contentHeight - mediaList.height + mediaList.originY)
+      var next = Math.max(minimum, Math.min(maximum,
+        mediaList.contentY + root.dragAutoScrollDirection * Style.space(9)))
+      if (next === mediaList.contentY) return
+      mediaList.contentY = next
+      root.updateReorder(root.dragSceneY)
+    }
+  }
 
   Column {
     anchors.fill: parent
@@ -98,14 +198,16 @@ Item {
     Row {
       id: tools
       width: parent.width
-      height: root.showFilter ? Style.space(38) : 0
-      visible: root.showFilter
+      height: visible ? Style.space(38) : 0
+      visible: root.showFilter || root.showSort
       spacing: Style.space(7)
 
       TextField {
         id: filterField
-        width: Math.max(80, parent.width - sortButton.width - countLabel.width
-          - parent.spacing * 2)
+        visible: root.showFilter
+        width: visible ? Math.max(80, parent.width
+          - (sortButton.visible ? sortButton.width + parent.spacing : 0)
+          - countLabel.width - parent.spacing) : 0
         foreground: Color.foreground
         placeholderText: "Filter this list"
         text: root.filterText
@@ -118,6 +220,7 @@ Item {
 
       Button {
         id: sortButton
+        visible: root.showSort
         text: root.sortLabel()
         iconText: "󰒺"
         foreground: Color.foreground
@@ -147,12 +250,16 @@ Item {
       spacing: Style.space(3)
       reuseItems: true
       cacheBuffer: Style.space(160)
+      interactive: root.dragSourceIndex < 0
       activeFocusOnTab: true
       keyNavigationEnabled: true
       highlightFollowsCurrentItem: true
       ScrollBar.vertical: ScrollBar { }
       onMovementEnded: root.rememberView()
-      onCountChanged: root.restoreView()
+      onCountChanged: {
+        root.restoreView()
+        if (root.dragSourceIndex >= count) root.cancelReorder()
+      }
 
       FastScrollHandler {
         parent: mediaList
@@ -175,6 +282,11 @@ Item {
         showQueue: root.showQueue
         showPlaylist: root.showPlaylist
         showSave: root.showSave
+        reorderEnabled: root.canReorder
+        reorderDragging: root.dragSourceIndex === index
+        reorderDropIndicator: root.dragDestinationIndex === index
+          && root.dragSourceIndex !== index
+          ? (index < root.dragSourceIndex ? -1 : 1) : 0
         saved: root.service ? root.service.isSaved(modelData) : false
         onActivated: function(item) {
           root.activated(item, root.visibleItems, root.contextUri)
@@ -189,13 +301,21 @@ Item {
           root.contextRequested(item, sceneX, sceneY, index,
             root.visibleItems, root.contextUri)
         }
+        onReorderDragStarted: function(sceneY) {
+          root.beginReorder(index, sceneY)
+        }
+        onReorderDragMoved: function(sceneY) { root.updateReorder(sceneY) }
+        onReorderDragFinished: function(sceneY) {
+          root.finishReorder(sceneY, false)
+        }
+        onReorderDragCanceled: root.cancelReorder()
       }
     }
 
     Text {
       id: emptyLabel
       width: parent.width
-      height: visible ? implicitHeight : 0
+      height: visible ? contentHeight : 0
       visible: !root.loading && root.visibleItems.length === 0
       text: root.emptyMessage
       color: Qt.darker(Color.foreground, 1.4)
@@ -214,6 +334,52 @@ Item {
       foreground: Color.foreground
       enabled: root.hasMore && !root.loading
       onClicked: root.loadMoreRequested()
+    }
+  }
+
+  BorderSurface {
+    id: dragPreview
+    x: Style.space(4)
+    width: Math.max(40, parent.width - Style.space(8))
+    height: Style.space(48)
+    y: Math.max(0, Math.min(parent.height - height,
+      root.mapFromItem(null, 0, root.dragSceneY).y - height / 2))
+    visible: root.dragSourceIndex >= 0 && !!root.dragItem
+    enabled: false
+    z: 20
+    radius: Style.cornerRadius
+    color: Style.selectedFillFor(Color.foreground, Color.accent)
+    borderSpec: Border.controlSpec("selected", Color.foreground, Color.accent)
+    opacity: 0.94
+
+    Row {
+      anchors.fill: parent
+      anchors.margins: Style.space(8)
+      spacing: Style.space(8)
+
+      Column {
+        width: parent.width
+        anchors.verticalCenter: parent.verticalCenter
+
+        Text {
+          width: parent.width
+          text: root.dragItem ? String(root.dragItem.name || "Untitled") : ""
+          color: Color.foreground
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+          font.bold: true
+          elide: Text.ElideRight
+        }
+
+        Text {
+          width: parent.width
+          text: root.dragItem ? String(root.dragItem.subtitle || "") : ""
+          color: Qt.darker(Color.foreground, 1.3)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
+        }
+      }
     }
   }
 }
