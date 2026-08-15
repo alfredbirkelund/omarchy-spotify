@@ -61,6 +61,13 @@ Top albums and EPs sit beside the artist's ten biggest songs, with their
 
 ![Red Hot Chili Peppers artist page with Under the Bridge playing](docs/screenshots/red-hot-chili-peppers-under-the-bridge.png)
 
+### Lyrics, already matched to the song
+
+One click sends the current track to Omasing, where the lyrics are fetched and
+lined up with your playback position—ready to auto-scroll as you listen.
+
+![Omarchy Spotify beside Omasing lyrics for Under the Bridge](docs/screenshots/omasing-lyrics-under-the-bridge.png)
+
 ### A mini player that belongs in your desktop
 
 The essentials are always one click away, without reopening the full app.
