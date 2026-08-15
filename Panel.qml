@@ -41,6 +41,7 @@ Item {
 
   property string draftDeviceName: "Omarchy Spotify"
   property string draftIdleMinutes: "15"
+  property bool draftShowMiniPlayer: true
   property bool draftShowTitle: true
   property bool draftShowArtist: false
   property bool draftScrollBarText: false
@@ -94,6 +95,7 @@ Item {
     if (!service) return
     draftDeviceName = service.deviceName
     draftIdleMinutes = String(service.idleShutdownMinutes)
+    draftShowMiniPlayer = service.showMiniPlayer
     draftShowTitle = service.showTrackTitle
     draftShowArtist = service.showArtistName
     draftScrollBarText = service.scrollBarText
@@ -107,6 +109,7 @@ Item {
       deviceName: String(draftDeviceName || "").trim() || "Omarchy Spotify",
       idleShutdownMinutes: Math.max(0, Math.min(1440,
         Math.floor(Number(draftIdleMinutes) || 0))),
+      showMiniPlayer: draftShowMiniPlayer ? "On" : "Off",
       showTrackTitle: draftShowTitle ? "On" : "Off",
       showArtistName: draftShowArtist ? "On" : "Off",
       scrollBarText: draftScrollBarText ? "On" : "Off",
@@ -2309,14 +2312,46 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(3)
 
-                Text {
+                Row {
                   width: parent.width
-                  text: root.service && root.service.title ? root.service.title : "Nothing playing"
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  font.bold: true
-                  elide: Text.ElideRight
+                  spacing: Style.space(3)
+
+                  Text {
+                    width: Math.max(20, parent.width
+                      - (currentTrackLikeButton.visible
+                        ? currentTrackLikeButton.width + parent.spacing : 0))
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.service && root.service.title
+                      ? root.service.title : "Nothing playing"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                    elide: Text.ElideRight
+                  }
+
+                  Button {
+                    id: currentTrackLikeButton
+                    objectName: "current-track-like"
+                    visible: root.service && !!root.service.currentTrackItem
+                    anchors.verticalCenter: parent.verticalCenter
+                    iconText: root.service && root.service.currentTrackSaved
+                      ? "󰋑" : "󰋕"
+                    iconSize: Style.font.body
+                    foreground: root.foreground
+                    selected: root.service && root.service.currentTrackSaved
+                    enabled: root.service && root.service.currentTrackSaveAvailable
+                    horizontalPadding: Style.space(4)
+                    verticalPadding: Style.space(2)
+                    tooltipText: root.service && root.service.currentTrackSaveChecking
+                      ? "Checking liked status…"
+                      : (root.service && root.service.currentTrackSaveBusy
+                        ? "Updating liked status…"
+                        : (root.service && root.service.currentTrackSaved
+                          ? "Remove like" : "Like this song"))
+                    onClicked: if (root.service)
+                      root.service.toggleCurrentTrackSaved()
+                  }
                 }
 
                 ArtistLinks {
@@ -4192,6 +4227,31 @@ Item {
                   validator: IntValidator { bottom: 0; top: 1440 }
                   onTextEdited: root.draftIdleMinutes = text
                 }
+              }
+            }
+
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Text {
+                text: "BAR PLAYER"
+                color: Qt.darker(root.foreground, 1.4)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              Button {
+                text: "Mini-player first · "
+                  + (root.draftShowMiniPlayer ? "On" : "Off")
+                iconText: "󰍹"
+                foreground: root.foreground
+                selected: root.draftShowMiniPlayer
+                tooltipText: root.draftShowMiniPlayer
+                  ? "Clicking the bar icon opens the mini-player first"
+                  : "Clicking the bar icon opens the full player directly"
+                onClicked: root.draftShowMiniPlayer = !root.draftShowMiniPlayer
               }
             }
 

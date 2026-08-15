@@ -176,8 +176,10 @@ grep -q 'readonly property string redirectUri: "http://127.0.0.1:"' \
 ! grep -q '"clientId"' "$source_root/manifest.json"
 ! grep -q '"oauthPort"' "$source_root/manifest.json"
 grep -q 'window.close()' "$source_root/OAuth.js"
-jq -e '.version == "1.0.1"
+jq -e '.version == "1.0.2"
   and .barWidget.defaultSection == "left"
+  and .barWidget.defaults.showMiniPlayer == "On"
+  and (.barWidget.schema[] | select(.key == "showMiniPlayer").defaultValue) == "On"
   and .barWidget.defaults.audioQuality == "320 kbps"
   and (.barWidget.schema[] | select(.key == "audioQuality").defaultValue) == "320 kbps"' \
   "$source_root/manifest.json" >/dev/null

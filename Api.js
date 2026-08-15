@@ -375,6 +375,42 @@ function spotifyTrackId(value) {
   return match ? match[1] : ""
 }
 
+// Playback from another Spotify Connect device already carries a normalized
+// item. Local spotifyd playback may expose only MPRIS metadata, so synthesize
+// the small track shape needed by library actions in that case. A matching
+// episode must not be mistaken for a track when spotifyd's object-path
+// fallback supplied its id.
+function currentPlaybackTrack(trackId, remoteTrack, title, artist, album,
+    coverUrl, durationSeconds, externalUrl) {
+  var id = String(trackId || "").trim()
+  if (!id) return null
+
+  var remote = remoteTrack && typeof remoteTrack === "object"
+    ? remoteTrack : null
+  var remoteId = remote
+    ? String(remote.id || spotifyTrackId(remote.uri)).trim() : ""
+  if (remote && remoteId === id) {
+    if (String(remote.type || "track") !== "track") return null
+    if (remote.uri) return remote
+  }
+
+  return {
+    kind: "item",
+    type: "track",
+    id: id,
+    uri: "spotify:track:" + id,
+    name: String(title || "Untitled"),
+    subtitle: String(artist || ""),
+    album: String(album || ""),
+    artists: [],
+    albumItem: null,
+    parentContext: null,
+    imageUrl: String(coverUrl || ""),
+    durationMs: Math.max(0, Number(durationSeconds) || 0) * 1000,
+    externalUrl: String(externalUrl || "")
+  }
+}
+
 function lyricsSong(trackId, title, artist, album, duration, coverUrl,
     positionSeconds) {
   var id = String(trackId || "").trim()

@@ -4,6 +4,11 @@
 
 ### Features
 
+- Like or remove the currently playing song from Liked Songs directly beside
+  its title in both the full player and the bar mini-player.
+- Always open the mini-player on a normal bar-icon click, including while a
+  refreshed shell is restoring Spotify state, with a preference to open the
+  full player directly instead.
 - Independently show the artist or song title in the bar, scroll long bar text
   so the complete label remains readable, and adjust its speed from 0.25× to
   3×. Scrolling turns off automatically when both text fields are hidden, and

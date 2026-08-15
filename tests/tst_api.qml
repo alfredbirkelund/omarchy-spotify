@@ -164,6 +164,29 @@ TestCase {
     compare(Api.spotifyTrackId("/spotify/episode/not-a-track"), "")
   }
 
+  function test_currentPlaybackTrack_reusesRemoteTracksAndSynthesizesMprisTracks() {
+    var remote = {
+      id: "remote-id", uri: "spotify:track:remote-id", type: "track",
+      name: "Remote song"
+    }
+    compare(Api.currentPlaybackTrack("remote-id", remote, "", "", "", "", 0, ""),
+      remote)
+
+    var local = Api.currentPlaybackTrack("local-id", remote, "Local song",
+      "Local artist", "Local album", "cover", 183.5, "web-url")
+    compare(local.type, "track")
+    compare(local.uri, "spotify:track:local-id")
+    compare(local.name, "Local song")
+    compare(local.subtitle, "Local artist")
+    compare(local.durationMs, 183500)
+    compare(local.externalUrl, "web-url")
+
+    compare(Api.currentPlaybackTrack("episode-id", {
+      id: "episode-id", uri: "spotify:episode:episode-id", type: "episode"
+    }, "Episode", "", "", "", 120, ""), null)
+    compare(Api.currentPlaybackTrack("", remote, "", "", "", "", 0, ""), null)
+  }
+
   function test_arrayValues_acceptsQmlSequenceShape() {
     var sequence = ({ length: 2 })
     sequence[0] = { name: "One" }

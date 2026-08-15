@@ -31,6 +31,7 @@
     "defaults": {
       "deviceName": "Omarchy Spotify",
       "idleShutdownMinutes": 15,
+      "showMiniPlayer": "On",
       "showTrackTitle": "On",
       "showArtistName": "Off",
       "scrollBarText": "Off",
@@ -54,6 +55,17 @@
         "step": 5,
         "defaultValue": 15,
         "description": "Minutes. Use 0 to keep this computer available in Spotify Connect."
+      },
+      {
+        "key": "showMiniPlayer",
+        "type": "enum",
+        "label": "Open mini-player from bar",
+        "options": [
+          "On",
+          "Off"
+        ],
+        "defaultValue": "On",
+        "description": "When off, clicking the Spotify bar icon opens the full player directly."
       },
       {
         "key": "showTrackTitle",

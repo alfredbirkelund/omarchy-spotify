@@ -27,6 +27,7 @@ Item {
   property var settings: ({
     deviceName: "Omarchy Spotify",
     idleShutdownMinutes: 15,
+    showMiniPlayer: "On",
     showTrackTitle: "On",
     showArtistName: "Off",
     scrollBarText: "Off",
@@ -39,6 +40,7 @@ Item {
   readonly property string deviceName: String(settings.deviceName || "Omarchy Spotify").trim() || "Omarchy Spotify"
   readonly property int idleShutdownMinutes: Math.max(0, Math.min(1440,
     Math.floor(Number(settings.idleShutdownMinutes) || 0)))
+  readonly property bool showMiniPlayer: String(settings.showMiniPlayer || "On") !== "Off"
   readonly property bool showTrackTitle: String(settings.showTrackTitle || "On") !== "Off"
   readonly property bool showArtistName: String(settings.showArtistName || "Off") === "On"
   readonly property bool scrollBarText: String(settings.scrollBarText || "Off") === "On"
@@ -181,6 +183,17 @@ Item {
     ? String(remoteTrack.uri || "") : metadataString("xesam:url")
   readonly property string currentExternalUrl: useRemotePlayback && remoteTrack
     ? String(remoteTrack.externalUrl || spotifyWebUrl(currentUri)) : spotifyWebUrl(currentUri)
+  readonly property var currentTrackItem: Api.currentPlaybackTrack(
+    currentTrackId(), remoteTrack, title, artist, album, artUrl,
+    lengthSeconds, currentExternalUrl)
+  readonly property string currentTrackItemUri: currentTrackItem
+    ? String(currentTrackItem.uri || "") : ""
+  readonly property bool currentTrackSaved: isSaved(currentTrackItem)
+  readonly property bool currentTrackSaveChecking: isSavedChecking(currentTrackItem)
+  readonly property bool currentTrackSaveBusy: currentTrackSaveChecking
+    || isSavedBusy(currentTrackItem)
+  readonly property bool currentTrackSaveAvailable: !!currentTrackItem
+    && authManager.loggedIn && !currentTrackSaveBusy
   readonly property bool playbackRestricted: useRemotePlayback
     && remoteDevice && remoteDevice.restricted === true
   readonly property var sonosControlDevice: findSonosControlDevice()
@@ -227,6 +240,8 @@ Item {
   property string searchQuery: ""
   property var searchGroups: Api.searchGroups({}, 128)
   property var savedUris: ({})
+  property var savedUrisChecking: ({})
+  property var savedUrisBusy: ({})
 
   property var recentTracks: []
   property var topTracks: []
@@ -337,6 +352,7 @@ Item {
     var fallback = {
       deviceName: "Omarchy Spotify",
       idleShutdownMinutes: 15,
+      showMiniPlayer: "On",
       showTrackTitle: "On",
       showArtistName: "Off",
       scrollBarText: "Off",
@@ -358,6 +374,7 @@ Item {
     if (source.deviceName !== undefined) next.deviceName = source.deviceName
     if (source.idleShutdownMinutes !== undefined)
       next.idleShutdownMinutes = source.idleShutdownMinutes
+    if (source.showMiniPlayer !== undefined) next.showMiniPlayer = source.showMiniPlayer
     if (source.showTrackTitle !== undefined) next.showTrackTitle = source.showTrackTitle
     if (source.showArtistName !== undefined) next.showArtistName = source.showArtistName
     if (source.scrollBarText !== undefined) next.scrollBarText = source.scrollBarText
@@ -375,6 +392,7 @@ Item {
     next.deviceName = String(next.deviceName || "Omarchy Spotify").trim() || "Omarchy Spotify"
     next.idleShutdownMinutes = Math.max(0, Math.min(1440,
       Math.floor(Number(next.idleShutdownMinutes) || 0)))
+    next.showMiniPlayer = String(next.showMiniPlayer || "On") === "Off" ? "Off" : "On"
     next.showTrackTitle = String(next.showTrackTitle || "On") === "Off" ? "Off" : "On"
     next.showArtistName = String(next.showArtistName || "Off") === "On" ? "On" : "Off"
     next.scrollBarText = String(next.scrollBarText || "Off") === "On" ? "On" : "Off"
@@ -1038,6 +1056,43 @@ Item {
     savedUris = next
   }
 
+  function setSavedUriFlag(source, uri, value) {
+    var key = String(uri || "")
+    var next = ({})
+    var flags = source || ({})
+    for (var existing in flags)
+      if (existing !== key && flags[existing] === true) next[existing] = true
+    if (key && value === true) next[key] = true
+    return next
+  }
+
+  function markSavedUrisChecking(uris, value) {
+    var rows = Array.isArray(uris) ? uris : []
+    var next = ({})
+    for (var existing in savedUrisChecking)
+      if (savedUrisChecking[existing] === true) next[existing] = true
+    for (var i = 0; i < rows.length; i++) {
+      var key = String(rows[i] || "")
+      if (!key) continue
+      if (value === true) next[key] = true
+      else delete next[key]
+    }
+    savedUrisChecking = next
+  }
+
+  function isSavedChecking(item) {
+    return !!item && !!item.uri
+      && savedUrisChecking[String(item.uri)] === true
+  }
+
+  function setSavedBusy(uri, value) {
+    savedUrisBusy = setSavedUriFlag(savedUrisBusy, uri, value)
+  }
+
+  function isSavedBusy(item) {
+    return !!item && !!item.uri && savedUrisBusy[String(item.uri)] === true
+  }
+
   function markItemsSaved(items, value) {
     var rows = Array.isArray(items) ? items : []
     var next = ({})
@@ -1057,14 +1112,16 @@ Item {
     var seen = ({})
     for (var i = 0; i < rows.length; i++) {
       var uri = String((rows[i] && rows[i].uri) || "")
-      if (!uri || seen[uri]) continue
+      if (!uri || seen[uri] || savedUrisChecking[uri] === true) continue
       seen[uri] = true
       uris.push(uri)
     }
+    markSavedUrisChecking(uris, true)
     for (var start = 0; start < uris.length; start += 40) {
       (function(chunk) {
         spotifyApi.request("GET", "/me/library/contains", { uris: chunk }, null,
           function(status, payload, error) {
+            root.markSavedUrisChecking(chunk, false)
             if (error || !Array.isArray(payload)) return
             var next = ({})
             for (var old in root.savedUris) next[old] = root.savedUris[old]
@@ -1076,11 +1133,16 @@ Item {
   }
 
   function toggleSaved(item) {
-    if (!item || !item.uri || item.type === "chapter") return
+    if (!item || !item.uri || item.type === "chapter" || isSavedBusy(item)) return
     var removing = isSaved(item)
+    var track = item.type === "track"
+    setSavedBusy(item.uri, true)
     apiAction(removing ? "DELETE" : "PUT", "/me/library", { uris: item.uri }, null,
-      removing ? "Removed from your library" : "Saved to your library",
+      track
+        ? (removing ? "Removed from Liked Songs" : "Added to Liked Songs")
+        : (removing ? "Removed from your library" : "Saved to your library"),
       function(ok) {
+        root.setSavedBusy(item.uri, false)
         if (!ok) return
         root.setSavedState(item.uri, !removing)
         if (item.type === "track" && root.savedTracksLoaded) root.loadSavedTracks(false)
@@ -1093,6 +1155,18 @@ Item {
           root.loadSavedAudiobooks(false)
         if (item.type === "playlist" && root.playlistsLoaded) root.loadPlaylists(false)
       })
+  }
+
+  function syncCurrentTrackSaved(force) {
+    var item = currentTrackItem
+    if (!uiVisible || !authManager.loggedIn || !item) return
+    if (force === true || savedUris[String(item.uri)] === undefined)
+      checkSavedItems([item])
+  }
+
+  function toggleCurrentTrackSaved() {
+    if (!currentTrackSaveAvailable) return
+    toggleSaved(currentTrackItem)
   }
 
   function loadSavedAlbums(append) {
@@ -1781,6 +1855,14 @@ Item {
   }
 
   function currentTrackId() {
+    // When a remote device owns playback, stale metadata from an idle local
+    // spotifyd player must not turn a podcast episode into a song.
+    if (useRemotePlayback) {
+      if (!remoteTrack || remoteTrack.type !== "track") return ""
+      return Api.spotifyTrackId(remoteTrack.uri)
+        || String(remoteTrack.id || "").trim()
+    }
+
     var id = Api.spotifyTrackId(currentUri)
     if (id) return id
 
@@ -1789,7 +1871,7 @@ Item {
     id = Api.spotifyTrackId(metadataString("mpris:trackid"))
     if (id) return id
 
-    return remoteTrack && remotePlaybackIsLocal
+    return remoteTrack && remotePlaybackIsLocal && remoteTrack.type === "track"
       ? String(remoteTrack.id || "").trim() : ""
   }
 
@@ -2994,6 +3076,8 @@ Item {
     searchQuery = ""
     searchGroups = Api.searchGroups({}, 128)
     savedUris = ({})
+    savedUrisChecking = ({})
+    savedUrisBusy = ({})
     recentTracks = []
     topTracks = []
     topArtists = []
@@ -3051,9 +3135,13 @@ Item {
     if (sleepMode === "track" && sleepTrackUri && currentUri
         && currentUri !== sleepTrackUri) finishSleepTimer()
   }
+  onCurrentTrackItemUriChanged: syncCurrentTrackSaved(false)
   onShellChanged: settingsSync.restart()
   onUiVisibleChanged: {
-    if (uiVisible) ensureVisibleLocalReceiver()
+    if (uiVisible) {
+      ensureVisibleLocalReceiver()
+      syncCurrentTrackSaved(true)
+    }
     else cancelVisibleLocalDeviceRefresh()
   }
   onFullyConnectedChanged: {
@@ -3075,6 +3163,7 @@ Item {
   Connections {
     target: authManager
     function onLoginSucceeded() {
+      root.syncCurrentTrackSaved(true)
       if (!root.loginFlowActive) {
         root.succeed("Spotify account connected")
         return

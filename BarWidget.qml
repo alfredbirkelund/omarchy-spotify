@@ -19,15 +19,23 @@ BarWidget {
   readonly property string barText: spotify
     ? Api.barTrackText(spotify.title, spotify.artist,
       spotify.showTrackTitle, spotify.showArtistName) : ""
+  readonly property bool miniPlayerEnabled:
+    String(root.setting("showMiniPlayer", "On")) !== "Off"
   readonly property bool iconOnly: !spotify || vertical || !spotify.hasMedia
     || barText === ""
   property bool popupOpen: false
   property bool lyricsInstallPromptVisible: false
   readonly property bool opened: popupOpen
 
-  function open() { popupOpen = true }
+  function open() {
+    if (miniPlayerEnabled) popupOpen = true
+    else openFullPanel()
+  }
   function close() { popupOpen = false }
-  function toggle() { popupOpen = !popupOpen }
+  function toggle() {
+    if (miniPlayerEnabled) popupOpen = !popupOpen
+    else openFullPanel()
+  }
 
   function openFullPanel(payload) {
     close()
@@ -85,6 +93,7 @@ BarWidget {
 
   onSettingsChanged: syncSettings()
   onSpotifyChanged: syncSettings()
+  onMiniPlayerEnabledChanged: if (!miniPlayerEnabled) close()
   onPopupOpenChanged: {
     if (spotify) spotify.setUiVisible(surfaceKey, popupOpen)
     if (!popupOpen && lyricsInstallPromptVisible
@@ -232,10 +241,6 @@ BarWidget {
     onPressed: function(mouseButton) {
       if (mouseButton === Qt.MiddleButton) {
         if (root.spotify) root.spotify.togglePlayback()
-      } else if (mouseButton === Qt.RightButton) {
-        root.openFullPanel()
-      } else if (!root.spotify || !root.spotify.fullyConnected) {
-        root.openFullPanel()
       } else {
         root.toggle()
       }
@@ -302,14 +307,46 @@ BarWidget {
           anchors.verticalCenter: parent.verticalCenter
           spacing: Style.space(4)
 
-          Text {
+          Row {
             width: parent.width
-            text: root.spotify && root.spotify.title ? root.spotify.title : "Nothing playing"
-            color: root.foreground
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.subtitle
-            font.bold: true
-            elide: Text.ElideRight
+            spacing: Style.space(3)
+
+            Text {
+              width: Math.max(20, parent.width
+                - (barCurrentTrackLikeButton.visible
+                  ? barCurrentTrackLikeButton.width + parent.spacing : 0))
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.spotify && root.spotify.title
+                ? root.spotify.title : "Nothing playing"
+              color: root.foreground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.subtitle
+              font.bold: true
+              elide: Text.ElideRight
+            }
+
+            Button {
+              id: barCurrentTrackLikeButton
+              objectName: "bar-current-track-like"
+              visible: root.spotify && !!root.spotify.currentTrackItem
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: root.spotify && root.spotify.currentTrackSaved
+                ? "󰋑" : "󰋕"
+              iconSize: Style.font.body
+              foreground: root.foreground
+              selected: root.spotify && root.spotify.currentTrackSaved
+              enabled: root.spotify && root.spotify.currentTrackSaveAvailable
+              horizontalPadding: Style.space(4)
+              verticalPadding: Style.space(2)
+              tooltipText: root.spotify && root.spotify.currentTrackSaveChecking
+                ? "Checking liked status…"
+                : (root.spotify && root.spotify.currentTrackSaveBusy
+                  ? "Updating liked status…"
+                  : (root.spotify && root.spotify.currentTrackSaved
+                    ? "Remove like" : "Like this song"))
+              onClicked: if (root.spotify)
+                root.spotify.toggleCurrentTrackSaved()
+            }
           }
 
           ArtistLinks {

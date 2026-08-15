@@ -94,8 +94,9 @@ widget later with Omarchy's bar controls.
   into your own editable copies when Spotify makes their contents available.
 - Build a queue, start track radio, use shuffle and repeat, or set a sleep timer.
 - Listen on this computer or switch to another Spotify Connect speaker or player.
-- Choose whether the bar shows the title, artist, or both, and softly scroll
-  overflowing text at an adjustable speed.
+- Choose whether the bar icon opens the mini-player or full player, whether it
+  shows the title, artist, or both, and softly scroll overflowing text at an
+  adjustable speed.
 - Choose up to 320 kbps for local playback.
 
 Your Spotify password is entered only on Spotify's own page. Omarchy Spotify
