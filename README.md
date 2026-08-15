@@ -54,10 +54,10 @@ your Omarchy theme.
 
 ![Vietnam War Music playlist in Omarchy Spotify](docs/screenshots/vietnam-war-playlist.png)
 
-### Explore artists without losing the music
+### Everything from an artist, in one view
 
-Albums, EPs, top songs, and artist search live on one page while the current
-song keeps playing below.
+Top albums and EPs sit beside the artist's ten biggest songs, with their
+**This Is** playlist and full catalog only a search away.
 
 ![Red Hot Chili Peppers artist page with Under the Bridge playing](docs/screenshots/red-hot-chili-peppers-under-the-bridge.png)
 
