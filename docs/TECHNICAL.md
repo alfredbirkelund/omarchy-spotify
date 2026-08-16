@@ -57,6 +57,13 @@ bundled backend build when present, builds it with Cargo for a source checkout,
 or uses Polkit to install the official Arch `spotifyd` fallback when neither is
 available. Configuration and user units need no privilege.
 
+Omarchy treats any write inside a plugin directory as a change to the plugin and
+hot-reloads it, so the backend is compiled to
+`$XDG_CACHE_HOME/omarchy-spotify/target` (override with `CARGO_TARGET_DIR`),
+never to the plugin directory itself. This keeps the recursive file watcher
+from reloading the plugin — and killing the build — mid-setup. A stale
+`backend/target/` left by an older build can be removed; the backend ignores it.
+
 ## Authentication
 
 Web API access uses Spotify's Authorization Code with PKCE flow and the public

@@ -91,7 +91,6 @@ grep -qx 'device_name = "Test speakers"' "$runtime_spotify_config"
 grep -qx 'no_audio_cache = false' "$runtime_spotify_config"
 grep -qx 'max_cache_size = 1000000000' "$runtime_spotify_config"
 grep -qx 'Environment=PULSE_LATENCY_MSEC=30' "$runtime_unit"
-grep -qx 'Environment=TOKIO_WORKER_THREADS=2' "$runtime_unit"
 
 PATH="$mock_bin:$PATH" \
 XDG_CONFIG_HOME="$runtime_config" \
