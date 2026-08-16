@@ -911,7 +911,7 @@ BarWidget {
           width: parent.width - openButton.width - Style.space(6)
           anchors.verticalCenter: parent.verticalCenter
           text: !root.spotify ? "Spotify is unavailable"
-            : (!root.spotify.fullyConnected ? "Continue with Spotify"
+            : (!root.spotify.fullyConnected ? ""
             : (root.spotify.useRemotePlayback
               ? (root.spotify.playing ? "Playing on " : "Connected to ")
                 + root.spotify.playbackDeviceName
