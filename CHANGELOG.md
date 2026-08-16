@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Build the plugin-owned backend's Cargo artifacts in
+  `$XDG_CACHE_HOME/omarchy-spotify/target` instead of the plugin directory.
+  Omarchy hot-reloads a plugin whenever any file inside it changes, so the old
+  in-place `backend/target/` triggered a reload loop that killed the first-run
+  setup build and restarted the bar before the backend could be installed.
+- Drop a stale `tests/test-scripts.sh` assertion that expected the spotifyd
+  fallback unit to carry the plugin backend's `TOKIO_WORKER_THREADS` setting.
 - Replace the spotifyd runtime with a plugin-owned Rust backend that embeds a
   commit-pinned librespot engine, exports MPRIS, and exposes a versioned private
   Unix-socket API. Keep the existing spotifyd unit as a reversible fallback.

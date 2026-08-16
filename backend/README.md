@@ -45,6 +45,11 @@ cargo clippy --manifest-path backend/Cargo.toml --locked --all-targets -- -D war
 ./scripts/build-backend.sh
 ```
 
+`scripts/build-backend.sh` compiles to `$XDG_CACHE_HOME/omarchy-spotify/target`
+(override with `CARGO_TARGET_DIR`). Omarchy hot-reloads plugins on any write
+inside their directory, so building to a cache path outside the plugin prevents
+the shell's recursive watcher from reloading the plugin and killing the build.
+
 See [the protocol reference](../docs/BACKEND_PROTOCOL.md) for the compatibility
 contract. The legacy `omarchy-spotifyd.service` remains installable as a
 fallback and conflicts with the primary unit so two local receivers cannot run
