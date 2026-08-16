@@ -28,8 +28,18 @@ done < <(pgrep -x quickshell || true)
   exit 1
 }
 
-mapfile -t spotify_pids < <(pgrep -x spotifyd || true)
-all_pids=("$shell_pid" "${spotify_pids[@]}")
+mapfile -t playback_pids < <(
+  {
+    pgrep -x spotifyd || true
+    for process_dir in /proc/[0-9]*; do
+      executable=$(readlink -f -- "$process_dir/exe" 2>/dev/null || true)
+      if [[ $executable == */omarchy-spotify-backend ]]; then
+        printf '%s\n' "${process_dir##*/}"
+      fi
+    done
+  } | sort -nu
+)
+all_pids=("$shell_pid" "${playback_pids[@]}")
 clock_ticks=$(getconf CLK_TCK)
 
 cpu_ticks() {
@@ -87,22 +97,30 @@ wakeups_per_second=$(awk -v switches="$((switches_after - switches_before))" \
 
 shell_pss=$(rollup_value "$shell_pid" Pss)
 shell_rss=$(rollup_value "$shell_pid" Rss)
-spotify_pss=0
-spotify_rss=0
-for pid in "${spotify_pids[@]}"; do
-  spotify_pss=$((spotify_pss + $(rollup_value "$pid" Pss)))
-  spotify_rss=$((spotify_rss + $(rollup_value "$pid" Rss)))
+playback_pss=0
+playback_rss=0
+runtime_kind=none
+for pid in "${playback_pids[@]}"; do
+  playback_pss=$((playback_pss + $(rollup_value "$pid" Pss)))
+  playback_rss=$((playback_rss + $(rollup_value "$pid" Rss)))
+  executable=$(readlink -f -- "/proc/$pid/exe" 2>/dev/null || true)
+  kind=$([[ $executable == */omarchy-spotify-backend ]] && printf backend || printf spotifyd)
+  if [[ $runtime_kind == none ]]; then
+    runtime_kind=$kind
+  elif [[ $runtime_kind != "$kind" ]]; then
+    runtime_kind=mixed
+  fi
 done
 
-spotify_pid_list=none
-if (( ${#spotify_pids[@]} > 0 )); then
-  spotify_pid_list=$(IFS=+; echo "${spotify_pids[*]}")
+playback_pid_list=none
+if (( ${#playback_pids[@]} > 0 )); then
+  playback_pid_list=$(IFS=+; echo "${playback_pids[*]}")
 fi
 
 printf '%s\n' \
-  'state,seconds,shell_pid,spotifyd_pid,shell_pss_kib,shell_rss_kib,spotifyd_pss_kib,spotifyd_rss_kib,total_pss_kib,total_rss_kib,cpu_percent,scheduler_switches_per_second'
-printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
-  "$state" "$elapsed_seconds" "$shell_pid" "$spotify_pid_list" \
-  "$shell_pss" "$shell_rss" "$spotify_pss" "$spotify_rss" \
-  "$((shell_pss + spotify_pss))" "$((shell_rss + spotify_rss))" \
+  'state,seconds,shell_pid,playback_runtime,playback_pid,shell_pss_kib,shell_rss_kib,playback_pss_kib,playback_rss_kib,total_pss_kib,total_rss_kib,cpu_percent,scheduler_switches_per_second'
+printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+  "$state" "$elapsed_seconds" "$shell_pid" "$runtime_kind" "$playback_pid_list" \
+  "$shell_pss" "$shell_rss" "$playback_pss" "$playback_rss" \
+  "$((shell_pss + playback_pss))" "$((shell_rss + playback_rss))" \
   "$cpu_percent" "$wakeups_per_second"

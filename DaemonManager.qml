@@ -4,9 +4,9 @@ import Quickshell.Io
 
 import "Api.js" as Api
 
-// Owns only short-lived systemctl/authentication commands. spotifyd itself is
-// supervised by a user unit and is never launched as an untracked child of the
-// shell.
+// Owns only short-lived runtime/authentication commands. The plugin backend
+// (or its spotifyd fallback) is supervised by a user unit and is never launched
+// as an untracked child of the shell.
 Item {
   id: root
 
@@ -61,6 +61,7 @@ Item {
   }
 
   function checkRequirements() {
+    if (!pluginDir) return
     if (!binaryCheck.running) binaryCheck.running = true
     if (!unitCheck.running) unitCheck.running = true
     checkCredentials()
@@ -85,7 +86,7 @@ Item {
   }
 
   function refreshStatus() {
-    if (statusCheck.running) return
+    if (!pluginDir || statusCheck.running) return
     statusCheck.running = true
   }
 
@@ -180,7 +181,11 @@ Item {
 
   onDeviceNameChanged: requestConfiguration()
   onBitrateKbpsChanged: requestConfiguration()
-  onPluginDirChanged: requestConfiguration()
+  onPluginDirChanged: {
+    if (!pluginDir) return
+    checkRequirements()
+    refreshStatus()
+  }
 
   Component.onCompleted: checkRequirements()
 
@@ -221,7 +226,7 @@ Item {
 
   Process {
     id: binaryCheck
-    command: ["/usr/bin/test", "-x", "/usr/bin/spotifyd"]
+    command: ["/usr/bin/bash", root.pluginDir + "/scripts/playback-runtime.sh", "check"]
     onExited: function(exitCode) {
       root.binaryAvailable = exitCode === 0
       root.binaryChecked = true
@@ -230,7 +235,7 @@ Item {
 
   Process {
     id: unitCheck
-    command: ["systemctl", "--user", "cat", root.unitName]
+    command: ["/usr/bin/bash", root.pluginDir + "/scripts/playback-runtime.sh", "check"]
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
@@ -269,7 +274,7 @@ Item {
 
   Process {
     id: statusCheck
-    command: ["systemctl", "--user", "is-active", root.unitName]
+    command: ["/usr/bin/bash", root.pluginDir + "/scripts/playback-runtime.sh", "status"]
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) { root.serviceActive = exitCode === 0 }
@@ -286,7 +291,7 @@ Item {
 
   Process {
     id: startCommand
-    command: ["systemctl", "--user", "start", root.unitName]
+    command: ["/usr/bin/bash", root.pluginDir + "/scripts/playback-runtime.sh", "start"]
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
@@ -302,7 +307,7 @@ Item {
 
   Process {
     id: stopCommand
-    command: ["systemctl", "--user", "stop", root.unitName]
+    command: ["/usr/bin/bash", root.pluginDir + "/scripts/playback-runtime.sh", "stop"]
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {

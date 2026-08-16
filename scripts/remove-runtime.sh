@@ -13,12 +13,16 @@ fi
 
 config_root=${XDG_CONFIG_HOME:-"$HOME/.config"}
 cache_root=${XDG_CACHE_HOME:-"$HOME/.cache"}
-unit_file="$config_root/systemd/user/omarchy-spotifyd.service"
+backend_unit_file="$config_root/systemd/user/omarchy-spotify.service"
+fallback_unit_file="$config_root/systemd/user/omarchy-spotifyd.service"
 config_dir="$config_root/omarchy-spotify"
 cache_dir="$cache_root/spotifyd"
+runtime_dir=${OMARCHY_SPOTIFY_RUNTIME_DIR:-"$HOME/.local/lib/omarchy-spotify"}
+backend_binary="$runtime_dir/omarchy-spotify-backend"
 
+systemctl --user stop omarchy-spotify.service 2>/dev/null || true
 systemctl --user stop omarchy-spotifyd.service 2>/dev/null || true
-rm -f -- "$unit_file"
+rm -f -- "$backend_unit_file" "$fallback_unit_file" "$backend_binary"
 systemctl --user daemon-reload
 
 if [[ -d $config_dir ]]; then
@@ -37,7 +41,7 @@ if (( purge )); then
   if [[ -d $cache_dir ]]; then
     [[ $cache_dir == "$cache_root/spotifyd" ]] || exit 3
     rm -rf -- "$cache_dir"
-    echo "Removed spotifyd cached credentials."
+    echo "Removed spotifyd cached credentials and audio."
   fi
   if command -v secret-tool >/dev/null 2>&1; then
     for _ in {1..20}; do

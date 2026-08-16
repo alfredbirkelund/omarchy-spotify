@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# spotifyd's OAuth credential is separate from the Web API refresh token.
+# Local playback's OAuth credential is separate from the Web API refresh token.
 # Remove only that exact file when the user explicitly logs out in the UI.
 cache_root=${XDG_CACHE_HOME:-"$HOME/.cache"}
 credentials_file="$cache_root/spotifyd/oauth/credentials.json"
@@ -12,5 +12,6 @@ credentials_file="$cache_root/spotifyd/oauth/credentials.json"
 }
 [[ $credentials_file == "$cache_root/spotifyd/oauth/credentials.json" ]] || exit 3
 
+systemctl --user stop omarchy-spotify.service 2>/dev/null || true
 systemctl --user stop omarchy-spotifyd.service 2>/dev/null || true
 rm -f -- "$credentials_file"

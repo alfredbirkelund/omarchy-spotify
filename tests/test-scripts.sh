@@ -26,6 +26,8 @@ printf '%s\n%s\n' "Desk speakers" 320 |
   XDG_CONFIG_HOME="$test_root/config" "$source_root/scripts/configure-spotifyd.sh"
 grep -qx 'device_name = "Desk speakers"' "$test_root/config/omarchy-spotify/spotifyd.conf"
 grep -qx 'bitrate = 320' "$test_root/config/omarchy-spotify/spotifyd.conf"
+grep -qx 'no_audio_cache = false' "$test_root/config/omarchy-spotify/spotifyd.conf"
+grep -qx 'max_cache_size = 1000000000' "$test_root/config/omarchy-spotify/spotifyd.conf"
 ! grep -q '^device[[:space:]]*=' "$test_root/config/omarchy-spotify/spotifyd.conf"
 grep -qx 'autoplay = true' "$test_root/config/omarchy-spotify/spotifyd.conf"
 
@@ -53,8 +55,9 @@ set -e
 mock_bin="$test_root/mock-bin"
 runtime_config="$test_root/runtime-config"
 runtime_cache="$test_root/runtime-cache"
+runtime_backend="$test_root/runtime-backend"
 secret_log="$test_root/secret-tool.log"
-mkdir -p "$mock_bin" "$runtime_config" "$runtime_cache"
+mkdir -p "$mock_bin" "$runtime_config" "$runtime_cache" "$runtime_backend"
 
 printf '%s\n' '#!/bin/sh' 'exit 0' >"$mock_bin/spotifyd"
 printf '%s\n' \
@@ -75,6 +78,8 @@ chmod 755 "$mock_bin/spotifyd" "$mock_bin/systemctl" "$mock_bin/secret-tool"
 PATH="$mock_bin:$PATH" \
 XDG_CONFIG_HOME="$runtime_config" \
 XDG_CACHE_HOME="$runtime_cache" \
+OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
+OMARCHY_SPOTIFY_SKIP_BACKEND_BUILD=1 \
   "$source_root/scripts/setup.sh" --device-name "Test speakers" >/dev/null
 
 runtime_spotify_config="$runtime_config/omarchy-spotify/spotifyd.conf"
@@ -83,10 +88,15 @@ runtime_unit="$runtime_config/systemd/user/omarchy-spotifyd.service"
 [[ $(stat -c '%a' "$runtime_spotify_config") == 600 ]]
 [[ $(stat -c '%a' "$runtime_unit") == 644 ]]
 grep -qx 'device_name = "Test speakers"' "$runtime_spotify_config"
+grep -qx 'no_audio_cache = false' "$runtime_spotify_config"
+grep -qx 'max_cache_size = 1000000000' "$runtime_spotify_config"
+grep -qx 'Environment=PULSE_LATENCY_MSEC=30' "$runtime_unit"
+grep -qx 'Environment=TOKIO_WORKER_THREADS=2' "$runtime_unit"
 
 PATH="$mock_bin:$PATH" \
 XDG_CONFIG_HOME="$runtime_config" \
 XDG_CACHE_HOME="$runtime_cache" \
+OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
   "$source_root/scripts/remove-runtime.sh" >/dev/null
 
 [[ ! -e $runtime_unit && ! -e $runtime_config/omarchy-spotify ]]
@@ -98,6 +108,8 @@ find "$runtime_config" -maxdepth 1 -type d -name 'omarchy-spotify.bak.*' \
 PATH="$mock_bin:$PATH" \
 XDG_CONFIG_HOME="$runtime_config" \
 XDG_CACHE_HOME="$runtime_cache" \
+OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
+OMARCHY_SPOTIFY_SKIP_BACKEND_BUILD=1 \
   "$source_root/scripts/setup-playback.sh" >/dev/null
 [[ -f $runtime_spotify_config && -f $runtime_unit ]]
 grep -qx 'device_name = "Omarchy Spotify"' "$runtime_spotify_config"
@@ -107,6 +119,7 @@ cp -- "$source_root/config/spotifyd.conf" "$runtime_config/omarchy-spotify/spoti
 PATH="$mock_bin:$PATH" \
 XDG_CONFIG_HOME="$runtime_config" \
 XDG_CACHE_HOME="$runtime_cache" \
+OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
 TEST_SECRET_LOG="$secret_log" \
   "$source_root/scripts/remove-runtime.sh" --purge >/dev/null
 
@@ -166,6 +179,7 @@ grep -q 'pkexec /usr/bin/pacman -S --needed --noconfirm spotifyd' \
 ! grep -q 'sudo' "$source_root/scripts/setup-playback.sh"
 grep -q 'exec /usr/bin/spotifyd authenticate' \
   "$source_root/scripts/spotifyd-auth.sh"
+grep -q 'omarchy-spotify-backend' "$source_root/scripts/spotifyd-auth.sh"
 grep -q -- '--config-path "$config_root/omarchy-spotify/spotifyd.conf"' \
   "$source_root/scripts/spotifyd-auth.sh"
 grep -q -- '--oauth-port 8000' "$source_root/scripts/spotifyd-auth.sh"
@@ -185,5 +199,13 @@ jq -e '.version == "1.0.2"
   "$source_root/manifest.json" >/dev/null
 grep -qx 'section=left' "$source_root/scripts/install-local.sh"
 grep -qx 'bitrate = 320' "$source_root/config/spotifyd.conf"
+grep -qx 'no_audio_cache = false' "$source_root/config/spotifyd.conf"
+grep -qx 'max_cache_size = 1000000000' "$source_root/config/spotifyd.conf"
+grep -qx 'Conflicts=omarchy-spotifyd.service' \
+  "$source_root/systemd/omarchy-spotify.service"
+grep -qx 'Environment=PULSE_LATENCY_MSEC=30' \
+  "$source_root/systemd/omarchy-spotify.service"
+grep -qx 'Environment=TOKIO_WORKER_THREADS=2' \
+  "$source_root/systemd/omarchy-spotify.service"
 
 echo "Script tests passed."

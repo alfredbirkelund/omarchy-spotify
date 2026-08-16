@@ -36,6 +36,8 @@ Item {
   property bool searchInContext: true
   property bool universalSearchActive: false
   property var scrollPositions: ({})
+  property var scrollPositionOrder: []
+  readonly property int scrollPositionLimit: 128
   property var navigationStack: []
   property string restoredPlaylistId: ""
 
@@ -253,14 +255,34 @@ Item {
   }
 
   function rememberScroll(key, value) {
-    var next = ({})
-    for (var existing in scrollPositions) next[existing] = scrollPositions[existing]
-    next[String(key || currentTab)] = Math.max(0, Number(value) || 0)
-    scrollPositions = next
+    var name = String(key || currentTab)
+    var position = Math.max(0, Number(value) || 0)
+    if (!scrollPositions || typeof scrollPositions !== "object")
+      scrollPositions = ({})
+    if (!Array.isArray(scrollPositionOrder)) scrollPositionOrder = []
+    scrollPositions[name] = position
+    var evicted = Api.touchBoundedOrder(scrollPositionOrder, name,
+      scrollPositionLimit)
+    if (evicted) delete scrollPositions[evicted]
   }
 
   function scrollFor(key) {
     return Math.max(0, Number(scrollPositions[String(key || currentTab)]) || 0)
+  }
+
+  function restoreScrollPositions(values) {
+    var source = values && typeof values === "object" ? values : ({})
+    var keys = Object.keys(source)
+    var start = Math.max(0, keys.length - scrollPositionLimit)
+    var next = ({})
+    var order = []
+    for (var i = start; i < keys.length; i++) {
+      var name = keys[i]
+      next[name] = Math.max(0, Number(source[name]) || 0)
+      order.push(name)
+    }
+    scrollPositions = next
+    scrollPositionOrder = order
   }
 
   function restoreUiState(restoreDetail) {
@@ -286,8 +308,7 @@ Item {
     artistSearchText = String(state.artistSearchText || "")
     searchInContext = true
     universalSearchActive = false
-    scrollPositions = state.scrollPositions && typeof state.scrollPositions === "object"
-      ? state.scrollPositions : ({})
+    restoreScrollPositions(state.scrollPositions)
     restoredPlaylistId = String(state.selectedPlaylistId || "")
     var restoredTab = String(state.tab || "home")
     if (["home", "discover", "search", "library", "playlists", "detail", "queue", "devices", "setup"]
@@ -2690,6 +2711,45 @@ Item {
       readonly property int searchResultCount: root.service
         ? root.service.artistSongs.length + root.service.artistAlbums.length
           + root.service.artistPlaylists.length : 0
+      readonly property int searchColumnCount: Api.responsiveResultColumns(
+        Math.max(0, width - Style.space(10)), Style.space(760))
+      readonly property var searchRows: Api.sectionedMediaRows([
+        {
+          id: "songs",
+          heading: "SONGS",
+          items: root.service ? root.service.artistSongs : [],
+          loading: root.service && root.service.artistSongsLoading,
+          hasMore: root.service && root.service.artistSongsNext !== ""
+        },
+        {
+          id: "albums",
+          heading: "ALBUMS & EPS",
+          items: root.service ? root.service.artistAlbums : [],
+          loading: root.service && root.service.artistAlbumsLoading,
+          hasMore: root.service && root.service.artistAlbumsNext !== ""
+        },
+        {
+          id: "playlists",
+          heading: "PLAYLISTS",
+          items: root.service ? root.service.artistPlaylists : [],
+          loading: root.service && root.service.artistPlaylistsLoading,
+          hasMore: root.service && root.service.artistPlaylistsNext !== ""
+        }
+      ], searchColumnCount)
+
+      function artistSearchSource(sectionId) {
+        if (!root.service) return []
+        if (sectionId === "albums") return root.service.artistAlbums
+        if (sectionId === "playlists") return root.service.artistPlaylists
+        return root.service.artistSongs
+      }
+
+      function loadMoreArtistSearch(sectionId) {
+        if (!root.service) return
+        if (sectionId === "albums") root.service.loadMoreArtistAlbums()
+        else if (sectionId === "playlists") root.service.loadMoreArtistPlaylists()
+        else root.service.loadMoreArtistSongs()
+      }
 
       Column {
         anchors.fill: parent
@@ -2978,134 +3038,195 @@ Item {
             - parent.spacing) : 0
           visible: detailRoot.searchActive
 
-          Flickable {
-            id: artistSearchFlick
+          Column {
             anchors.fill: parent
-            property string queryKey: root.artistSearchText
-            contentWidth: width
-            contentHeight: artistSearchContent.implicitHeight
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            flickableDirection: Flickable.VerticalFlick
-            interactive: contentHeight > height
-            onQueryKeyChanged: contentY = originY
+            spacing: Style.space(7)
 
-            Column {
-              id: artistSearchContent
-              width: Math.max(1, artistSearchFlick.width - Style.space(10))
-              spacing: Style.space(12)
+            Text {
+              id: artistSearchStatus
+              width: parent.width
+              text: detailRoot.searchLoading
+                ? "Searching " + (root.service && root.service.detailItem
+                  ? root.service.detailItem.name : "this artist") + "…"
+                : detailRoot.searchResultCount
+                  + (detailRoot.searchResultCount === 1 ? " result" : " results")
+              color: Qt.darker(root.foreground, 1.35)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            ListView {
+              id: artistSearchList
+              width: Math.max(1, parent.width - Style.space(10))
+              height: Math.max(30, parent.height - artistSearchStatus.height
+                - artistSearchEmpty.height - parent.spacing * 2)
+              property string queryKey: root.artistSearchText
+              model: detailRoot.searchRows.length
+              clip: true
+              spacing: Style.space(4)
+              reuseItems: true
+              cacheBuffer: Style.space(160)
+              boundsBehavior: Flickable.StopAtBounds
+              ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+              onQueryKeyChanged: positionViewAtBeginning()
+
+              FastScrollHandler {
+                parent: artistSearchList
+                flickable: artistSearchList
+              }
+
+              delegate: Loader {
+                id: artistSearchRowLoader
+                required property int index
+                property var rowData: detailRoot.searchRows[index]
+                width: ListView.view.width
+                height: {
+                  if (!rowData) return 0
+                  if (rowData.kind === "items") return Style.space(72)
+                  return rowData.kind === "heading" ? Style.space(28) : Style.space(40)
+                }
+                sourceComponent: {
+                  if (!rowData) return null
+                  if (rowData.kind === "items") return artistSearchMediaRow
+                  return rowData.kind === "heading" ? artistSearchHeadingRow
+                    : artistSearchMoreRow
+                }
+                onLoaded: if (item) item.rowData = rowData
+                onRowDataChanged: if (item) item.rowData = rowData
+              }
+            }
+
+            Text {
+              id: artistSearchEmpty
+              width: parent.width
+              height: visible ? implicitHeight : 0
+              visible: !detailRoot.searchLoading
+                && detailRoot.searchResultCount === 0
+              text: "No songs, albums, or playlists matched this search."
+              color: Qt.darker(root.foreground, 1.4)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
+            }
+          }
+
+          Component {
+            id: artistSearchHeadingRow
+
+            Row {
+              id: searchHeadingRow
+              property var rowData: null
+              spacing: Style.space(8)
 
               Text {
-                width: parent.width
-                text: detailRoot.searchLoading
-                  ? "Searching " + (root.service && root.service.detailItem
-                    ? root.service.detailItem.name : "this artist") + "…"
-                  : detailRoot.searchResultCount
-                    + (detailRoot.searchResultCount === 1 ? " result" : " results")
-                color: Qt.darker(root.foreground, 1.35)
+                width: Math.max(40, parent.width - artistSearchSectionCount.width
+                  - parent.spacing)
+                anchors.verticalCenter: parent.verticalCenter
+                text: searchHeadingRow.rowData
+                  ? searchHeadingRow.rowData.heading : "RESULTS"
+                color: root.foreground
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-              }
-
-              ArtistSearchSection {
-                width: parent.width
-                service: root.service
-                heading: "SONGS"
-                sourceItems: root.service ? root.service.artistSongs : []
-                loading: root.service && root.service.artistSongsLoading
-                hasMore: root.service && root.service.artistSongsNext !== ""
-                browseContexts: false
-                showQueue: true
-                showSave: true
-                onActivated: function(item, items, uri) {
-                  root.activateMedia(item, items, uri)
-                }
-                onOpened: function(item) { root.openItem(item) }
-                onQueued: function(item) {
-                  if (root.service) root.service.addToQueue(item)
-                }
-                onPlaylistRequested: function(item) { root.openPlaylistPicker(item) }
-                onSaveToggled: function(item) {
-                  if (root.service) root.service.toggleSaved(item)
-                }
-                onContextRequested: function(item, x, y, index, items, uri) {
-                  root.openMediaContext(item, x, y, items, uri, index)
-                }
-                onLoadMoreRequested: if (root.service)
-                  root.service.loadMoreArtistSongs()
-              }
-
-              ArtistSearchSection {
-                width: parent.width
-                service: root.service
-                heading: "ALBUMS & EPS"
-                sourceItems: root.service ? root.service.artistAlbums : []
-                loading: root.service && root.service.artistAlbumsLoading
-                hasMore: root.service && root.service.artistAlbumsNext !== ""
-                browseContexts: true
-                showQueue: false
-                showPlaylist: false
-                showSave: true
-                onActivated: function(item, items, uri) {
-                  root.activateMedia(item, items, uri)
-                }
-                onOpened: function(item) { root.openItem(item) }
-                onSaveToggled: function(item) {
-                  if (root.service) root.service.toggleSaved(item)
-                }
-                onContextRequested: function(item, x, y, index, items, uri) {
-                  root.openMediaContext(item, x, y, items, uri, index)
-                }
-                onLoadMoreRequested: if (root.service)
-                  root.service.loadMoreArtistAlbums()
-              }
-
-              ArtistSearchSection {
-                width: parent.width
-                service: root.service
-                heading: "PLAYLISTS"
-                sourceItems: root.service ? root.service.artistPlaylists : []
-                loading: root.service && root.service.artistPlaylistsLoading
-                hasMore: root.service && root.service.artistPlaylistsNext !== ""
-                browseContexts: true
-                showQueue: false
-                showPlaylist: false
-                showSave: true
-                onActivated: function(item, items, uri) {
-                  root.activateMedia(item, items, uri)
-                }
-                onOpened: function(item) { root.openItem(item) }
-                onSaveToggled: function(item) {
-                  if (root.service) root.service.toggleSaved(item)
-                }
-                onContextRequested: function(item, x, y, index, items, uri) {
-                  root.openMediaContext(item, x, y, items, uri, index)
-                }
-                onLoadMoreRequested: if (root.service)
-                  root.service.loadMoreArtistPlaylists()
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                elide: Text.ElideRight
               }
 
               Text {
-                width: parent.width
-                visible: !detailRoot.searchLoading
-                  && detailRoot.searchResultCount === 0
-                text: "No songs, albums, or playlists matched this search."
-                color: Qt.darker(root.foreground, 1.4)
+                id: artistSearchSectionCount
+                anchors.verticalCenter: parent.verticalCenter
+                text: searchHeadingRow.rowData && searchHeadingRow.rowData.loading
+                  && searchHeadingRow.rowData.count === 0 ? "Finding…"
+                  : String(searchHeadingRow.rowData
+                    ? searchHeadingRow.rowData.count : 0)
+                color: Qt.darker(root.foreground, 1.42)
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WordWrap
+                font.pixelSize: Style.font.caption
               }
-
-              Item { width: 1; height: Style.space(8) }
             }
+          }
 
-            FastScrollHandler {
-              parent: artistSearchFlick
-              flickable: artistSearchFlick
+          Component {
+            id: artistSearchMediaRow
+
+            Item {
+              id: searchMediaGroup
+              property var rowData: null
+
+              Row {
+                anchors.fill: parent
+                spacing: Style.space(4)
+
+                Repeater {
+                  model: searchMediaGroup.rowData
+                    ? Api.arrayValues(searchMediaGroup.rowData.items) : []
+
+                  MediaRow {
+                    required property var modelData
+                    required property int index
+                    width: Math.max(40, (parent.width - parent.spacing
+                      * (detailRoot.searchColumnCount - 1))
+                      / detailRoot.searchColumnCount)
+                    height: parent.height
+                    itemData: modelData
+                    foreground: root.foreground
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    browseOnActivate: searchMediaGroup.rowData
+                      && searchMediaGroup.rowData.sectionId !== "songs"
+                      && modelData && modelData.kind === "context"
+                    showQueue: searchMediaGroup.rowData
+                      && searchMediaGroup.rowData.sectionId === "songs"
+                    showPlaylist: showQueue
+                    showSave: true
+                    saved: root.service && root.service.isSaved(modelData)
+                    onActivated: function(item) {
+                      var sectionId = searchMediaGroup.rowData.sectionId
+                      root.activateMedia(item,
+                        detailRoot.artistSearchSource(sectionId), "")
+                    }
+                    onOpenRequested: function(item) { root.openItem(item) }
+                    onArtistRequested: function(item) { root.openItem(item) }
+                    onAlbumRequested: function(item) { root.openItem(item) }
+                    onQueueRequested: function(item) {
+                      if (root.service) root.service.addToQueue(item)
+                    }
+                    onPlaylistRequested: function(item) {
+                      root.openPlaylistPicker(item)
+                    }
+                    onSaveRequested: function(item) {
+                      if (root.service) root.service.toggleSaved(item)
+                    }
+                    onContextRequested: function(item, sceneX, sceneY) {
+                      var row = searchMediaGroup.rowData
+                      var items = detailRoot.artistSearchSource(row.sectionId)
+                      root.openMediaContext(item, sceneX, sceneY, items, "",
+                        row.startIndex + index)
+                    }
+                  }
+                }
+              }
             }
+          }
 
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+          Component {
+            id: artistSearchMoreRow
+
+            Item {
+              id: searchMoreRow
+              property var rowData: null
+
+              Button {
+                anchors.centerIn: parent
+                text: searchMoreRow.rowData && searchMoreRow.rowData.loading
+                  ? "Loading…" : "Load more"
+                foreground: root.foreground
+                enabled: searchMoreRow.rowData && searchMoreRow.rowData.hasMore
+                  && !searchMoreRow.rowData.loading
+                onClicked: if (searchMoreRow.rowData)
+                  detailRoot.loadMoreArtistSearch(searchMoreRow.rowData.sectionId)
+              }
+            }
           }
         }
 

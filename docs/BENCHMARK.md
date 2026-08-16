@@ -80,6 +80,29 @@ network, PulseAudio, and MPRIS costs. Automatic local-device selection is
 covered separately by offline routing tests because exercising the Web API
 would mutate the tester's real Spotify playback state.
 
+## Plugin backend migration check
+
+On 2026-08-16, the same host was switched live from the patched spotifyd
+prototype to `omarchy-spotify-backend` while a real track was playing. After the
+backend optimization audit, three 10-second live samples reported a stable
+backend median of **16.77 MiB PSS / 26.09 MiB RSS**. The documented spotifyd
+playback median above was 26.3 MiB PSS / 35.6 MiB RSS, so the plugin-owned
+process was about **36% smaller by PSS** and **27% smaller by RSS** in this
+migration check.
+
+This is supporting evidence rather than a new controlled UI-baseline run: the
+shell and Omarchy revision changed between measurements, and plugin UI was open
+during the final samples. A process-only 15-second audit found five backend
+threads, 15 intentional state generations, and 22 scheduler context switches.
+The pre-audit process used 35 threads and emitted position state four times per
+second. CPU varied with track decoding, so no CPU-reduction claim is based on
+those short samples.
+
+A direct manual switch on the two-worker candidate remained continuously in
+the `Playing` state—there was no intermediate stop or pause—and produced no
+decoder underrun. The promoted service then passed a natural track transition
+with no error or restart.
+
 To reproduce the playing state, complete both browser authorizations, select a
 track, wait for it to play steadily for at least 30 seconds, and keep all plugin
 UI closed:
@@ -90,14 +113,15 @@ for sample in 1 2 3; do
 done
 ```
 
-The script reports shell and spotifyd memory separately as well as their
-total. Do not use a sample in which spotifyd starts, stops, or changes PID
-during the 10-second window.
+The script reports shell and playback-runtime memory separately as well as their
+total. Do not use a sample in which the backend or spotifyd starts, stops, or
+changes PID during the 10-second window.
 
 ## Method
 
 `scripts/benchmark.sh` identifies exactly one Omarchy Quickshell process and
-all `spotifyd` processes at sample start. `scripts/benchmark-spotify-desktop.sh`
+the plugin backend or all spotifyd processes at sample start.
+`scripts/benchmark-spotify-desktop.sh`
 includes every process whose executable resolves to `/opt/spotify/spotify` and
 rejects a sample if that process set changes during the window. Both scripts
 read:
@@ -163,11 +187,23 @@ The paired playback rows are
 `total_pss_kib,total_rss_kib,cpu_percent,switches_per_second`. The full CSV
 outputs also record the involved PID lists.
 
+The current script labels the runtime explicitly and uses generic
+`playback_pss_kib` / `playback_rss_kib` columns. The migration samples were:
+
+```text
+backend-playing-1,10.002018,1776938,backend,1764497,376717,605040,20077,29500,396794,634540,5.999,139.672
+backend-playing-2,10.001963,1776938,backend,1764497,377428,605628,20089,29500,397517,635128,5.499,139.273
+backend-playing-3,10.002512,1776938,backend,1764497,378205,606404,20089,29500,398294,635904,6.098,141.364
+backend-optimized-playing-1,10.001856,1804726,backend,1832381,434985,669752,17165,26708,452150,696460,7.099,134.275
+backend-optimized-playing-2,10.002266,1804726,backend,1832381,434569,669336,17169,26712,451738,696048,7.298,136.869
+backend-optimized-playing-3,10.002246,1804726,backend,1832381,434660,669428,17169,26712,451829,696140,7.598,135.470
+```
+
 ## Disk footprint
 
-The release source tree is about 361 KiB, excluding Git metadata. Arch's spotifyd
-0.4.2 package reports an 11.34 MiB installed size; its required audio/DBus
-libraries were already present on this Omarchy host. For scale only, the
-installed proprietary Spotify desktop package on the same host reports
-368.51 MiB. Disk footprint is not a substitute for runtime measurement, but it
-illustrates why the plugin avoids shipping a browser runtime.
+The stripped plugin backend built on this host is 9.12 MiB. Arch's spotifyd
+0.4.2 package reports an 11.34 MiB installed size; both use audio and TLS
+libraries already present on Omarchy. For scale only, the installed proprietary
+Spotify desktop package on the same host reports 368.51 MiB. Disk footprint is
+not a substitute for runtime measurement, but it illustrates why the plugin
+avoids shipping a browser runtime.

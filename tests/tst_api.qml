@@ -42,6 +42,38 @@ TestCase {
     compare(Api.normalizedScrollSpeed(1.13), 1.25)
   }
 
+  function test_cacheFreshnessAndSleepDeadline_boundaries() {
+    verify(Api.timestampIsFresh(1000, 5999, 5000))
+    verify(!Api.timestampIsFresh(1000, 6000, 5000))
+    verify(!Api.timestampIsFresh(1000, 999, 5000))
+    verify(!Api.timestampIsFresh(0, 1000, 5000))
+
+    compare(Api.deadlineRemainingSeconds(2501, 1000), 2)
+    compare(Api.deadlineRemainingSeconds(2000, 1000), 1)
+    compare(Api.deadlineRemainingSeconds(999, 1000), 0)
+    compare(Api.deadlineRemainingSeconds("invalid", 1000), 0)
+  }
+
+  function test_boundedOrder_mutatesInPlaceAndEvictsOldestKeys() {
+    var order = ["one", "two", "three"]
+    var sameOrder = order
+    compare(Api.touchBoundedOrder(order, "two", 3), "")
+    verify(order === sameOrder)
+    compare(order, ["one", "three", "two"])
+
+    compare(Api.touchBoundedOrder(order, "four", 3), "one")
+    compare(order, ["three", "two", "four"])
+    compare(Api.touchBoundedOrder(order, "", 3), "")
+  }
+
+  function test_filteredSorted_reusesTheUnchangedDefaultList() {
+    var rows = [{ name: "One" }, { name: "Two" }]
+    verify(Api.filteredSorted(rows, "", "default") === rows)
+    verify(Api.filteredSorted(rows, " two ", "default") !== rows)
+    compare(Api.filteredSorted(rows, " two ", "default"), [rows[1]])
+    compare(Api.filteredSorted([rows[0], null, rows[1]], "", "default"), rows)
+  }
+
   function test_spotifydVolumeCurve_hasStableEndpointsAndRoundTrips() {
     compare(Api.spotifydVolumeToSlider(0), 0)
     compare(Api.spotifydVolumeToSlider(1), 1)
@@ -87,6 +119,28 @@ TestCase {
     verify(!Api.mediaRowShouldCompact(220, 180, 0))
     compare(Api.responsiveResultColumns(1000, 760), 2)
     compare(Api.responsiveResultColumns(500, 760), 1)
+  }
+
+  function test_sectionedMediaRows_flattensGroupsForOneVirtualizedView() {
+    var songs = [{ id: "one" }, { id: "two" }, { id: "three" }]
+    var rows = Api.sectionedMediaRows([
+      { id: "songs", heading: "SONGS", items: songs, loading: false, hasMore: true },
+      { id: "albums", heading: "ALBUMS", items: [], loading: false, hasMore: false },
+      { id: "playlists", heading: "PLAYLISTS", items: [], loading: true, hasMore: false }
+    ], 2)
+
+    compare(rows.length, 6)
+    compare(rows[0].kind, "heading")
+    compare(rows[0].sectionId, "songs")
+    compare(rows[1].kind, "items")
+    compare(rows[1].items.length, 2)
+    compare(rows[1].startIndex, 0)
+    compare(rows[2].items.length, 1)
+    compare(rows[2].startIndex, 2)
+    compare(rows[3].kind, "more")
+    compare(rows[4].kind, "heading")
+    compare(rows[4].sectionId, "playlists")
+    compare(rows[5].kind, "more")
   }
 
   function test_artistSubtitleSuffix_keepsNonArtistAlbumDetails() {
@@ -573,10 +627,33 @@ TestCase {
     compare(JSON.stringify(Api.playbackBody(rows[1], rows, "")), JSON.stringify({
       uris: ["spotify:track:b", "spotify:track:c", "spotify:track:a"]
     }))
+    rows[1].playlistPosition = 7
     compare(JSON.stringify(Api.playbackBody(rows[1], rows, "spotify:playlist:list")),
       JSON.stringify({
         context_uri: "spotify:playlist:list",
-        offset: { uri: "spotify:track:b" }
+        offset: { position: 7 }
+      }))
+
+    var epRows = [
+      { kind: "item", uri: "spotify:track:first", discNumber: 1, trackNumber: 1 },
+      { kind: "item", uri: "spotify:track:second", discNumber: 1, trackNumber: 2 },
+      { kind: "item", uri: "spotify:track:third", discNumber: 1, trackNumber: 3 }
+    ]
+    compare(JSON.stringify(Api.playbackBody(epRows[2], epRows,
+      "spotify:album:ep")), JSON.stringify({
+        context_uri: "spotify:album:ep",
+        offset: { position: 2 }
+      }))
+
+    var multiDiscRows = [
+      { kind: "item", uri: "spotify:track:d1t1", discNumber: 1, trackNumber: 1 },
+      { kind: "item", uri: "spotify:track:d1t2", discNumber: 1, trackNumber: 2 },
+      { kind: "item", uri: "spotify:track:d2t1", discNumber: 2, trackNumber: 1 }
+    ]
+    compare(JSON.stringify(Api.playbackBody(multiDiscRows[2], multiDiscRows,
+      "spotify:album:multi")), JSON.stringify({
+        context_uri: "spotify:album:multi",
+        offset: { position: 2 }
       }))
     compare(Api.playbackBody(null), null)
     compare(Api.playbackBody({

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# spotifyd owns its loopback response page, so it cannot ask the browser to
+# The playback helper owns its loopback response page, so it cannot ask the browser to
 # close itself. Close only an unmistakable, currently selected callback tab;
 # if the user already changed tabs or identification is ambiguous, do nothing.
-close_spotifyd_callback_tab() {
+close_playback_callback_tab() {
   command -v hyprctl >/dev/null 2>&1 || return 0
   command -v jq >/dev/null 2>&1 || return 0
 
@@ -60,5 +60,5 @@ return_to_spotify() {
   done
 }
 
-close_spotifyd_callback_tab
+close_playback_callback_tab
 return_to_spotify

@@ -240,8 +240,17 @@ Item {
   property string searchQuery: ""
   property var searchGroups: Api.searchGroups({}, 128)
   property var savedUris: ({})
+  property var savedUriCheckedAt: ({})
+  property var savedUriOrder: []
   property var savedUrisChecking: ({})
   property var savedUrisBusy: ({})
+  // The maps stay stable to avoid full copies; revisions keep QML lookups
+  // reactive when individual entries change.
+  property int savedUrisRevision: 0
+  property int savedUrisCheckingRevision: 0
+  property int savedUrisBusyRevision: 0
+  readonly property int savedUriCacheLimit: 4096
+  readonly property int savedUriFreshnessMs: 300000
 
   property var recentTracks: []
   property var topTracks: []
@@ -1050,69 +1059,98 @@ Item {
   function setSavedState(uri, value) {
     var key = String(uri || "")
     if (!key) return
-    var next = ({})
-    for (var existing in savedUris) next[existing] = savedUris[existing]
-    next[key] = value === true
-    savedUris = next
+    rememberSavedStates([key], value === true)
   }
 
-  function setSavedUriFlag(source, uri, value) {
+  function rememberSavedStates(uris, values) {
+    var rows = Array.isArray(uris) ? uris : []
+    var results = Array.isArray(values) ? values : null
+    var checkedAt = Date.now()
+    var changed = false
+    for (var i = 0; i < rows.length; i++) {
+      var key = String(rows[i] || "")
+      if (!key) continue
+      savedUris[key] = results ? results[i] === true : values === true
+      savedUriCheckedAt[key] = checkedAt
+      var evicted = Api.touchBoundedOrder(savedUriOrder, key,
+        savedUriCacheLimit)
+      if (evicted) {
+        delete savedUris[evicted]
+        delete savedUriCheckedAt[evicted]
+      }
+      changed = true
+    }
+    if (changed) savedUrisRevision++
+  }
+
+  function savedStateIsFresh(uri, now) {
     var key = String(uri || "")
-    var next = ({})
-    var flags = source || ({})
-    for (var existing in flags)
-      if (existing !== key && flags[existing] === true) next[existing] = true
-    if (key && value === true) next[key] = true
-    return next
+    if (!key || savedUris[key] === undefined) return false
+    return Api.timestampIsFresh(savedUriCheckedAt[key], now,
+      savedUriFreshnessMs)
   }
 
   function markSavedUrisChecking(uris, value) {
     var rows = Array.isArray(uris) ? uris : []
-    var next = ({})
-    for (var existing in savedUrisChecking)
-      if (savedUrisChecking[existing] === true) next[existing] = true
+    var changed = false
     for (var i = 0; i < rows.length; i++) {
       var key = String(rows[i] || "")
       if (!key) continue
-      if (value === true) next[key] = true
-      else delete next[key]
+      if (value === true && savedUrisChecking[key] !== true) {
+        savedUrisChecking[key] = true
+        changed = true
+      } else if (value !== true && savedUrisChecking[key] === true) {
+        delete savedUrisChecking[key]
+        changed = true
+      }
     }
-    savedUrisChecking = next
+    if (changed) savedUrisCheckingRevision++
   }
 
   function isSavedChecking(item) {
-    return !!item && !!item.uri
+    return savedUrisCheckingRevision >= 0 && !!item && !!item.uri
       && savedUrisChecking[String(item.uri)] === true
   }
 
   function setSavedBusy(uri, value) {
-    savedUrisBusy = setSavedUriFlag(savedUrisBusy, uri, value)
+    var key = String(uri || "")
+    if (!key) return
+    if (value === true && savedUrisBusy[key] !== true) {
+      savedUrisBusy[key] = true
+      savedUrisBusyRevision++
+    } else if (value !== true && savedUrisBusy[key] === true) {
+      delete savedUrisBusy[key]
+      savedUrisBusyRevision++
+    }
   }
 
   function isSavedBusy(item) {
-    return !!item && !!item.uri && savedUrisBusy[String(item.uri)] === true
+    return savedUrisBusyRevision >= 0 && !!item && !!item.uri
+      && savedUrisBusy[String(item.uri)] === true
   }
 
   function markItemsSaved(items, value) {
     var rows = Array.isArray(items) ? items : []
-    var next = ({})
-    for (var existing in savedUris) next[existing] = savedUris[existing]
+    var uris = []
     for (var i = 0; i < rows.length; i++)
-      if (rows[i] && rows[i].uri) next[String(rows[i].uri)] = value !== false
-    savedUris = next
+      if (rows[i] && rows[i].uri) uris.push(String(rows[i].uri))
+    rememberSavedStates(uris, value !== false)
   }
 
   function isSaved(item) {
-    return !!item && !!item.uri && savedUris[String(item.uri)] === true
+    return savedUrisRevision >= 0 && !!item && !!item.uri
+      && savedUris[String(item.uri)] === true
   }
 
-  function checkSavedItems(items) {
+  function checkSavedItems(items, force) {
     var rows = Array.isArray(items) ? items : []
     var uris = []
     var seen = ({})
+    var now = Date.now()
     for (var i = 0; i < rows.length; i++) {
       var uri = String((rows[i] && rows[i].uri) || "")
-      if (!uri || seen[uri] || savedUrisChecking[uri] === true) continue
+      if (!uri || seen[uri] || savedUrisChecking[uri] === true
+          || (force !== true && savedStateIsFresh(uri, now))) continue
       seen[uri] = true
       uris.push(uri)
     }
@@ -1123,10 +1161,7 @@ Item {
           function(status, payload, error) {
             root.markSavedUrisChecking(chunk, false)
             if (error || !Array.isArray(payload)) return
-            var next = ({})
-            for (var old in root.savedUris) next[old] = root.savedUris[old]
-            for (var p = 0; p < chunk.length; p++) next[chunk[p]] = payload[p] === true
-            root.savedUris = next
+            root.rememberSavedStates(chunk, payload)
           })
       })(uris.slice(start, start + 40))
     }
@@ -1160,8 +1195,7 @@ Item {
   function syncCurrentTrackSaved(force) {
     var item = currentTrackItem
     if (!uiVisible || !authManager.loggedIn || !item) return
-    if (force === true || savedUris[String(item.uri)] === undefined)
-      checkSavedItems([item])
+    checkSavedItems([item], force === true)
   }
 
   function toggleCurrentTrackSaved() {
@@ -2861,10 +2895,12 @@ Item {
 
   function setSleepMinutes(minutes) {
     var value = Math.max(1, Math.min(720, Math.floor(Number(minutes) || 0)))
+    sleepContextTimer.stop()
     sleepMode = "minutes"
     sleepEndsAt = Date.now() + value * 60000
     sleepRemainingSeconds = value * 60
     sleepTrackUri = ""
+    scheduleSleepDeadline()
     succeed("Sleep timer set for " + value + " minutes")
   }
 
@@ -2873,6 +2909,7 @@ Item {
       fail("Play something before setting an end-of-track timer")
       return
     }
+    sleepDeadlineTimer.stop()
     sleepMode = "track"
     sleepTrackUri = currentUri
     sleepEndsAt = 0
@@ -2885,6 +2922,7 @@ Item {
       fail("Play something before setting an end-of-context timer")
       return
     }
+    sleepDeadlineTimer.stop()
     sleepMode = "context"
     sleepTrackUri = ""
     sleepEndsAt = 0
@@ -2893,6 +2931,7 @@ Item {
   }
 
   function cancelSleepTimer(showStatus) {
+    sleepDeadlineTimer.stop()
     sleepMode = "off"
     sleepEndsAt = 0
     sleepTrackUri = ""
@@ -2902,9 +2941,32 @@ Item {
   }
 
   function finishSleepTimer() {
+    if (!sleepActive) return
     if (playing) togglePlayback()
     cancelSleepTimer(false)
     succeed("Sleep timer finished")
+  }
+
+  function updateSleepCountdown() {
+    if (sleepMode !== "minutes") {
+      sleepRemainingSeconds = 0
+      return
+    }
+    sleepRemainingSeconds = Api.deadlineRemainingSeconds(sleepEndsAt,
+      Date.now())
+  }
+
+  function scheduleSleepDeadline() {
+    sleepDeadlineTimer.stop()
+    if (sleepMode !== "minutes") return
+    var remaining = sleepEndsAt - Date.now()
+    if (remaining <= 0) {
+      updateSleepCountdown()
+      finishSleepTimer()
+      return
+    }
+    sleepDeadlineTimer.interval = Math.max(1, Math.ceil(remaining))
+    sleepDeadlineTimer.restart()
   }
 
   function sleepStatusText() {
@@ -3076,8 +3138,13 @@ Item {
     searchQuery = ""
     searchGroups = Api.searchGroups({}, 128)
     savedUris = ({})
+    savedUriCheckedAt = ({})
+    savedUriOrder = []
     savedUrisChecking = ({})
     savedUrisBusy = ({})
+    savedUrisRevision++
+    savedUrisCheckingRevision++
+    savedUrisBusyRevision++
     recentTracks = []
     topTracks = []
     topArtists = []
@@ -3141,6 +3208,7 @@ Item {
     if (uiVisible) {
       ensureVisibleLocalReceiver()
       syncCurrentTrackSaved(true)
+      updateSleepCountdown()
     }
     else cancelVisibleLocalDeviceRefresh()
   }
@@ -3399,13 +3467,23 @@ Item {
   }
 
   Timer {
+    id: sleepDeadlineTimer
+    repeat: false
+    onTriggered: {
+      root.updateSleepCountdown()
+      if (root.sleepRemainingSeconds <= 0) root.finishSleepTimer()
+      else root.scheduleSleepDeadline()
+    }
+  }
+
+  Timer {
     id: sleepCountdown
     interval: 1000
     repeat: true
-    running: root.sleepMode === "minutes"
+    running: root.sleepMode === "minutes" && root.uiVisible
+    onRunningChanged: if (running) root.updateSleepCountdown()
     onTriggered: {
-      root.sleepRemainingSeconds = Math.max(0,
-        Math.ceil((root.sleepEndsAt - Date.now()) / 1000))
+      root.updateSleepCountdown()
       if (root.sleepRemainingSeconds <= 0) root.finishSleepTimer()
     }
   }

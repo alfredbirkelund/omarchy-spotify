@@ -11,6 +11,12 @@ for command_name in qmllint omarchy; do
   }
 done
 
+if command -v cargo >/dev/null 2>&1; then
+  cargo fmt --manifest-path backend/Cargo.toml --all -- --check
+  cargo test --manifest-path backend/Cargo.toml --quiet
+  cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings
+fi
+
 qml_test_runner=/usr/lib/qt6/bin/qmltestrunner
 [[ -x $qml_test_runner ]] || {
   echo "test.sh: Qt 6 qmltestrunner is missing: $qml_test_runner" >&2

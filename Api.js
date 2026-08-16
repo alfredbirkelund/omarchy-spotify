@@ -120,6 +120,37 @@ function normalizedScrollSpeed(value) {
   return Math.round(Math.max(0.25, Math.min(3, speed)) * 4) / 4
 }
 
+function timestampIsFresh(timestamp, now, lifetimeMs) {
+  var checkedAt = Number(timestamp)
+  var current = Number(now)
+  var lifetime = Number(lifetimeMs)
+  if (!isFinite(checkedAt) || !isFinite(current) || !isFinite(lifetime)
+      || checkedAt <= 0 || lifetime <= 0) return false
+  var age = current - checkedAt
+  return age >= 0 && age < lifetime
+}
+
+function deadlineRemainingSeconds(deadline, now) {
+  var end = Number(deadline)
+  var current = Number(now)
+  if (!isFinite(end) || !isFinite(current)) return 0
+  return Math.max(0, Math.ceil((end - current) / 1000))
+}
+
+// Maintain a small least-recently-touched key order without replacing the
+// caller's array. One touch can add at most one key, so a single returned key
+// lets callers evict the matching map entry without replacement collections.
+function touchBoundedOrder(order, key, limit) {
+  if (!Array.isArray(order)) return ""
+  var name = String(key || "")
+  if (!name) return ""
+  var maximum = Math.max(0, Math.floor(Number(limit) || 0))
+  var oldIndex = order.indexOf(name)
+  if (oldIndex >= 0) order.splice(oldIndex, 1)
+  order.push(name)
+  return order.length > maximum ? String(order.shift() || "") : ""
+}
+
 // Nested arrays become array-like QML sequences after passing through a
 // ListView model. Preserve them instead of relying on Array.isArray(), which
 // returns false for that representation.
@@ -540,6 +571,46 @@ function responsiveResultColumns(width, twoColumnWidth) {
   var available = Math.max(0, Number(width) || 0)
   var breakpoint = Math.max(1, Number(twoColumnWidth) || 1)
   return available >= breakpoint ? 2 : 1
+}
+
+// Flatten grouped search results into rows for one virtualized ListView. Each
+// media row contains at most `columnCount` items, so the view creates only the
+// rows around its viewport instead of every result in several nested grids.
+function sectionedMediaRows(sections, columnCount) {
+  var groups = Array.isArray(sections) ? sections : []
+  var columns = Math.max(1, Math.min(4, Math.floor(Number(columnCount) || 1)))
+  var rows = []
+  for (var sectionIndex = 0; sectionIndex < groups.length; sectionIndex++) {
+    var section = groups[sectionIndex] || {}
+    var items = arrayValues(section.items)
+    var loading = section.loading === true
+    var hasMore = section.hasMore === true
+    if (!items.length && !loading && !hasMore) continue
+
+    var id = String(section.id || sectionIndex)
+    rows.push({
+      kind: "heading",
+      sectionId: id,
+      heading: String(section.heading || "RESULTS"),
+      count: items.length,
+      loading: loading
+    })
+    for (var start = 0; start < items.length; start += columns) {
+      rows.push({
+        kind: "items",
+        sectionId: id,
+        startIndex: start,
+        items: items.slice(start, start + columns)
+      })
+    }
+    if (loading || hasMore) rows.push({
+      kind: "more",
+      sectionId: id,
+      loading: loading,
+      hasMore: hasMore
+    })
+  }
+  return rows
 }
 
 function tracksForArtist(items, artist) {
@@ -1052,15 +1123,29 @@ function normalizeCursorPage(container, mapper) {
 function filteredSorted(items, filterText, sortKey) {
   var source = Array.isArray(items) ? items : []
   var term = String(filterText || "").trim().toLowerCase()
+  var key = String(sortKey || "default")
+  if (!term && key === "default") {
+    var complete = true
+    for (var candidate = 0; candidate < source.length; candidate++) {
+      if (!source[candidate]) {
+        complete = false
+        break
+      }
+    }
+    if (complete) return source
+  }
+
   var rows = []
   for (var i = 0; i < source.length; i++) {
     var item = source[i]
     if (!item) continue
-    var haystack = [item.name, item.subtitle, item.album, item.description,
-      item.releaseDate, item.addedAt].join(" ").toLowerCase()
-    if (!term || haystack.indexOf(term) >= 0) rows.push({ item: item, index: i })
+    if (term) {
+      var haystack = [item.name, item.subtitle, item.album, item.description,
+        item.releaseDate, item.addedAt].join(" ").toLowerCase()
+      if (haystack.indexOf(term) < 0) continue
+    }
+    rows.push({ item: item, index: i })
   }
-  var key = String(sortKey || "default")
   if (key !== "default") {
     rows.sort(function(a, b) {
       var left
@@ -1116,6 +1201,54 @@ function touchHistory(values, term, maximum) {
   return result
 }
 
+function playbackContextOffsetPosition(item, sourceItems, contextUri) {
+  var context = String(contextUri || "")
+  var values = Array.isArray(sourceItems) ? sourceItems : []
+  var itemUri = String((item && item.uri) || "")
+  var visibleIndex = -1
+  for (var i = 0; i < values.length; i++) {
+    if (values[i] && String(values[i].uri || "") === itemUri) {
+      visibleIndex = i
+      break
+    }
+  }
+
+  if (/^spotify:playlist:/.test(context)) {
+    var rawPosition = item ? item.playlistPosition : undefined
+    var playlistPosition = Number(rawPosition)
+    if (rawPosition !== null && rawPosition !== undefined
+        && isFinite(playlistPosition) && playlistPosition >= 0)
+      return Math.floor(playlistPosition)
+    return visibleIndex
+  }
+
+  if (!/^spotify:album:/.test(context)) return -1
+  var trackNumber = Math.floor(Number((item && item.trackNumber) || 0))
+  var discNumber = Math.max(1,
+    Math.floor(Number((item && item.discNumber) || 1)))
+  if (trackNumber <= 0) return visibleIndex
+  if (discNumber === 1) return trackNumber - 1
+
+  // Album track numbers restart on each disc. Derive the absolute context
+  // offset from the greatest track number seen on every preceding disc.
+  var tracksPerDisc = ({})
+  for (var row = 0; row < values.length; row++) {
+    var candidate = values[row] || {}
+    var candidateDisc = Math.max(1,
+      Math.floor(Number(candidate.discNumber) || 1))
+    var candidateTrack = Math.floor(Number(candidate.trackNumber) || 0)
+    if (candidateTrack > 0)
+      tracksPerDisc[candidateDisc] = Math.max(
+        Number(tracksPerDisc[candidateDisc]) || 0, candidateTrack)
+  }
+  var position = trackNumber - 1
+  for (var disc = 1; disc < discNumber; disc++) {
+    if (!tracksPerDisc[disc]) return -1
+    position += tracksPerDisc[disc]
+  }
+  return position
+}
+
 function playbackBody(item, sourceItems, contextUri) {
   if (!item || !item.uri) return null
   // Spotify's playback endpoint accepts only album, artist, and playlist
@@ -1126,8 +1259,15 @@ function playbackBody(item, sourceItems, contextUri) {
 
   var itemUri = String(item.uri)
   var sourceContext = String(contextUri || "")
-  if (/^spotify:(album|playlist):/.test(sourceContext))
-    return { context_uri: sourceContext, offset: { uri: itemUri } }
+  if (/^spotify:(album|playlist):/.test(sourceContext)) {
+    // Some librespot-based receivers accept the context but ignore a URI
+    // offset and restart its first track. Prefer Spotify's numeric offset.
+    var contextPosition = playbackContextOffsetPosition(item, sourceItems,
+      sourceContext)
+    return contextPosition >= 0
+      ? { context_uri: sourceContext, offset: { position: contextPosition } }
+      : { context_uri: sourceContext, offset: { uri: itemUri } }
+  }
 
   // A lone URI creates a one-track Spotify playback context. That makes Next
   // reach the end immediately, so carry the visible list into playback. Start

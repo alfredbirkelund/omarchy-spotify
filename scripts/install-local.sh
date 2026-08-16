@@ -10,7 +10,8 @@ usage() {
 Usage: scripts/install-local.sh [--section left|center|right] [--install-spotifyd]
 
 Validate this checkout, link it into Omarchy's user-plugin directory, install
-the static spotifyd user unit, and enable the widget through Omarchy's command.
+the plugin playback backend, and enable the widget through Omarchy's command.
+--install-spotifyd also keeps the distro daemon as a fallback.
 EOF
 }
 

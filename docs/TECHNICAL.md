@@ -13,32 +13,56 @@ resident helper process.
 Local playback state and ordinary controls use MPRIS. Active playback on another
 Spotify Connect device comes from the Spotify Web API, refreshed while a UI is
 visible and at a slower rate while that device is playing. Spotify data and user
-actions also use the Web API. Local audio uses `spotifyd` 0.4.2 or newer,
-supervised by a static systemd user unit that is never enabled at login. The app
-starts it whenever the mini player or full panel is visible, or when playback
-needs this computer. Visible surfaces keep it available in Spotify Connect; once
-they are closed, the app stops it after the configured idle period.
+actions also use the Web API.
+
+Local audio runs in the plugin-owned `omarchy-spotify-backend` Rust process,
+supervised by a static systemd user unit that is never enabled at login. The
+backend embeds a commit-pinned librespot revision rather than duplicating its
+private-protocol implementation. It owns configuration, cache/authentication,
+MPRIS, lifecycle, and a stable private Unix-socket boundary. The app starts the
+unit whenever playback needs this computer and stops it after the configured
+idle period. The distro `spotifyd` unit is retained as a non-running fallback;
+the two units conflict so they cannot claim the same Connect identity together.
+
+The unit sets `PULSE_LATENCY_MSEC=30` only for local playback and caps
+librespot's private player runtime at two Tokio workers. The backend's own
+control runtime is single-threaded; keeping two player workers still allows
+network fetching, preloading, and blocking decoder work to overlap. Quickshell
+interpolates MPRIS position locally, so the backend publishes one authoritative
+position update per second instead of four.
+
+MPRIS uses a PID-qualified instance bus name, as required by the server library.
+Quickshell discovers the backend by its `librespot` identity and desktop entry.
+This lets diagnostic instances coexist without replacing the supervised
+player's bus ownership or making the app lose local playback state.
+
+The pinned librespot revision also applies an endpoint-continuous 20 ms fade
+out/in around manual track replacement. Natural end-of-track gapless
+transitions, seeks, and passthrough are unchanged. This fixes both the queued
+tail and the smaller waveform discontinuity without changing PipeWire routing
+or speaker tuning.
 
 ## Runtime requirements
 
 - Omarchy 4 with the Quickshell shell enabled
 - Spotify Premium
-- `spotifyd` 0.4.2 or newer
+- the bundled plugin backend, or `spotifyd` 0.4.2 or newer as fallback
 - Omarchy base tools: `secret-tool`, `openssl`, `socat`, `xdg-open`, `wl-copy`,
   `avahi-browse`, `systemctl`, and Python 3
 
 Omarchy's plugin installer deliberately clones and validates plugins without
 running install hooks or privileged code. `scripts/setup-playback.sh` therefore
-finishes setup only after the user clicks the first-run button. It uses Polkit to
-install the official Arch `spotifyd` package only when missing, then installs the
-private config and static user unit without privilege.
+finishes setup only after the user clicks the first-run button. It installs a
+bundled backend build when present, builds it with Cargo for a source checkout,
+or uses Polkit to install the official Arch `spotifyd` fallback when neither is
+available. Configuration and user units need no privilege.
 
 ## Authentication
 
 Web API access uses Spotify's Authorization Code with PKCE flow and the public
 application identity also used by `spotify-player` and ncspot. The fixed callback
-is `http://127.0.0.1:8989/login`. `spotifyd` performs its independent browser
-authorization on loopback port `8000`. Receivers that advertise the
+is `http://127.0.0.1:8989/login`. The playback backend performs its independent
+browser authorization on loopback port `8000`. Receivers that advertise the
 `accesstoken` or `authorization_code` token type use a separate, on-demand,
 streaming-only PKCE grant on port `8990`.
 
@@ -64,7 +88,7 @@ new selection when it does not allow Web API control. The app can perform a
 one-shot `_spotify-connect._tcp` lookup for nearby receivers omitted from
 Spotify's device response. It also resolves opaque Web API device names against
 the matching locally advertised alias. For ordinary receivers, the helper
-re-encrypts `spotifyd`'s owner-only reusable credential for the receiver's
+re-encrypts local playback's owner-only reusable credential for the receiver's
 ephemeral ZeroConf key. Access-token receivers such as JBL receive the
 short-lived receiver token minted from the streaming grant; authorization-code
 receivers such as Sonos receive a receiver-scoped code exchanged from that grant.
@@ -102,7 +126,7 @@ the original from the library only after all writes succeed.
 From a checkout on Omarchy 4:
 
 ```bash
-./scripts/install-local.sh --install-spotifyd
+./scripts/install-local.sh
 ```
 
 The command validates the manifest, installs the user-level playback files,
@@ -113,10 +137,11 @@ refuses to replace an existing plugin.
 To install only the playback integration:
 
 ```bash
-./scripts/setup.sh --install-spotifyd
+./scripts/setup.sh
 ```
 
-Neither path enables or starts `spotifyd` at login.
+Neither path enables or starts a playback unit at login. Pass
+`--install-spotifyd` only when a distro fallback is also wanted.
 
 ## Verification
 
@@ -146,10 +171,10 @@ run:
 omarchy plugin remove quickshell.spotify --yes
 ```
 
-This stops and removes the static user unit, deletes the app's private playback
-config, removes `spotifyd`'s cached credential, and clears matching Omarchy
-Spotify keyring entries. The `spotifyd` package remains installed because another
-client may use it.
+This stops and removes both static user units and the installed backend binary,
+deletes the app's private playback config, removes cached credentials and audio,
+and clears matching Omarchy Spotify keyring entries. The `spotifyd` package
+remains installed because another client may use it.
 
 Remove that package separately only when it was installed solely for this app:
 
@@ -161,6 +186,7 @@ sudo pacman -Rns spotifyd
 
 - [Omarchy](https://github.com/basecamp/omarchy)
 - [spotifyd](https://github.com/Spotifyd/spotifyd)
+- [librespot](https://github.com/librespot-org/librespot)
 - [spotify-player](https://github.com/aome510/spotify-player)
 - [ncspot](https://github.com/hrkfdn/ncspot)
 - [Spotify Web API](https://developer.spotify.com/documentation/web-api)

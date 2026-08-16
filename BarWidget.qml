@@ -195,7 +195,10 @@ BarWidget {
 
             readonly property bool needsScroll: labelMetrics.advanceWidth > scrollClip.width
 
-            NumberAnimation on x {
+            // Keep the marquee on the render thread so it remains smooth
+            // without dispatching JavaScript timer callbacks through the
+            // shared shell's main thread.
+            XAnimator on x {
               id: barScrollAnimation
               running: root.spotify && root.spotify.scrollBarText
                 && barLabel.needsScroll && !root.popupOpen && !root.vertical
@@ -214,7 +217,7 @@ BarWidget {
           id: scrollFadeMask
           anchors.fill: parent
           visible: false
-          layer.enabled: true
+          layer.enabled: labelLayer.layer.enabled
           gradient: Gradient {
             orientation: Gradient.Horizontal
             GradientStop {

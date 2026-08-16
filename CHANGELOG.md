@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Replace the spotifyd runtime with a plugin-owned Rust backend that embeds a
+  commit-pinned librespot engine, exports MPRIS, and exposes a versioned private
+  Unix-socket API. Keep the existing spotifyd unit as a reversible fallback.
+- Preserve the 1 GB audio cache and existing playback credential, and move
+  local playback authorization into the plugin backend.
+- Smooth manual song changes inside the pinned playback engine with the
+  endpoint-continuous 20 ms ramp proposed upstream, while retaining natural
+  gapless transitions.
+- Cut the playback backend to a current-thread control runtime plus two tested
+  player workers, publish position at the UI's one-second cadence, and suppress
+  duplicate state, unused queue, and heuristic seek events. Bound local command
+  buffering so a misbehaving client cannot grow backend memory without limit,
+  and give each MPRIS process a collision-safe instance name.
+- Link only the required librespot crates and tighten the release profile. The
+  resulting backend is 9.12 MiB on the reference host, with a live playback
+  median of 16.77 MiB PSS / 26.09 MiB RSS.
+
 ## 1.0.2 — 2026-08-15
 
 ### Features
