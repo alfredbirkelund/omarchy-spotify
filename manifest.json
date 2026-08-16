@@ -32,6 +32,7 @@
       "deviceName": "Omarchy Spotify",
       "idleShutdownMinutes": 15,
       "showMiniPlayer": "On",
+      "shortcutPlayer": "Omarchy default",
       "showTrackTitle": "On",
       "showArtistName": "Off",
       "scrollBarText": "Off",
@@ -66,6 +67,18 @@
         ],
         "defaultValue": "On",
         "description": "When off, clicking the Spotify bar icon opens the full player directly."
+      },
+      {
+        "key": "shortcutPlayer",
+        "type": "enum",
+        "label": "Keyboard shortcut opens",
+        "options": [
+          "Omarchy default",
+          "Full player",
+          "Mini player"
+        ],
+        "defaultValue": "Omarchy default",
+        "description": "Choose whether Super+Shift+M launches Omarchy's default music app, the full player, or the mini-player."
       },
       {
         "key": "showTrackTitle",

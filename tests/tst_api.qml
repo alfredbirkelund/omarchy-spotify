@@ -773,6 +773,87 @@ TestCase {
       { id: "sonos-id", name: "Work", type: "Computer" }))
   }
 
+  function test_remoteSeekHoldsRequestedPositionUntilSpotifyCatchesUp() {
+    var device = { id: "speaker", name: "Speaker", type: "Speaker" }
+    var playback = {
+      device: device,
+      item: { uri: "spotify:track:one" },
+      progressSeconds: 20,
+      receivedAt: 1000,
+      playing: true
+    }
+    var pending = {
+      device: device,
+      uri: "spotify:track:one",
+      positionSeconds: 90,
+      requestedAt: 1500,
+      playing: true,
+      expiresAt: 9500
+    }
+
+    verify(Api.pendingRemoteSeekShouldHold(playback, pending, 2000))
+    compare(Api.displayedRemotePosition(playback, pending, 2000), 90.5)
+
+    playback.progressSeconds = 90.4
+    playback.receivedAt = 1900
+    verify(!Api.pendingRemoteSeekShouldHold(playback, pending, 2000))
+    compare(Api.displayedRemotePosition(playback, pending, 2000), 90.5)
+  }
+
+  function test_remoteSeekStopsHoldingForExpiryOrTrackChange() {
+    var device = { id: "speaker", name: "Speaker", type: "Speaker" }
+    var playback = {
+      device: device,
+      item: { uri: "spotify:track:two" },
+      progressSeconds: 20,
+      receivedAt: 1000,
+      playing: false
+    }
+    var pending = {
+      device: device,
+      uri: "spotify:track:one",
+      positionSeconds: 90,
+      requestedAt: 1500,
+      playing: false,
+      expiresAt: 9500
+    }
+
+    verify(!Api.pendingRemoteSeekShouldHold(playback, pending, 2000))
+    playback.item.uri = "spotify:track:one"
+    verify(!Api.pendingRemoteSeekShouldHold(playback, pending, 9500))
+  }
+
+  function test_remoteVolumeHoldsUntilMatchingDeviceAcknowledgesIt() {
+    var device = {
+      id: "speaker", name: "Speaker", type: "Speaker", volumePercent: 25
+    }
+    var pending = {
+      device: device,
+      volumePercent: 60,
+      expiresAt: 9000
+    }
+
+    verify(Api.pendingRemoteVolumeShouldHold(device, pending, 2000))
+    device.volumePercent = 60
+    verify(!Api.pendingRemoteVolumeShouldHold(device, pending, 2000))
+    device.volumePercent = 25
+    verify(!Api.pendingRemoteVolumeShouldHold(device, pending, 9000))
+    verify(!Api.pendingRemoteVolumeShouldHold({
+      id: "other", name: "Other", type: "Speaker", volumePercent: 25
+    }, pending, 2000))
+  }
+
+  function test_playbackSliderFeedbackWaitsForAuthoritativeValue() {
+    verify(!Api.playbackSliderFeedbackComplete(
+      0.2, 0.8, false, 100, 0.01, 300, 8000))
+    verify(!Api.playbackSliderFeedbackComplete(
+      0.8, 0.8, true, 500, 0.01, 300, 8000))
+    verify(Api.playbackSliderFeedbackComplete(
+      0.8, 0.8, false, 500, 0.01, 300, 8000))
+    verify(Api.playbackSliderFeedbackComplete(
+      0.2, 0.8, true, 8000, 0.01, 300, 8000))
+  }
+
   function test_playbackDeviceDisplayName_prefersMatchedLocalAlias() {
     var deviceId = "0123456789abcdef0123456789abcdef01234567"
     var current = { id: deviceId, name: deviceId, type: "Speaker" }

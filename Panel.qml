@@ -44,6 +44,7 @@ Item {
   property string draftDeviceName: "Omarchy Spotify"
   property string draftIdleMinutes: "15"
   property bool draftShowMiniPlayer: true
+  property string draftShortcutPlayer: "Omarchy default"
   property bool draftShowTitle: true
   property bool draftShowArtist: false
   property bool draftScrollBarText: false
@@ -98,6 +99,7 @@ Item {
     draftDeviceName = service.deviceName
     draftIdleMinutes = String(service.idleShutdownMinutes)
     draftShowMiniPlayer = service.showMiniPlayer
+    draftShortcutPlayer = service.shortcutPlayer
     draftShowTitle = service.showTrackTitle
     draftShowArtist = service.showArtistName
     draftScrollBarText = service.scrollBarText
@@ -112,6 +114,7 @@ Item {
       idleShutdownMinutes: Math.max(0, Math.min(1440,
         Math.floor(Number(draftIdleMinutes) || 0))),
       showMiniPlayer: draftShowMiniPlayer ? "On" : "Off",
+      shortcutPlayer: draftShortcutPlayer,
       showTrackTitle: draftShowTitle ? "On" : "Off",
       showArtistName: draftShowArtist ? "On" : "Off",
       scrollBarText: draftScrollBarText ? "On" : "Off",
@@ -126,6 +129,13 @@ Item {
   function cycleAudioQuality() {
     draftAudioQuality = draftAudioQuality === "96 kbps" ? "160 kbps"
       : (draftAudioQuality === "160 kbps" ? "320 kbps" : "96 kbps")
+  }
+
+  function cycleShortcutPlayer() {
+    draftShortcutPlayer = draftShortcutPlayer === "Omarchy default"
+      ? "Full player"
+      : (draftShortcutPlayer === "Full player"
+        ? "Mini player" : "Omarchy default")
   }
 
   function audioQualityLabel() {
@@ -644,6 +654,9 @@ Item {
   function open(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(String(payloadJson || "{}")) || ({}) } catch (e) {}
+    if (shell && shell.bar
+        && typeof shell.bar.hideBarWidget === "function")
+      shell.bar.hideBarWidget(pluginId)
     var requestedTab = String(payload.tab || "")
     var requestedDetail = requestedTab === "detail" && payload.detailItem
       ? payload.detailItem : null
@@ -2489,7 +2502,7 @@ Item {
                   font.pixelSize: Style.font.caption
                 }
 
-                PanelSlider {
+                PlaybackSlider {
                   id: positionSlider
                   width: Math.max(30, parent.width - positionFooterTime.implicitWidth
                     - durationFooterTime.implicitWidth - Style.space(12))
@@ -2498,8 +2511,12 @@ Item {
                   minimum: 0
                   maximum: Math.max(1, root.service ? root.service.lengthSeconds : 1)
                   step: 5
-                  value: root.service ? root.service.positionSeconds : 0
-                  onReleased: function(value) {
+                  sourceValue: root.service ? root.service.positionSeconds : 0
+                  sourcePending: root.service && root.service.pendingRemoteSeek !== null
+                  acknowledgeTolerance: 2
+                  contextKey: root.service
+                    ? root.service.currentUri + "|" + root.service.playbackDeviceName : ""
+                  onCommitted: function(value) {
                     if (root.service) root.service.seekSeconds(value)
                   }
 
@@ -2546,7 +2563,7 @@ Item {
                   onClicked: sleepPopup.open()
                 }
 
-                PanelSlider {
+                PlaybackSlider {
                   id: volumeSlider
                   width: Math.max(35, parent.width - Style.space(74))
                   anchors.verticalCenter: parent.verticalCenter
@@ -2555,8 +2572,10 @@ Item {
                   minimum: 0
                   maximum: 1
                   step: 0.05
-                  value: root.service ? root.service.volume : 0
-                  onReleased: function(value) { root.setPanelVolume(value) }
+                  sourceValue: root.service ? root.service.volume : 0
+                  sourcePending: root.service && root.service.pendingRemoteVolume !== null
+                  contextKey: root.service ? root.service.playbackDeviceName : ""
+                  onCommitted: function(value) { root.setPanelVolume(value) }
                   onRightClicked: root.toggleMute()
 
                   HoverHandler { id: volumeSliderHover }
@@ -4373,6 +4392,38 @@ Item {
                   ? "Clicking the bar icon opens the mini-player first"
                   : "Clicking the bar icon opens the full player directly"
                 onClicked: root.draftShowMiniPlayer = !root.draftShowMiniPlayer
+              }
+            }
+
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Text {
+                text: "KEYBOARD"
+                color: Qt.darker(root.foreground, 1.4)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              Button {
+                text: "Super + Shift + M · " + root.draftShortcutPlayer
+                iconText: "󰌌"
+                foreground: root.foreground
+                selected: root.draftShortcutPlayer !== "Omarchy default"
+                focusable: true
+                tooltipText: "Cycle between Omarchy's music app, full player, and mini-player"
+                onClicked: root.cycleShortcutPlayer()
+              }
+
+              Text {
+                width: parent.width
+                text: "Cycles Omarchy default → Full player → Mini player. The shortcut uses this preference after it is bound once."
+                color: Qt.darker(root.foreground, 1.45)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
               }
             }
 

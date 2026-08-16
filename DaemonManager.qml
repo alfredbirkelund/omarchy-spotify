@@ -62,8 +62,19 @@ Item {
 
   function checkRequirements() {
     if (!pluginDir) return
-    if (!binaryCheck.running) binaryCheck.running = true
-    if (!unitCheck.running) unitCheck.running = true
+    // pluginDir is supplied by the host after this item's child Processes are
+    // constructed. Build path-dependent commands at launch so an initial
+    // empty binding cannot run /scripts/playback-runtime.sh and report 127.
+    if (!binaryCheck.running) {
+      binaryCheck.command = ["/usr/bin/bash",
+        pluginDir + "/scripts/playback-runtime.sh", "check"]
+      binaryCheck.running = true
+    }
+    if (!unitCheck.running) {
+      unitCheck.command = ["/usr/bin/bash",
+        pluginDir + "/scripts/playback-runtime.sh", "check"]
+      unitCheck.running = true
+    }
     checkCredentials()
     requestConfiguration()
   }
@@ -87,6 +98,8 @@ Item {
 
   function refreshStatus() {
     if (!pluginDir || statusCheck.running) return
+    statusCheck.command = ["/usr/bin/bash",
+      pluginDir + "/scripts/playback-runtime.sh", "status"]
     statusCheck.running = true
   }
 
@@ -226,7 +239,6 @@ Item {
 
   Process {
     id: binaryCheck
-    command: ["/usr/bin/bash", root.pluginDir + "/scripts/playback-runtime.sh", "check"]
     onExited: function(exitCode) {
       root.binaryAvailable = exitCode === 0
       root.binaryChecked = true
@@ -235,7 +247,6 @@ Item {
 
   Process {
     id: unitCheck
-    command: ["/usr/bin/bash", root.pluginDir + "/scripts/playback-runtime.sh", "check"]
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
@@ -274,7 +285,6 @@ Item {
 
   Process {
     id: statusCheck
-    command: ["/usr/bin/bash", root.pluginDir + "/scripts/playback-runtime.sh", "status"]
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) { root.serviceActive = exitCode === 0 }

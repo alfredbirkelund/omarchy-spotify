@@ -18,6 +18,18 @@
 - Link only the required librespot crates and tighten the release profile. The
   resulting backend is 9.12 MiB on the reference host, with a live playback
   median of 16.77 MiB PSS / 26.09 MiB RSS.
+- Keep remote seek and volume sliders at their requested values while Spotify
+  acknowledges the command, and prevent stale device-list volume data from
+  snapping an active speaker's slider back.
+- Launch playback-runtime checks only after the plugin directory is available,
+  preventing an already-connected account from reopening on the setup screen
+  after a full Quickshell restart.
+- Add a configurable Omarchy Spotify keyboard action that cycles between the
+  original Omarchy music launcher, full player, and mini-player, including
+  explicit IPC actions for each Spotify surface.
+- Give the mini-player keyboard focus, visible control selection, and complete
+  keyboard operation for playback, seeking, volume, likes, lyrics, and opening
+  the full player.
 
 ## 1.0.2 — 2026-08-15
 

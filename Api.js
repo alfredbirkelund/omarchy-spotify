@@ -282,6 +282,74 @@ function playbackDevicesMatch(left, right) {
   return !firstType || !secondType || firstType === secondType
 }
 
+function pendingRemoteDeviceMatches(pending, device, now) {
+  if (!pending || !pending.device || !device) return false
+  var expiresAt = Number(pending.expiresAt)
+  var current = Number(now)
+  if (!isFinite(expiresAt) || !isFinite(current) || current >= expiresAt)
+    return false
+  return playbackDevicesMatch(pending.device, device)
+}
+
+function playbackPositionAt(positionSeconds, receivedAt, playing, now) {
+  var value = Math.max(0, Number(positionSeconds) || 0)
+  var anchor = Number(receivedAt)
+  var current = Number(now)
+  if (playing === true && isFinite(anchor) && isFinite(current))
+    value += Math.max(0, current - anchor) / 1000
+  return value
+}
+
+// Spotify can briefly return the pre-command playback state after accepting a
+// seek. Keep the requested anchor until the active device reports a position
+// close enough to acknowledge it, or until the bounded grace period expires.
+function pendingRemoteSeekShouldHold(playback, pending, now) {
+  var state = playback || null
+  if (!state || !pendingRemoteDeviceMatches(pending, state.device, now))
+    return false
+  var currentUri = String((state.item && state.item.uri) || "")
+  var requestedUri = String(pending.uri || "")
+  if (!currentUri || (requestedUri && currentUri !== requestedUri)) return false
+
+  var reported = playbackPositionAt(state.progressSeconds, state.receivedAt,
+    state.playing, now)
+  var requested = playbackPositionAt(pending.positionSeconds,
+    pending.requestedAt, pending.playing, now)
+  return Math.abs(reported - requested) > 2
+}
+
+function displayedRemotePosition(playback, pending, now) {
+  var state = playback || {}
+  if (pendingRemoteSeekShouldHold(state, pending, now))
+    return playbackPositionAt(pending.positionSeconds, pending.requestedAt,
+      pending.playing, now)
+  return playbackPositionAt(state.progressSeconds, state.receivedAt,
+    state.playing, now)
+}
+
+// Volume has no timestamp in Spotify's response. An exact percentage is
+// therefore the acknowledgement; null or a different value remains stale for
+// the same bounded grace period.
+function pendingRemoteVolumeShouldHold(device, pending, now) {
+  if (!pendingRemoteDeviceMatches(pending, device, now)) return false
+  var requested = normalizeVolumePercent(pending.volumePercent)
+  var reported = normalizeVolumePercent((device || {}).volumePercent)
+  return requested !== null
+    && (reported === null || Math.abs(reported - requested) > 0.5)
+}
+
+function playbackSliderFeedbackComplete(sourceValue, pendingValue, sourcePending,
+    elapsedMs, tolerance, minimumMs, timeoutMs) {
+  var elapsed = Math.max(0, Number(elapsedMs) || 0)
+  var timeout = Math.max(1, Number(timeoutMs) || 1)
+  if (elapsed >= timeout) return true
+  var minimum = Math.max(0, Number(minimumMs) || 0)
+  var difference = Math.abs((Number(sourceValue) || 0)
+    - (Number(pendingValue) || 0))
+  return elapsed >= minimum && sourcePending !== true
+    && difference <= Math.max(0, Number(tolerance) || 0)
+}
+
 function spotifyConnectTokenType(value) {
   var tokenType = String(value || "default").trim().toLowerCase()
   return ["default", "accesstoken", "authorization_code"].indexOf(tokenType) >= 0

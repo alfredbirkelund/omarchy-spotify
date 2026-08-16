@@ -9,6 +9,8 @@ Item {
   property color foreground: Color.foreground
   property color urgent: Color.urgent
   property string surfaceKey: ""
+  property bool cancelHasCursor: false
+  property bool confirmHasCursor: false
   readonly property string availability: service
     ? String(service.lyricsPluginAvailability || "missing") : "missing"
   readonly property bool busy: service && service.lyricsPluginBusy
@@ -84,6 +86,7 @@ Item {
         text: "Cancel"
         foreground: root.foreground
         focusable: true
+        hasCursor: root.cancelHasCursor
         enabled: !root.busy
         onClicked: root.canceled()
       }
@@ -100,6 +103,7 @@ Item {
         foreground: root.foreground
         selected: true
         focusable: true
+        hasCursor: root.confirmHasCursor
         enabled: root.service && !root.busy
         onClicked: root.service.confirmLyricsPlugin(root.surfaceKey)
       }

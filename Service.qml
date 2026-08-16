@@ -28,6 +28,7 @@ Item {
     deviceName: "Omarchy Spotify",
     idleShutdownMinutes: 15,
     showMiniPlayer: "On",
+    shortcutPlayer: "Omarchy default",
     showTrackTitle: "On",
     showArtistName: "Off",
     scrollBarText: "Off",
@@ -41,6 +42,11 @@ Item {
   readonly property int idleShutdownMinutes: Math.max(0, Math.min(1440,
     Math.floor(Number(settings.idleShutdownMinutes) || 0)))
   readonly property bool showMiniPlayer: String(settings.showMiniPlayer || "On") !== "Off"
+  readonly property string shortcutPlayer: {
+    var value = String(settings.shortcutPlayer || "Omarchy default")
+    return value === "Full player" ? "Full player"
+      : (value === "Mini player" ? "Mini player" : "Omarchy default")
+  }
   readonly property bool showTrackTitle: String(settings.showTrackTitle || "On") !== "Off"
   readonly property bool showArtistName: String(settings.showArtistName || "Off") === "On"
   readonly property bool scrollBarText: String(settings.scrollBarText || "Off") === "On"
@@ -86,6 +92,10 @@ Item {
   property var remotePlaybackWaiters: []
   property var rememberedRemoteVolumeDevice: null
   property real rememberedRemoteVolumePercent: -1
+  property var pendingRemoteSeek: null
+  property var pendingRemoteVolume: null
+  property int remoteControlSerial: 0
+  readonly property int remoteControlGraceMs: 8000
   property string remoteVolumeProbeKey: ""
   property int playbackPositionTick: 0
   property string remoteControlDiscoveryKey: ""
@@ -157,9 +167,8 @@ Item {
     playbackPositionTick
     if (!useRemotePlayback) return hasLocalPlayer && activePlayer.positionSupported
       ? Math.max(0, Number(activePlayer.position) || 0) : 0
-    var value = Math.max(0, Number(remotePlayback.progressSeconds) || 0)
-    if (remotePlayback.playing)
-      value += Math.max(0, Date.now() - Number(remotePlayback.receivedAt || Date.now())) / 1000
+    var value = Api.displayedRemotePosition(remotePlayback,
+      pendingRemoteSeek, Date.now())
     var maximum = remoteTrack ? Math.max(0, Number(remoteTrack.durationMs) || 0) / 1000 : 0
     return maximum > 0 ? Math.min(maximum, value) : value
   }
@@ -362,6 +371,7 @@ Item {
       deviceName: "Omarchy Spotify",
       idleShutdownMinutes: 15,
       showMiniPlayer: "On",
+      shortcutPlayer: "Omarchy default",
       showTrackTitle: "On",
       showArtistName: "Off",
       scrollBarText: "Off",
@@ -384,6 +394,7 @@ Item {
     if (source.idleShutdownMinutes !== undefined)
       next.idleShutdownMinutes = source.idleShutdownMinutes
     if (source.showMiniPlayer !== undefined) next.showMiniPlayer = source.showMiniPlayer
+    if (source.shortcutPlayer !== undefined) next.shortcutPlayer = source.shortcutPlayer
     if (source.showTrackTitle !== undefined) next.showTrackTitle = source.showTrackTitle
     if (source.showArtistName !== undefined) next.showArtistName = source.showArtistName
     if (source.scrollBarText !== undefined) next.scrollBarText = source.scrollBarText
@@ -402,6 +413,9 @@ Item {
     next.idleShutdownMinutes = Math.max(0, Math.min(1440,
       Math.floor(Number(next.idleShutdownMinutes) || 0)))
     next.showMiniPlayer = String(next.showMiniPlayer || "On") === "Off" ? "Off" : "On"
+    var shortcutTarget = String(next.shortcutPlayer || "Omarchy default")
+    next.shortcutPlayer = shortcutTarget === "Full player" ? "Full player"
+      : (shortcutTarget === "Mini player" ? "Mini player" : "Omarchy default")
     next.showTrackTitle = String(next.showTrackTitle || "On") === "Off" ? "Off" : "On"
     next.showArtistName = String(next.showArtistName || "Off") === "On" ? "On" : "Off"
     next.scrollBarText = String(next.scrollBarText || "Off") === "On" ? "On" : "Off"
@@ -722,6 +736,10 @@ Item {
   }
 
   function displayedRemoteVolumePercent(device) {
+    if (Api.pendingRemoteVolumeShouldHold(device, pendingRemoteVolume,
+        Date.now()))
+      return Math.max(0, Math.min(100,
+        Number(pendingRemoteVolume.volumePercent) || 0))
     if (rememberedRemoteVolumePercent >= 0 && rememberedRemoteVolumeDevice
         && Api.playbackDevicesMatch(rememberedRemoteVolumeDevice, device))
       return rememberedRemoteVolumePercent
@@ -736,6 +754,68 @@ Item {
     return rememberRemoteVolume(device, receiver.volumePercent)
   }
 
+  function remoteControlDeviceSnapshot(device) {
+    var item = device || {}
+    return {
+      id: String(item.id || ""),
+      name: String(item.name || ""),
+      sourceName: String(item.sourceName || item.name || ""),
+      type: String(item.type || "")
+    }
+  }
+
+  function beginRemoteSeek(value) {
+    var serial = ++remoteControlSerial
+    pendingRemoteSeek = {
+      serial: serial,
+      device: remoteControlDeviceSnapshot(remoteDevice),
+      uri: String((remoteTrack && remoteTrack.uri) || ""),
+      positionSeconds: Math.max(0, Number(value) || 0),
+      requestedAt: Date.now(),
+      playing: remotePlayback && remotePlayback.playing === true,
+      expiresAt: Date.now() + remoteControlGraceMs
+    }
+    playbackPositionTick++
+    return serial
+  }
+
+  function beginRemoteVolume(value) {
+    var serial = ++remoteControlSerial
+    var volumePercent = Math.max(0, Math.min(100, Number(value) || 0))
+    pendingRemoteVolume = {
+      serial: serial,
+      device: remoteControlDeviceSnapshot(remoteDevice),
+      volumePercent: volumePercent,
+      expiresAt: Date.now() + remoteControlGraceMs
+    }
+    rememberRemoteVolume(remoteDevice, volumePercent)
+    return serial
+  }
+
+  function clearPendingRemoteSeek(serial) {
+    if (!pendingRemoteSeek
+        || (serial && Number(pendingRemoteSeek.serial) !== Number(serial))) return
+    pendingRemoteSeek = null
+    playbackPositionTick++
+  }
+
+  function clearPendingRemoteVolume(serial) {
+    if (!pendingRemoteVolume
+        || (serial && Number(pendingRemoteVolume.serial) !== Number(serial))) return
+    pendingRemoteVolume = null
+  }
+
+  function reconcilePendingRemoteControls(state) {
+    var now = Date.now()
+    if (pendingRemoteSeek
+        && !Api.pendingRemoteSeekShouldHold(state, pendingRemoteSeek, now))
+      clearPendingRemoteSeek(Number(pendingRemoteSeek.serial) || 0)
+    if (pendingRemoteVolume
+        && !Api.pendingRemoteVolumeShouldHold(state ? state.device : null,
+          pendingRemoteVolume, now))
+      clearPendingRemoteVolume(Number(pendingRemoteVolume.serial) || 0)
+  }
+
   function applyPlaybackState(payload) {
     var state = Api.normalizePlaybackState(payload, 192)
     if (state && state.device) {
@@ -747,6 +827,7 @@ Item {
         localDeviceId = device.id
         localRuntimeDeviceName = device.name
       }
+      reconcilePendingRemoteControls(state)
       if (!rememberDiscoveredReceiverVolume(device))
         rememberRemoteVolume(device, device.volumePercent)
     }
@@ -2114,10 +2195,12 @@ Item {
   function mergeConnectDevices() {
     var local = spotifyConnectManager.devices || []
     var current = remoteDevice && remoteDevice.active === true ? remoteDevice : null
+    var currentVolume = Api.normalizeVolumePercent(
+      current ? current.volumePercent : null)
     var localVolumePreferred = current
       ? rememberDiscoveredReceiverVolume(current) : false
-    if (current && !localVolumePreferred)
-      rememberRemoteVolume(current, current.volumePercent)
+    if (current && !localVolumePreferred && currentVolume !== null)
+      rememberRemoteVolume(current, currentVolume)
     var currentMatched = false
     var localById = ({})
     for (var i = 0; i < local.length; i++) localById[String(local[i].id || "")] = local[i]
@@ -2145,7 +2228,10 @@ Item {
         apiDevice.active = apiCurrentMatch
         if (apiCurrentMatch) {
           currentMatched = true
-          if (!localVolumePreferred)
+          // /me/player is the freshest source for the active receiver. The
+          // separately cached device list is only a fallback when that value
+          // is unknown; otherwise it can undo an accepted volume command.
+          if (!localVolumePreferred && currentVolume === null)
             rememberRemoteVolume(current, apiDevice.volumePercent)
           apiDevice.restricted = current.restricted === true
           apiDevice.volumePercent = displayedRemoteVolumePercent(current)
@@ -2834,6 +2920,7 @@ Item {
     var value = Math.max(0, Math.min(lengthSeconds || Number.MAX_VALUE,
       Number(seconds) || 0))
     noteActivity()
+    var remoteSerial = useRemotePlayback ? beginRemoteSeek(value) : 0
     if (sendSonosControl("seek", String(Math.round(value)))) return
     if (!useRemotePlayback && hasLocalPlayer
         && activePlayer.canSeek && activePlayer.positionSupported)
@@ -2841,7 +2928,10 @@ Item {
     else apiAction("PUT", "/me/player/seek", {
       position_ms: Math.round(value * 1000),
       device_id: controlDeviceId() || undefined
-    }, null, "", function(ok) { if (ok) root.loadPlaybackState() })
+    }, null, "", function(ok) {
+      if (!ok) root.clearPendingRemoteSeek(remoteSerial)
+      root.loadPlaybackState()
+    })
   }
 
   function setVolume(value) {
@@ -2851,9 +2941,10 @@ Item {
     var normalized = localVolume
       ? Api.sliderToSpotifydVolume(sliderValue) : sliderValue
     noteActivity()
+    var remoteSerial = 0
     if (!localVolume && useRemotePlayback && remoteDevice) {
       var remotePercent = Math.round(normalized * 100)
-      rememberRemoteVolume(remoteDevice, remotePercent)
+      remoteSerial = beginRemoteVolume(remotePercent)
       var receiver = findDiscoveredReceiver(remoteDevice)
       if (receiver) spotifyConnectManager.rememberVolume(receiver.id, remotePercent)
     }
@@ -2863,7 +2954,10 @@ Item {
     else apiAction("PUT", "/me/player/volume", {
       volume_percent: Math.round(normalized * 100),
       device_id: controlDeviceId() || undefined
-    }, null, "", function(ok) { if (ok) root.loadPlaybackState() })
+    }, null, "", function(ok) {
+      if (!ok) root.clearPendingRemoteVolume(remoteSerial)
+      root.loadPlaybackState()
+    })
   }
 
   function setShuffle(value) {
@@ -3123,6 +3217,9 @@ Item {
     remotePlaybackWaiters = []
     rememberedRemoteVolumeDevice = null
     rememberedRemoteVolumePercent = -1
+    pendingRemoteSeek = null
+    pendingRemoteVolume = null
+    remoteControlSerial = 0
     remoteVolumeProbeKey = ""
     remoteControlDiscoveryKey = ""
     playbackPositionTick++
@@ -3325,6 +3422,7 @@ Item {
         return
       }
       root.applySonosControlResult(action, value)
+      root.reconcilePendingRemoteControls(root.remotePlayback)
       sonosControlRefreshTimer.restart()
     }
     function onControlFailed(deviceId, reason) {
@@ -3338,6 +3436,9 @@ Item {
         }
         return
       }
+      root.clearPendingRemoteSeek(0)
+      root.clearPendingRemoteVolume(0)
+      root.loadPlaybackState()
       root.fail(reason)
     }
   }

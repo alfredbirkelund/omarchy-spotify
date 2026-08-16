@@ -45,6 +45,12 @@ too.
 | `M` | Mute or restore volume |
 | `Ctrl+/` | See every keyboard shortcut |
 
+The mini-player takes keyboard focus when it is opened from a shortcut. Use
+`Tab` or the arrow keys to select every control, `Enter` to activate buttons,
+left/right to adjust a selected slider, and `Esc` to close. The playback
+shortcuts above work there too; `Ctrl+S` toggles shuffle, `Ctrl+R` cycles
+repeat, `Ctrl+Shift+L` opens lyrics, and `O` expands the full player.
+
 ## See it in action
 
 ### Your playlists, instantly familiar
@@ -80,6 +86,21 @@ The essentials are always one click away, without reopening the full app.
 omarchy plugin add https://github.com/stappmus/Omarchy-Spotify.git --enable
 ```
 
+To replace Omarchy's existing **Super+Shift+M · Music** binding, add this to
+`~/.config/hypr/bindings.lua`:
+
+```lua
+  hl.unbind("SUPER + SHIFT + M") -- previously: Music
+  o.bind("SUPER + SHIFT + M", "Omarchy Spotify",
+    "omarchy shell -q quickshell.spotify.player togglePlayer")
+```
+
+Run `hyprctl reload` and check `hyprctl configerrors` after saving. In Omarchy
+Spotify's Settings, choose whether that shortcut launches Omarchy's default
+music app, toggles the full player, or toggles the mini-player. Separate
+bindings can call `toggleMiniPlayer` or
+`toggleFullPlayer` on the same `quickshell.spotify.player` target.
+
 Click the Spotify icon on the left side of the bar, choose **Set up and
 continue**, and finish the Spotify sign-in in your browser. You can move the
 widget later with Omarchy's bar controls.
@@ -94,9 +115,9 @@ widget later with Omarchy's bar controls.
   into your own editable copies when Spotify makes their contents available.
 - Build a queue, start track radio, use shuffle and repeat, or set a sleep timer.
 - Listen on this computer or switch to another Spotify Connect speaker or player.
-- Choose whether the bar icon opens the mini-player or full player, whether it
-  shows the title, artist, or both, and softly scroll overflowing text at an
-  adjustable speed.
+- Choose the mini-player or full player independently for the bar icon and
+  keyboard shortcut, show the title, artist, or both, and softly scroll
+  overflowing text at an adjustable speed.
 - Choose up to 320 kbps for local playback.
 
 Your Spotify password is entered only on Spotify's own page. Omarchy Spotify
