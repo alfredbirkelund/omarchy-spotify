@@ -695,7 +695,10 @@ Item {
     visibleSurfaces = next
     if (value) {
       noteActivity()
-      if (authManager.loggedIn || authManager.tokenIsFresh()) loadPlaybackState()
+      // SpotifyApi restores the keyring-backed session when needed. Do this for
+      // every opened surface so the mini-player can discover remote Spotify
+      // Connect playback without requiring the full panel to be opened first.
+      loadPlaybackState()
     }
   }
 
