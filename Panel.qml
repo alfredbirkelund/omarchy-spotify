@@ -2454,23 +2454,21 @@ Item {
                     })
                 }
 
-                Text {
+                ArtistLinks {
                   width: parent.width
                   visible: root.service && root.service.album !== ""
                     && root.service.currentTrackId !== ""
-                  text: root.service ? root.service.album : ""
+                  artists: []
+                  fallbackText: root.service ? root.service.album : ""
+                  fallbackClickable: visible
                   color: root.accent
+                  accent: root.accent
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
-
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.service.currentContext("album", function(item) {
+                  onFallbackRequested: if (root.service)
+                    root.service.currentContext("album", function(item) {
                       root.openItem(item)
                     })
-                  }
                 }
               }
             }
