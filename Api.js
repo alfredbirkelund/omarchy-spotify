@@ -92,6 +92,21 @@ function formBody(values) {
   return queryString(values)
 }
 
+function shallowCopy(value) {
+  var copy = ({})
+  if (!value || typeof value !== "object" || Array.isArray(value)) return copy
+  for (var key in value) copy[key] = value[key]
+  return copy
+}
+
+function assign(target, source) {
+  var next = target && typeof target === "object" && !Array.isArray(target)
+    ? target : ({})
+  if (!source || typeof source !== "object" || Array.isArray(source)) return next
+  for (var key in source) next[key] = source[key]
+  return next
+}
+
 function parseJson(text, fallback) {
   try {
     var parsed = JSON.parse(String(text || ""))
@@ -196,13 +211,120 @@ function responseError(status, payload, fallback) {
   return redact(message)
 }
 
-// A visible Spotify surface owns the local receiver's lifetime. The action is
-// kept pure so startup races (for example, opening the panel while systemd is
-// still reporting status) follow one deterministic policy.
-function visibleLocalReceiverAction(uiVisible, fullyConnected, running, busy) {
+function rateLimitSuffix(retryAfter) {
+  var value = String(retryAfter || "").trim()
+  return value ? ". Try again in " + value + " seconds" : ""
+}
+
+// A visible surface may keep an already-running local receiver registered, but
+// it only starts one when the user asked to keep this computer available
+// (idle minutes is 0). Ordinary opens wait for an explicit local play.
+function visibleLocalReceiverAction(uiVisible, fullyConnected, running, busy,
+    keepAvailable) {
   if (uiVisible !== true || fullyConnected !== true) return "idle"
   if (busy === true) return "wait"
-  return running === true ? "refresh" : "start"
+  if (running === true) return "refresh"
+  return keepAvailable === true ? "start" : "idle"
+}
+
+function remotePlaybackPollShouldRun(loggedIn, loading, uiVisible, useRemote,
+    playing) {
+  if (loggedIn !== true || loading === true) return false
+  if (uiVisible === true) return true
+  return useRemote === true && playing === true
+}
+
+function remotePlaybackPollInterval(uiVisible, useRemote, hasLocal) {
+  return uiVisible === true && (useRemote === true || hasLocal !== true)
+    ? 5000 : 15000
+}
+
+function normalizedShortcutPlayer(value) {
+  var text = String(value || "")
+  if (text === "Full player") return "Full player"
+  if (text === "Mini player") return "Mini player"
+  return "Omarchy Music app"
+}
+
+function repeatModeLabel(mode) {
+  var value = String(mode || "off")
+  if (value === "track") return "This song"
+  if (value === "context") return "All"
+  return "Off"
+}
+
+var TYPE_LABELS = {
+  track: { singular: "Song", plural: "Songs" },
+  artist: { singular: "Artist", plural: "Artists" },
+  album: { singular: "Album", plural: "Albums" },
+  playlist: { singular: "Playlist", plural: "Playlists" },
+  show: { singular: "Podcast", plural: "Podcasts" },
+  episode: { singular: "Episode", plural: "Episodes" },
+  audiobook: { singular: "Audiobook", plural: "Books" }
+}
+
+function typeLabel(type, plural) {
+  var entry = TYPE_LABELS[String(type || "")]
+  if (!entry) return plural ? "results" : "Spotify item"
+  return plural ? entry.plural : entry.singular
+}
+
+function searchTypeLabel(type) {
+  return typeLabel(type, true)
+}
+
+function spotifyTypeLabel(type) {
+  return typeLabel(type, false)
+}
+
+var MUTE_THRESHOLD = 0.001
+var UNMUTE_FLOOR = 0.05
+
+function nextVolume(current, delta) {
+  return clampUnit((Number(current) || 0) + (Number(delta) || 0))
+}
+
+function shouldRememberVolume(value) {
+  return clampUnit(value) > MUTE_THRESHOLD
+}
+
+function unmuteVolume(previous) {
+  return Math.max(UNMUTE_FLOOR, Number(previous) || 0)
+}
+
+function seekPosition(position, delta, length) {
+  var next = Math.max(0, (Number(position) || 0) + (Number(delta) || 0))
+  var maximum = Math.max(0, Number(length) || 0)
+  return maximum > 0 ? Math.min(maximum, next) : next
+}
+
+function backendLoadFields(body) {
+  var source = body || null
+  if (!source || typeof source !== "object") return null
+  var fields = { play: true }
+  var contextUri = String(source.context_uri || "")
+  if (contextUri) {
+    fields.context_uri = contextUri
+    var offset = source.offset || null
+    if (offset && offset.uri) fields.offset_uri = String(offset.uri)
+    if (offset && offset.position !== undefined && offset.position !== null) {
+      var index = Math.floor(Number(offset.position))
+      if (isFinite(index) && index >= 0) fields.offset_index = index
+    }
+  } else if (Array.isArray(source.uris) && source.uris.length) {
+    var uris = []
+    for (var i = 0; i < source.uris.length; i++) {
+      var uri = String(source.uris[i] || "")
+      if (uri) uris.push(uri)
+    }
+    if (!uris.length) return null
+    fields.uris = uris
+  } else {
+    return null
+  }
+  var positionMs = Math.floor(Number(source.position_ms) || 0)
+  if (positionMs > 0) fields.position_ms = positionMs
+  return fields
 }
 
 // Preserve Spotify's current playback target unless the user explicitly chose
@@ -356,6 +478,10 @@ function spotifyConnectTokenType(value) {
     ? tokenType : "default"
 }
 
+function isSpotifyConnectDeviceId(value) {
+  return /^[A-Za-z0-9_.:-]{8,160}$/.test(String(value || ""))
+}
+
 // Some hardware receivers expose their device id as their Web API name. Local
 // ZeroConf discovery has the user-facing alias and can safely relabel the same
 // receiver because playbackDevicesMatch requires equal ids when both exist.
@@ -408,6 +534,10 @@ function normalizePlaybackState(value, imageWidth) {
     shuffle: source.shuffle_state === true,
     contextUri: source.context && source.context.uri
       ? String(source.context.uri) : "",
+    contextHref: source.context && source.context.href
+      ? String(source.context.href) : "",
+    contextType: source.context && source.context.type
+      ? String(source.context.type) : "",
     disallows: source.actions && source.actions.disallows
       && typeof source.actions.disallows === "object"
       ? source.actions.disallows : ({})
@@ -552,7 +682,27 @@ function optionalPluginSetupCommand(state, pluginId, repositoryUrl) {
 function universalSearchVisible(tab, active) {
   var area = String(tab || "")
   return area === "search"
-    || (active === true && area !== "login" && area !== "devices")
+    || (active === true && area !== "login" && area !== "devices"
+      && area !== "setup")
+}
+
+function isUtilityTab(tab) {
+  var area = String(tab || "")
+  return area === "setup" || area === "devices" || area === "login"
+}
+
+function rememberContentTab(tab) {
+  var area = String(tab || "")
+  return !area || isUtilityTab(area) ? "" : area
+}
+
+// Settings and Devices sit on top of the last real page. Esc returns there
+// and skips any intervening Settings/Devices visit so two Esc presses cannot
+// close the window from those menus.
+function previousContentTab(currentTab, lastContentTab) {
+  if (currentTab !== "setup" && currentTab !== "devices") return ""
+  var previous = rememberContentTab(lastContentTab)
+  return previous || "home"
 }
 
 function searchScope(tab, detailItem, selectedPlaylist, homeType, libraryType) {
@@ -609,22 +759,20 @@ function searchScope(tab, detailItem, selectedPlaylist, homeType, libraryType) {
   }
 }
 
+function sanitizeSearchTerm(value) {
+  return String(value || "").replace(/["\\]/g, " ").replace(/\s+/g, " ").trim()
+}
+
 function catalogSearchText(artistName, term) {
-  function clean(value) {
-    return String(value || "").replace(/["\\]/g, " ").replace(/\s+/g, " ").trim()
-  }
-  var artist = clean(artistName)
-  var query = clean(term)
+  var artist = sanitizeSearchTerm(artistName)
+  var query = sanitizeSearchTerm(term)
   var filter = artist ? "artist:\"" + artist + "\"" : ""
   return query && filter ? query + " " + filter : (query || filter)
 }
 
 function artistPlaylistSearchText(artistName, term) {
-  function clean(value) {
-    return String(value || "").replace(/["\\]/g, " ").replace(/\s+/g, " ").trim()
-  }
-  var artist = clean(artistName)
-  var query = clean(term)
+  var artist = sanitizeSearchTerm(artistName)
+  var query = sanitizeSearchTerm(term)
   return query && artist ? query + " " + artist : (query || artist)
 }
 
@@ -1100,26 +1248,6 @@ function normalizePage(page, mapper) {
   }
 }
 
-function searchRows(payload, imageWidth) {
-  var data = payload || {}
-  var rows = []
-  var i
-  var trackItems = data.tracks && Array.isArray(data.tracks.items) ? data.tracks.items : []
-  for (i = 0; i < trackItems.length; i++) {
-    var track = normalizeTrack(trackItems[i], imageWidth)
-    if (track) rows.push(track)
-  }
-  var groups = [data.albums, data.artists, data.playlists]
-  for (var g = 0; g < groups.length; g++) {
-    var groupItems = groups[g] && Array.isArray(groups[g].items) ? groups[g].items : []
-    for (i = 0; i < groupItems.length; i++) {
-      var context = normalizeContext(groupItems[i], imageWidth)
-      if (context) rows.push(context)
-    }
-  }
-  return rows
-}
-
 function searchTypeKey(type) {
   var value = String(type || "track")
   if (value === "artist") return "artists"
@@ -1374,6 +1502,23 @@ function millisecondsToClock(milliseconds) {
   var minutes = Math.floor(seconds / 60)
   var remainder = seconds % 60
   return minutes + ":" + (remainder < 10 ? "0" : "") + remainder
+}
+
+function uniqueRadioTracks(seed, extras) {
+  var item = seed || null
+  if (!item) return []
+  var radio = [item]
+  var seen = ({})
+  seen[String(item.uri || "")] = true
+  var values = Array.isArray(extras) ? extras : []
+  for (var i = 0; i < values.length; i++) {
+    var track = values[i]
+    var uri = String((track && track.uri) || "")
+    if (!uri || seen[uri]) continue
+    seen[uri] = true
+    radio.push(track)
+  }
+  return radio
 }
 
 function mergeUnique(existing, incoming) {

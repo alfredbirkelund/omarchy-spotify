@@ -10,19 +10,23 @@ Quickshell process. It provides a shared service, a bar widget, and a lazy-loade
 panel. There is no embedded website, browser engine, second shell process, or
 resident helper process.
 
-Local playback state and ordinary controls use MPRIS. Active playback on another
-Spotify Connect device comes from the Spotify Web API, refreshed while a UI is
-visible and at a slower rate while that device is playing. Spotify data and user
-actions also use the Web API.
+Local playback state and ordinary controls use MPRIS. Starting playback on this
+computer uses the backend's private Unix socket (`load`, `add_to_queue`) when
+that process is running. Active playback on another Spotify Connect device
+comes from the Spotify Web API, refreshed while a UI is visible and at a slower
+rate while that device is playing. Fast `/me/player` polling is reserved for
+remote or unknown targets. Spotify data and other user actions also use the
+Web API.
 
 Local audio runs in the plugin-owned `omarchy-spotify-backend` Rust process,
 supervised by a static systemd user unit that is never enabled at login. The
 backend embeds a commit-pinned librespot revision rather than duplicating its
 private-protocol implementation. It owns configuration, cache/authentication,
 MPRIS, lifecycle, and a stable private Unix-socket boundary. The app starts the
-unit whenever playback needs this computer and stops it after the configured
-idle period. The distro `spotifyd` unit is retained as a non-running fallback;
-the two units conflict so they cannot claim the same Connect identity together.
+unit when you play on this computer, choose it in Devices, or set idle minutes
+to 0 so it stays available. It stops after the configured idle period. The
+distro `spotifyd` unit is retained as a non-running fallback; the two units
+conflict so they cannot claim the same Connect identity together.
 
 The unit sets `PULSE_LATENCY_MSEC=30` only for local playback and caps
 librespot's private player runtime at two Tokio workers. The backend's own
@@ -86,6 +90,10 @@ The app requests only the library, follow, listening-history, playlist,
 playback-position, and playback-control permissions used by visible features.
 It does not request profile or email permissions.
 
+The Spotify account grant unlocks search, library, and remote control. Local
+playback remains a separate approval. The full player and mini-player stay
+usable after the account connects, even while that second step is unfinished.
+
 ## Local Spotify Connect
 
 New playback keeps Spotify's currently active device. An explicit
@@ -98,8 +106,9 @@ Spotify's device response. It also resolves opaque Web API device names against
 the matching locally advertised alias. For ordinary receivers, the helper
 re-encrypts local playback's owner-only reusable credential for the receiver's
 ephemeral ZeroConf key. Access-token receivers such as JBL receive the
-short-lived receiver token minted from the streaming grant; authorization-code
-receivers such as Sonos receive a receiver-scoped code exchanged from that grant.
+short-lived streaming token as the ZeroConf blob, with a device-scoped mint
+and the reusable credential as fallbacks; authorization-code receivers such
+as Sonos receive a receiver-scoped code exchanged from that grant.
 It then waits for Spotify to report the genuine device before transferring
 playback when needed. It never asks for or stores the user's password.
 

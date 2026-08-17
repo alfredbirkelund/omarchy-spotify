@@ -46,5 +46,6 @@ Version 1 commands are:
 
 Adding an optional field or command is backward-compatible. Removing or
 renaming a field, changing its meaning, or changing framing requires a new
-protocol version. Clients must retain MPRIS/Web API fallback behavior when the
-socket is absent or reports an unsupported version.
+protocol version. The Quickshell service uses this socket to start local playback (`load`)
+and add to the local queue. Clients must retain MPRIS/Web API fallback
+behavior when the socket is absent or reports an unsupported version.

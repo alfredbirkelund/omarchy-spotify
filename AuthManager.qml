@@ -131,8 +131,7 @@ Item {
     refreshWithToken(token, purpose)
   }
 
-  function refreshWithToken(refreshToken, purpose) {
-    refreshBusy = true
+  function postTokenRequest(body, previousRefreshToken, callback) {
     var serial = ++tokenRequestSerial
     var request = new XMLHttpRequest()
     tokenRequest = request
@@ -140,10 +139,25 @@ Item {
       if (request.readyState !== XMLHttpRequest.DONE) return
       if (serial !== root.tokenRequestSerial) return
       if (root.tokenRequest === request) root.tokenRequest = null
+      var result = OAuth.parseTokenResponse(request.status, request.responseText,
+        previousRefreshToken)
+      if (typeof callback === "function") callback(result)
+    }
+    request.open("POST", Api.TOKEN_URL)
+    request.setRequestHeader("Content-Type", "application/x-www-form-urlencoded")
+    request.send(body)
+  }
+
+  function refreshWithToken(refreshToken, purpose) {
+    refreshBusy = true
+    postTokenRequest(Api.formBody({
+      client_id: clientId,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken
+    }), refreshToken, function(result) {
+      refreshToken = ""
       root.refreshBusy = false
       root.sessionChecked = true
-      var result = OAuth.parseTokenResponse(request.status, request.responseText, refreshToken)
-      refreshToken = ""
       if (!result.ok) {
         root.resetMemorySession()
         root.lastError = root.safeError(result.error)
@@ -154,14 +168,7 @@ Item {
       }
       root.acceptToken(result)
       root.finishWaiters(root.accessToken, "")
-    }
-    request.open("POST", Api.TOKEN_URL)
-    request.setRequestHeader("Content-Type", "application/x-www-form-urlencoded")
-    request.send(Api.formBody({
-      client_id: clientId,
-      grant_type: "refresh_token",
-      refresh_token: refreshToken
-    }))
+    })
   }
 
   function acceptToken(result) {
@@ -279,16 +286,9 @@ Item {
     verifier = ""
     clearPkce()
 
-    var serial = ++tokenRequestSerial
-    var request = new XMLHttpRequest()
-    tokenRequest = request
-    request.onreadystatechange = function() {
-      if (request.readyState !== XMLHttpRequest.DONE) return
-      if (serial !== root.tokenRequestSerial) return
-      if (root.tokenRequest === request) root.tokenRequest = null
+    postTokenRequest(requestBody, "", function(result) {
       root.exchangingCode = false
       root.loginBusy = false
-      var result = OAuth.parseTokenResponse(request.status, request.responseText, "")
       if (!result.ok) {
         root.lastError = root.safeError(result.error)
         root.sessionUnavailable(root.lastError)
@@ -298,10 +298,7 @@ Item {
       root.sessionChecked = true
       root.finishWaiters(root.accessToken, "")
       root.loginSucceeded()
-    }
-    request.open("POST", Api.TOKEN_URL)
-    request.setRequestHeader("Content-Type", "application/x-www-form-urlencoded")
-    request.send(requestBody)
+    })
     requestBody = ""
   }
 

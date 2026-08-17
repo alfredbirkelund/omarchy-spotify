@@ -36,8 +36,8 @@ Item {
   signal controlled(string deviceId, string action, string value)
   signal controlFailed(string deviceId, string reason)
 
-  function safeError(value) {
-    return Api.redact(String(value || ""))
+  function validDeviceId(value) {
+    return Api.isSpotifyConnectDeviceId(value)
   }
 
   function refresh() {
@@ -53,7 +53,7 @@ Item {
     var requested = String(deviceId || "")
     var token = String(accessToken || "").trim()
     if (activating || activationCommand.running || !pluginDir
-        || !/^[A-Za-z0-9_.:-]{8,160}$/.test(requested)) return
+        || !validDeviceId(requested)) return
     if (token.length > 4096 || /\s/.test(token)) return
     activating = true
     activatingDeviceId = requested
@@ -71,7 +71,7 @@ Item {
     var command = String(action || "").trim().toLowerCase()
     var argument = String(value === undefined ? "" : value).trim()
     if (controlling || controlCommand.running || activating
-        || !pluginDir || !/^[A-Za-z0-9_.:-]{8,160}$/.test(requested)
+        || !pluginDir || !validDeviceId(requested)
         || ["play", "pause", "next", "previous", "seek", "volume", "mode"]
           .indexOf(command) < 0
         || argument.length > 128 || /[\r\n]/.test(argument)) return
@@ -88,9 +88,8 @@ Item {
 
   function rememberVolume(deviceId, value) {
     var requested = String(deviceId || "")
-    var volume = Number(value)
-    if (!requested || !isFinite(volume)) return
-    volume = Math.max(0, Math.min(100, volume))
+    var volume = Api.normalizeVolumePercent(value)
+    if (!requested || volume === null) return
     var changed = false
     var next = []
     for (var i = 0; i < devices.length; i++) {
@@ -99,8 +98,7 @@ Item {
         next.push(item)
         continue
       }
-      var updated = ({})
-      for (var key in item) updated[key] = item[key]
+      var updated = Api.shallowCopy(item)
       updated.volumePercent = volume
       changed = true
       next.push(updated)
@@ -109,36 +107,31 @@ Item {
   }
 
   function applyDiscovery(raw) {
-    try {
-      var payload = JSON.parse(String(raw || "{}"))
-      if (payload.schemaVersion !== 1 || !Array.isArray(payload.devices)) throw new Error("schema")
-      var next = []
-      for (var i = 0; i < payload.devices.length && next.length < 32; i++) {
-        var item = payload.devices[i] || {}
-        var id = String(item.id || "")
-        if (!/^[A-Za-z0-9_.:-]{8,160}$/.test(id)) continue
-        var rawVolume = item.volumePercent
-        var volumeKnown = rawVolume !== null && rawVolume !== undefined
-          && rawVolume !== "" && isFinite(Number(rawVolume))
-        next.push({
-          id: id,
-          name: String(item.name || "Spotify Connect device").slice(0, 160),
-          type: String(item.type || "Speaker").slice(0, 80),
-          description: String(item.description || "").slice(0, 260),
-          brand: String(item.brand || "").slice(0, 120),
-          model: String(item.model || "").slice(0, 120),
-          localDiscovery: true,
-          activationRequired: true,
-          activeUser: item.activeUser === true,
-          volumePercent: volumeKnown
-            ? Math.max(0, Math.min(100, Number(rawVolume))) : null,
-          tokenType: Api.spotifyConnectTokenType(item.tokenType)
-        })
-      }
-      devices = next
-    } catch (e) {
+    var payload = Api.parseJson(raw, null)
+    if (!payload || payload.schemaVersion !== 1 || !Array.isArray(payload.devices)) {
       devices = []
+      return
     }
+    var next = []
+    for (var i = 0; i < payload.devices.length && next.length < 32; i++) {
+      var item = payload.devices[i] || {}
+      var id = String(item.id || "")
+      if (!validDeviceId(id)) continue
+      next.push({
+        id: id,
+        name: String(item.name || "Spotify Connect device").slice(0, 160),
+        type: String(item.type || "Speaker").slice(0, 80),
+        description: String(item.description || "").slice(0, 260),
+        brand: String(item.brand || "").slice(0, 120),
+        model: String(item.model || "").slice(0, 120),
+        localDiscovery: true,
+        activationRequired: true,
+        activeUser: item.activeUser === true,
+        volumePercent: Api.normalizeVolumePercent(item.volumePercent),
+        tokenType: Api.spotifyConnectTokenType(item.tokenType)
+      })
+    }
+    devices = next
   }
 
   Process {

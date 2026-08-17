@@ -96,14 +96,14 @@ To replace Omarchy's existing **Super+Shift+M · Music** binding, add this to
 ```
 
 Run `hyprctl reload` and check `hyprctl configerrors` after saving. In Omarchy
-Spotify's Settings, choose whether that shortcut launches Omarchy's default
-music app, toggles the full player, or toggles the mini-player. Separate
+Spotify's Settings, choose whether that shortcut launches Omarchy's Music
+app, toggles the full player, or toggles the mini-player. Separate
 bindings can call `toggleMiniPlayer` or
 `toggleFullPlayer` on the same `quickshell.spotify.player` target.
 
-Click the Spotify icon on the left side of the bar, choose **Set up and
-continue**, and finish the Spotify sign-in in your browser. You can move the
-widget later with Omarchy's bar controls.
+Click the Spotify icon on the left side of the bar. The mini-player asks you
+to **Set up and continue**, then Spotify sign-in finishes in your browser. You
+can move the widget later with Omarchy's bar controls.
 
 > Requires Omarchy 4 and a personal Spotify Premium account.
 

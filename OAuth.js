@@ -1,4 +1,5 @@
 .pragma library
+.import "Api.js" as Api
 
 function normalizedPort(value) {
   var port = Math.floor(Number(value))
@@ -49,15 +50,13 @@ function parsePkceOutput(line) {
 }
 
 function parseTokenResponse(status, text, previousRefreshToken) {
-  var payload = null
-  try { payload = JSON.parse(String(text || "")) } catch (e) {}
+  var payload = Api.parseJson(text, null)
   if (status < 200 || status >= 300 || !payload || !payload.access_token) {
-    var reason = payload && (payload.error_description || payload.error)
-    if (typeof reason === "object" && reason) reason = reason.message || reason.status
     return {
       ok: false,
       invalidGrant: !!payload && payload.error === "invalid_grant",
-      error: String(reason || "Could not complete Spotify sign-in. Please try again")
+      error: Api.responseError(status, payload,
+        "Could not complete Spotify sign-in. Please try again")
     }
   }
   return {

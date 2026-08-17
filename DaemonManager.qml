@@ -17,7 +17,8 @@ Item {
   property string pluginDir: ""
   property string deviceName: "Omarchy Spotify"
   property int bitrateKbps: 320
-  property string unitName: "omarchy-spotifyd.service"
+  property string unitName: "omarchy-spotify.service"
+  property bool authenticationCancelled: false
   property bool mprisPresent: false
 
   readonly property string cacheRoot: Quickshell.env("XDG_CACHE_HOME")
@@ -74,7 +75,7 @@ Item {
     }
     if (!unitCheck.running) {
       unitCheck.command = ["/usr/bin/bash",
-        pluginDir + "/scripts/playback-runtime.sh", "check"]
+        pluginDir + "/scripts/playback-runtime.sh", "unit"]
       unitCheck.running = true
     }
     checkCredentials()
@@ -182,8 +183,24 @@ Item {
 
   function beginAuthenticationProcess() {
     authAfterStop = false
+    if (authenticationCancelled) {
+      authenticationCancelled = false
+      authenticationBusy = false
+      busy = false
+      return
+    }
     authCommand.command = [pluginDir + "/scripts/spotifyd-auth.sh"]
     authCommand.running = true
+  }
+
+  function cancelAuthentication() {
+    if (!authenticationBusy && !authAfterStop) return
+    authenticationCancelled = true
+    authAfterStop = false
+    lastError = ""
+    if (authCommand.running) authCommand.running = false
+    authenticationBusy = false
+    busy = false
   }
 
   function returnFromAuthentication() {
@@ -265,10 +282,12 @@ Item {
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
+      var unit = String(stdout.text || "").trim()
       root.unitAvailable = exitCode === 0
       root.unitChecked = true
+      if (unit) root.unitName = unit
       root.usingFallbackRuntime = exitCode === 0
-        && String(stdout.text || "").trim() === "omarchy-spotifyd.service"
+        && unit === "omarchy-spotifyd.service"
       if (exitCode === 0) root.requestConfiguration()
       root.installBundledBackendIfNeeded()
     }
@@ -285,6 +304,8 @@ Item {
         root.binaryChecked = true
         root.unitAvailable = true
         root.unitChecked = true
+        root.usingFallbackRuntime = false
+        root.unitName = "omarchy-spotify.service"
         root.lastError = ""
         root.requestConfiguration()
         root.refreshStatus()
@@ -363,6 +384,12 @@ Item {
       onRead: function(line) { root.safeError(line) }
     }
     onExited: function(exitCode) {
+      if (root.authenticationCancelled) {
+        root.authenticationCancelled = false
+        root.authenticationBusy = false
+        root.busy = false
+        return
+      }
       root.authenticationBusy = false
       root.busy = false
       if (exitCode === 0) {

@@ -3,6 +3,7 @@ Description=Lightweight Spotify playback engine for Omarchy Spotify
 Documentation=https://github.com/Spotifyd/spotifyd
 After=graphical-session.target sound.target
 Wants=sound.target
+Conflicts=omarchy-spotify.service
 
 [Service]
 Type=simple

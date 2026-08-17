@@ -45,11 +45,19 @@ BarWidget {
     { keys: "Ctrl+Shift+L", action: "Open lyrics" },
     { keys: "O", action: "Open full player" },
     { keys: "Ctrl+/", action: "Toggle this reference" },
+    { keys: "Scroll the bar icon", action: "Previous or next track" },
+    { keys: "Middle-click the bar icon", action: "Play or pause" },
     { keys: "Esc", action: "Close" }
   ]
   readonly property var miniKeyboardActions: {
     if (lyricsInstallPromptVisible) return ["prompt-cancel", "prompt-confirm"]
     if (miniShortcutHelpVisible) return ["help-close"]
+    if (spotify && !spotify.accountConnected) {
+      var setupActions = ["setup"]
+      if (spotify.loginBusy) setupActions.push("setup-cancel")
+      setupActions.push("open")
+      return setupActions
+    }
     var actions = []
     if (spotify && spotify.currentArtistContextAvailable) actions.push("artist")
     if (spotify && spotify.currentTrackSaveAvailable) actions.push("like")
@@ -83,9 +91,8 @@ BarWidget {
   }
 
   function shortcutPlayer() {
-    var value = String(root.setting("shortcutPlayer", "Omarchy default"))
-    return value === "Full player" ? "Full player"
-      : (value === "Mini player" ? "Mini player" : "Omarchy default")
+    return Api.normalizedShortcutPlayer(root.setting("shortcutPlayer",
+      "Omarchy Music app"))
   }
 
   function toggleMiniPlayerShortcut() {
@@ -245,26 +252,24 @@ BarWidget {
 
   function seekBy(seconds) {
     if (!spotify || !spotify.playbackControllable) return
-    var maximum = Math.max(0, Number(spotify.lengthSeconds) || 0)
-    var next = Math.max(0, Number(spotify.positionSeconds) + Number(seconds || 0))
-    spotify.seekSeconds(maximum > 0 ? Math.min(maximum, next) : next)
+    spotify.seekSeconds(Api.seekPosition(spotify.positionSeconds, seconds,
+      spotify.lengthSeconds))
   }
 
   function adjustVolume(delta) {
     if (!spotify || !spotify.volumeSupported) return
-    var next = Math.max(0, Math.min(1,
-      Number(spotify.volume) + Number(delta || 0)))
-    if (next > 0.001) volumeBeforeMute = next
+    var next = Api.nextVolume(spotify.volume, delta)
+    if (Api.shouldRememberVolume(next)) volumeBeforeMute = next
     spotify.setVolume(next)
   }
 
   function toggleMute() {
     if (!spotify || !spotify.volumeSupported) return
-    var current = Math.max(0, Math.min(1, Number(spotify.volume) || 0))
-    if (current > 0.001) {
+    var current = Api.nextVolume(spotify.volume, 0)
+    if (Api.shouldRememberVolume(current)) {
       volumeBeforeMute = current
       spotify.setVolume(0)
-    } else spotify.setVolume(Math.max(0.05, volumeBeforeMute))
+    } else spotify.setVolume(Api.unmuteVolume(volumeBeforeMute))
   }
 
   function activateMiniAction(action) {
@@ -288,7 +293,11 @@ BarWidget {
       if (spotify) spotify.cycleRepeat()
     } else if (action === "lyrics") openLyrics()
     else if (action === "volume") toggleMute()
-    else if (action === "open") openFullPanel()
+    else if (action === "setup") {
+      if (spotify && !spotify.loginBusy) spotify.login()
+    } else if (action === "setup-cancel") {
+      if (spotify) spotify.cancelLogin()
+    } else if (action === "open") openFullPanel()
   }
 
   function handleMiniKey(event) {
@@ -439,7 +448,8 @@ BarWidget {
     activeColor: button.foreground
     tooltipText: root.spotify && root.spotify.hasMedia
       ? root.spotify.title + (root.spotify.artist ? " — " + root.spotify.artist : "")
-      : "Omarchy Spotify"
+      : (root.spotify && !root.spotify.accountConnected
+        ? "Set up Omarchy Spotify" : "Omarchy Spotify")
     fixedWidth: root.vertical ? root.barSize
       : (root.iconOnly ? Style.bar.statusSlot
         : Math.min(Style.space(240), Math.max(root.barSize,
@@ -590,10 +600,76 @@ BarWidget {
         visible: !root.miniShortcutHelpVisible
         spacing: Style.space(10)
 
+      Column {
+        width: parent.width
+        spacing: Style.space(8)
+        visible: !root.lyricsInstallPromptVisible
+          && root.spotify && !root.spotify.accountConnected
+
+        Text {
+          width: parent.width
+          text: root.spotify ? root.spotify.loginProgress : "Spotify is unavailable"
+          color: root.foreground
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.body
+          font.bold: true
+          wrapMode: Text.WordWrap
+        }
+
+        Text {
+          width: parent.width
+          text: "Connect your Spotify account from here. Playback on this computer can finish in the background."
+          color: Qt.darker(root.foreground, 1.4)
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
+
+        Text {
+          width: parent.width
+          visible: root.spotify && (root.spotify.lastError !== ""
+            || root.spotify.auth.lastError !== ""
+            || root.spotify.daemon.lastError !== "")
+          text: root.spotify ? (root.spotify.lastError
+            || root.spotify.auth.lastError
+            || root.spotify.daemon.lastError) : ""
+          color: Color.urgent
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
+
+        Row {
+          width: parent.width
+          spacing: Style.space(6)
+
+          Button {
+            text: root.spotify && root.spotify.loginBusy
+              ? "Working…" : "Set up and continue"
+            iconText: "󰍂"
+            foreground: root.foreground
+            hasCursor: root.miniCursorActive && root.miniCursor === "setup"
+            enabled: root.spotify && !root.spotify.loginBusy
+            onClicked: if (root.spotify) root.spotify.login()
+            onHovered: function(on) { if (on) root.setMiniCursor("setup") }
+          }
+
+          Button {
+            text: "Cancel"
+            foreground: root.foreground
+            visible: root.spotify && root.spotify.loginBusy
+            hasCursor: root.miniCursorActive && root.miniCursor === "setup-cancel"
+            onClicked: if (root.spotify) root.spotify.cancelLogin()
+            onHovered: function(on) { if (on) root.setMiniCursor("setup-cancel") }
+          }
+        }
+      }
+
       Row {
         width: parent.width
         spacing: Style.space(12)
         visible: !root.lyricsInstallPromptVisible
+          && (!root.spotify || root.spotify.accountConnected)
 
         BorderSurface {
           width: Style.space(78)
@@ -724,6 +800,7 @@ BarWidget {
         width: parent.width
         spacing: Style.space(3)
         visible: !root.lyricsInstallPromptVisible
+          && (!root.spotify || root.spotify.accountConnected)
           && root.spotify && root.spotify.lengthSeconds > 0
 
         CursorSurface {
@@ -784,6 +861,7 @@ BarWidget {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: Style.space(5)
         visible: !root.lyricsInstallPromptVisible
+          && (!root.spotify || root.spotify.accountConnected)
 
         Button {
           iconText: "󰒟"
@@ -833,8 +911,8 @@ BarWidget {
           foreground: root.foreground
           selected: root.spotify && root.spotify.repeatMode !== "off"
           hasCursor: root.miniCursorActive && root.miniCursor === "repeat"
-          tooltipText: "Repeat: " + (root.spotify ? root.spotify.repeatMode : "off")
-            + " · Ctrl+R"
+          tooltipText: "Repeat: " + Api.repeatModeLabel(root.spotify
+            ? root.spotify.repeatMode : "off") + " · Ctrl+R"
           enabled: root.spotify && root.spotify.playbackControllable
           onClicked: if (root.spotify) root.spotify.cycleRepeat()
           onHovered: function(on) { if (on) root.setMiniCursor("repeat") }
@@ -856,6 +934,7 @@ BarWidget {
         width: parent.width
         height: miniVolumeRow.implicitHeight + Style.space(2)
         visible: !root.lyricsInstallPromptVisible
+          && (!root.spotify || root.spotify.accountConnected)
           && root.spotify && root.spotify.hasPlayer
         hasCursor: root.miniCursorActive && root.miniCursor === "volume"
         foreground: root.foreground
@@ -911,11 +990,17 @@ BarWidget {
           width: parent.width - openButton.width - Style.space(6)
           anchors.verticalCenter: parent.verticalCenter
           text: !root.spotify ? "Spotify is unavailable"
-            : (!root.spotify.fullyConnected ? ""
+            : (root.spotify.lastError !== "" ? root.spotify.lastError
+            : (root.spotify.statusMessage !== "" ? root.spotify.statusMessage
+            : (!root.spotify.accountConnected ? "Connect Spotify to start"
+            : (!root.spotify.fullyConnected
+              ? (root.spotify.loginBusy ? root.spotify.loginProgress
+                : "Account connected · finish playback in Settings")
             : (root.spotify.useRemotePlayback
               ? (root.spotify.playing ? "Playing on " : "Connected to ")
                 + root.spotify.playbackDeviceName
-              : (root.spotify.daemon.running ? "Playing on this computer" : "Ready when you press play")))
+              : (root.spotify.daemon.running ? "Playing on this computer"
+                : "Ready when you press play"))))))
           color: Qt.darker(root.foreground, 1.35)
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.caption

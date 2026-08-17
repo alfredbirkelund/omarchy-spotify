@@ -32,7 +32,7 @@
       "deviceName": "Omarchy Spotify",
       "idleShutdownMinutes": 15,
       "showMiniPlayer": "On",
-      "shortcutPlayer": "Omarchy default",
+      "shortcutPlayer": "Omarchy Music app",
       "showTrackTitle": "On",
       "showArtistName": "Off",
       "scrollBarText": "Off",
@@ -73,12 +73,12 @@
         "type": "enum",
         "label": "Keyboard shortcut opens",
         "options": [
-          "Omarchy default",
+          "Omarchy Music app",
           "Full player",
           "Mini player"
         ],
-        "defaultValue": "Omarchy default",
-        "description": "Choose whether Super+Shift+M launches Omarchy's default music app, the full player, or the mini-player."
+        "defaultValue": "Omarchy Music app",
+        "description": "Choose whether Super+Shift+M launches Omarchy's Music app, the full player, or the mini-player. Bind the shortcut once in Hyprland first."
       },
       {
         "key": "showTrackTitle",

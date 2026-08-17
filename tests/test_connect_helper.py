@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
+import tempfile
 import unittest
 import urllib.parse
 from pathlib import Path
@@ -176,6 +178,57 @@ class ConnectHelperTests(unittest.TestCase):
             return {"status": 101}
 
         streaming_token = "desktop-streaming-token-value-1234567890"
+        with mock.patch.object(helper, "discover_receivers", return_value=[receiver]), \
+                mock.patch.object(
+                    helper, "load_credentials",
+                    return_value=("canonical-user", 1, b"stored-credential"),
+                ), \
+                mock.patch.object(helper, "exchange_access_token") as exchange, \
+                mock.patch.object(helper, "build_login_blob") as build_blob, \
+                mock.patch.object(helper, "request_json", side_effect=fake_request_json):
+            result = helper.activate_receiver(receiver["id"], streaming_token)
+
+        self.assertEqual(result, {"id": receiver["id"], "status": "activated"})
+        exchange.assert_not_called()
+        build_blob.assert_not_called()
+        self.assertEqual(posted["tokenType"], "accesstoken")
+        self.assertEqual(posted["clientKey"], "")
+        self.assertEqual(posted["blob"], streaming_token)
+        self.assertEqual(posted["loginId"], "canonical-user")
+        self.assertEqual(posted["userName"], "canonical-user")
+
+    def test_access_token_receiver_mints_token_after_login_failure(self) -> None:
+        receiver = {
+            "id": "0123456789abcdef0123456789abcdef01234567",
+            "address": "192.168.1.20",
+            "port": 5389,
+            "cpath": "/zc",
+            "serviceVersion": "1.0",
+            "brand": "JBL",
+            "tokenType": "accesstoken",
+            "clientId": "76642c7bcc9c466bb99a44ce206edbbe",
+        }
+        posted: list[dict[str, str]] = []
+
+        def fake_request_json(
+            _address: str,
+            _port: int,
+            _path: str,
+            method: str = "GET",
+            fields: dict[str, str] | None = None,
+        ) -> dict[str, object]:
+            if method == "GET":
+                return {
+                    "status": 101,
+                    "deviceID": receiver["id"],
+                    "tokenType": "accesstoken",
+                }
+            posted.append(dict(fields or {}))
+            if len(posted) == 1:
+                return {"status": 202, "statusString": "ERROR-LOGIN-FAILED"}
+            return {"status": 101}
+
+        streaming_token = "desktop-streaming-token-value-1234567890"
         receiver_token = "receiver-access-token-value-1234567890"
         with mock.patch.object(helper, "discover_receivers", return_value=[receiver]), \
                 mock.patch.object(
@@ -186,17 +239,74 @@ class ConnectHelperTests(unittest.TestCase):
                     helper, "exchange_access_token", return_value=receiver_token,
                 ) as exchange, \
                 mock.patch.object(helper, "build_login_blob") as build_blob, \
-                mock.patch.object(helper, "request_json", side_effect=fake_request_json):
+                mock.patch.object(helper, "request_json", side_effect=fake_request_json), \
+                mock.patch.object(helper.time, "sleep"):
             result = helper.activate_receiver(receiver["id"], streaming_token)
 
         self.assertEqual(result, {"id": receiver["id"], "status": "activated"})
         exchange.assert_called_once_with(streaming_token, receiver)
         build_blob.assert_not_called()
-        self.assertEqual(posted["tokenType"], "accesstoken")
-        self.assertEqual(posted["clientKey"], "")
-        self.assertEqual(posted["blob"], receiver_token)
-        self.assertEqual(posted["loginId"], "canonical-user")
-        self.assertEqual(posted["userName"], "canonical-user")
+        self.assertEqual([item["blob"] for item in posted], [streaming_token, receiver_token])
+        self.assertEqual(posted[1]["tokenType"], "accesstoken")
+
+    def test_access_token_receiver_falls_back_when_device_auth_fails(self) -> None:
+        receiver = {
+            "id": "0123456789abcdef0123456789abcdef01234567",
+            "address": "192.168.1.20",
+            "port": 5389,
+            "cpath": "/zc",
+            "serviceVersion": "1.0",
+            "brand": "JBL",
+            "tokenType": "accesstoken",
+            "clientId": "76642c7bcc9c466bb99a44ce206edbbe",
+            "publicKey": "QQ==",
+        }
+        posted: list[dict[str, str]] = []
+
+        def fake_request_json(
+            _address: str,
+            _port: int,
+            _path: str,
+            method: str = "GET",
+            fields: dict[str, str] | None = None,
+        ) -> dict[str, object]:
+            if method == "GET":
+                return {
+                    "status": 101,
+                    "deviceID": receiver["id"],
+                    "tokenType": "accesstoken",
+                    "publicKey": receiver["publicKey"],
+                }
+            posted.append(dict(fields or {}))
+            if len(posted) == 1:
+                return {"status": 202, "statusString": "ERROR-LOGIN-FAILED"}
+            return {"status": 101}
+
+        streaming_token = "desktop-streaming-token-value-1234567890"
+        with mock.patch.object(helper, "discover_receivers", return_value=[receiver]), \
+                mock.patch.object(
+                    helper, "load_credentials",
+                    return_value=("canonical-user", 1, b"stored-credential"),
+                ), \
+                mock.patch.object(
+                    helper, "exchange_access_token",
+                    side_effect=helper.ConnectError("invalid response"),
+                ) as exchange, \
+                mock.patch.object(
+                    helper, "build_login_blob",
+                    return_value=("encrypted-blob", "client-key"),
+                ) as build_blob, \
+                mock.patch.object(helper, "request_json", side_effect=fake_request_json), \
+                mock.patch.object(helper.time, "sleep"):
+            result = helper.activate_receiver(receiver["id"], streaming_token)
+
+        self.assertEqual(result, {"id": receiver["id"], "status": "activated"})
+        exchange.assert_called_once_with(streaming_token, receiver)
+        build_blob.assert_called_once()
+        self.assertEqual(posted[0]["blob"], streaming_token)
+        self.assertEqual(posted[1]["tokenType"], "default")
+        self.assertEqual(posted[1]["blob"], "encrypted-blob")
+        self.assertEqual(posted[1]["clientKey"], "client-key")
 
     def test_access_token_receiver_rejects_missing_streaming_token(self) -> None:
         receiver = {
@@ -243,6 +353,27 @@ class ConnectHelperTests(unittest.TestCase):
             "SetVolume",
             {"InstanceID": "0", "Channel": "Master", "DesiredVolume": "37"},
         )
+
+    def test_sonos_control_uses_discovery_cache_instead_of_avahi(self) -> None:
+        receiver = {
+            "id": "4c1e461f8fe6be10d41c504f6e5121a5275d1d6d",
+            "address": "192.168.1.10",
+            "port": 1400,
+            "cpath": "/",
+            "brand": "Sonos",
+            "serviceVersion": "1.0",
+        }
+        with tempfile.TemporaryDirectory() as raw_runtime:
+            runtime_dir = Path(raw_runtime)
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(runtime_dir)}):
+                helper.write_receiver_cache([receiver])
+                with mock.patch.object(helper, "discover_receivers") as discover, \
+                        mock.patch.object(helper, "request_sonos_soap") as soap:
+                    result = helper.control_receiver(receiver["id"], "pause")
+
+        self.assertEqual(result["status"], "controlled")
+        discover.assert_not_called()
+        self.assertEqual(soap.call_args.args[0]["address"], "192.168.1.10")
 
     def test_sonos_volume_reads_rendering_service_value(self) -> None:
         receiver = {

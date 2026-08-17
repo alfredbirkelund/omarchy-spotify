@@ -39,12 +39,13 @@ Item {
   property var scrollPositionOrder: []
   readonly property int scrollPositionLimit: 128
   property var navigationStack: []
+  property string lastContentTab: "home"
   property string restoredPlaylistId: ""
 
   property string draftDeviceName: "Omarchy Spotify"
   property string draftIdleMinutes: "15"
   property bool draftShowMiniPlayer: true
-  property string draftShortcutPlayer: "Omarchy default"
+  property string draftShortcutPlayer: "Omarchy Music app"
   property bool draftShowTitle: true
   property bool draftShowArtist: false
   property bool draftScrollBarText: false
@@ -71,6 +72,8 @@ Item {
   readonly property int popupScrollbarGutter: Style.space(14)
   readonly property string fontFamily: Style.font.family
   readonly property bool fullyConnected: service && service.fullyConnected
+  readonly property bool accountConnected: service && service.accountConnected
+  readonly property bool sessionPending: service && service.sessionPending
   readonly property bool compactHeight: window.height < Style.space(620)
   readonly property bool compactWidth: window.width < Style.space(760)
   readonly property var activeSearchScope: Api.searchScope(currentTab,
@@ -107,7 +110,7 @@ Item {
     draftAudioQuality = service.audioQuality
   }
 
-  function saveSettings() {
+  function saveSettings(showStatus) {
     if (!service) return
     var values = {
       deviceName: String(draftDeviceName || "").trim() || "Omarchy Spotify",
@@ -123,19 +126,25 @@ Item {
     }
     service.persistSettings(values)
     syncDraftSettings()
-    service.succeed("Settings saved")
+    if (showStatus !== false) service.succeed("Settings saved")
+  }
+
+  function persistDraftSettings() {
+    saveSettings(false)
   }
 
   function cycleAudioQuality() {
     draftAudioQuality = draftAudioQuality === "96 kbps" ? "160 kbps"
       : (draftAudioQuality === "160 kbps" ? "320 kbps" : "96 kbps")
+    persistDraftSettings()
   }
 
   function cycleShortcutPlayer() {
-    draftShortcutPlayer = draftShortcutPlayer === "Omarchy default"
+    draftShortcutPlayer = draftShortcutPlayer === "Omarchy Music app"
       ? "Full player"
       : (draftShortcutPlayer === "Full player"
-        ? "Mini player" : "Omarchy default")
+        ? "Mini player" : "Omarchy Music app")
+    persistDraftSettings()
   }
 
   function audioQualityLabel() {
@@ -158,6 +167,9 @@ Item {
     if (!service) return "Spotify unavailable"
     if (service.loginBusy) return service.loginProgress + "…"
     if (fullyConnected) return "Connected"
+    if (accountConnected && !service.daemon.playbackReady)
+      return "Set up playback"
+    if (accountConnected) return "Finish playback setup"
     if (!service.daemon.playbackReady) return "Set up and continue"
     return "Continue with Spotify"
   }
@@ -166,6 +178,7 @@ Item {
     if (!service) return "Spotify is unavailable"
     if (service.daemon.setupBusy) return "Setting up playback"
     if (fullyConnected) return "You're connected"
+    if (accountConnected) return "Account connected"
     if (!service.daemon.playbackReady) return "One quick setup, then Spotify"
     return "Continue with Spotify"
   }
@@ -395,7 +408,7 @@ Item {
 
   function goBack() {
     if (!navigationStack.length) {
-      chooseTab("search")
+      chooseTab("home")
       return
     }
     var stack = navigationStack.slice()
@@ -451,6 +464,7 @@ Item {
       { action: "Search all of Spotify", keys: "Ctrl+L" },
       { action: "Clear search", keys: "Esc" },
       { section: "NAVIGATION", action: "Go back", keys: "Alt+Left" },
+      { action: "Leave Settings or Devices", keys: "Esc" },
       { action: "Open Settings", keys: "Ctrl+," },
       { action: "Open For You", keys: "Alt+Shift+H" },
       { action: "Open Queue", keys: "Alt+Shift+Q" },
@@ -458,8 +472,9 @@ Item {
       { action: "Move through lists", keys: "Arrow keys" },
       { action: "Open the selected item", keys: "Enter" },
       { section: "PLAYBACK", action: "Play or pause", keys: "Space" },
-      { action: "Previous item", keys: "Ctrl+Left" },
-      { action: "Next item", keys: "Ctrl+Right" },
+      { action: "Previous track", keys: "Ctrl+Left" },
+      { action: "Next track", keys: "Ctrl+Right" },
+      { action: "Open lyrics in Omasing", keys: "Ctrl+Shift+L" },
       { action: "Mute or restore volume", keys: "M" },
       { action: "Toggle shuffle", keys: "Ctrl+S" },
       { action: "Cycle repeat", keys: "Ctrl+R" },
@@ -615,28 +630,29 @@ Item {
 
   function seekBy(seconds) {
     if (!service || !service.playbackControllable) return
-    service.seekSeconds(service.positionSeconds + Number(seconds || 0))
+    service.seekSeconds(Api.seekPosition(service.positionSeconds, seconds,
+      service.lengthSeconds))
   }
 
   function setPanelVolume(value) {
     if (!service || !service.volumeSupported) return
-    var next = Math.max(0, Math.min(1, Number(value) || 0))
-    if (next > 0.001) volumeBeforeMute = next
+    var next = Api.nextVolume(value, 0)
+    if (Api.shouldRememberVolume(next)) volumeBeforeMute = next
     service.setVolume(next)
   }
 
   function adjustVolume(delta) {
     if (!service) return
-    setPanelVolume(service.volume + Number(delta || 0))
+    setPanelVolume(Api.nextVolume(service.volume, delta))
   }
 
   function toggleMute() {
     if (!service || !service.volumeSupported) return
-    var current = Math.max(0, Math.min(1, Number(service.volume) || 0))
-    if (current > 0.001) {
+    var current = Api.nextVolume(service.volume, 0)
+    if (Api.shouldRememberVolume(current)) {
       volumeBeforeMute = current
       service.setVolume(0)
-    } else service.setVolume(Math.max(0.05, volumeBeforeMute))
+    } else service.setVolume(Api.unmuteVolume(volumeBeforeMute))
   }
 
   function toggleShortcutHelp() {
@@ -670,13 +686,13 @@ Item {
       detailFilter = ""
     } else if (["home", "discover", "search", "library", "playlists", "queue", "devices", "setup"].indexOf(requestedTab) >= 0)
       currentTab = requestedTab
-    if (!fullyConnected) {
+    if (accountConnected) {
+      openedForLogin = false
+    } else if (!sessionPending) {
       currentTab = "login"
       universalSearchActive = false
       searchInContext = true
       openedForLogin = true
-    } else {
-      openedForLogin = false
     }
     closingFromHost = false
     opened = true
@@ -711,8 +727,21 @@ Item {
     else close()
   }
 
+  function rememberCurrentContentTab() {
+    var remembered = Api.rememberContentTab(currentTab)
+    if (remembered) lastContentTab = remembered
+  }
+
+  function leaveUtilityTab() {
+    var destination = Api.previousContentTab(currentTab, lastContentTab)
+    if (!destination) return false
+    disarmEscapeClose()
+    chooseTab(destination)
+    return true
+  }
+
   function chooseTab(tab) {
-    if (!fullyConnected) {
+    if (!accountConnected) {
       currentTab = "login"
       openedForLogin = true
       return
@@ -722,6 +751,7 @@ Item {
     if (showingUniversalSearch && tab !== "search" && service) service.cancelSearch(false)
     searchInContext = true
     universalSearchActive = false
+    rememberCurrentContentTab()
     currentTab = tab
     if (tab !== "detail") navigationStack = []
     openedForLogin = false
@@ -756,7 +786,8 @@ Item {
 
   function updateLoginGate() {
     if (!opened) return
-    if (!fullyConnected) {
+    if (sessionPending) return
+    if (!accountConnected) {
       currentTab = "login"
       universalSearchActive = false
       searchInContext = true
@@ -777,7 +808,10 @@ Item {
   // listening only to those nested objects can miss the final combined edge
   // while the panel loader is being remapped by the browser.
   onFullyConnectedChanged: Qt.callLater(function() { root.updateLoginGate() })
+  onAccountConnectedChanged: Qt.callLater(function() { root.updateLoginGate() })
+  onSessionPendingChanged: Qt.callLater(function() { root.updateLoginGate() })
   onServiceChanged: Qt.callLater(function() { root.updateLoginGate() })
+  onCurrentTabChanged: root.rememberCurrentContentTab()
 
   Connections {
     target: root.service
@@ -836,7 +870,7 @@ Item {
       if (artistScopedSearchActive)
         return "Songs, albums and playlists matching “" + artistSearchText.trim() + "”"
       return service && service.detailItem
-        ? String(service.detailItem.type || "Spotify item") : "Spotify item"
+        ? Api.spotifyTypeLabel(service.detailItem.type) : "Spotify item"
     }
     return "Songs, artists, albums, playlists, podcasts and audiobooks"
   }
@@ -894,7 +928,7 @@ Item {
   }
 
   function openCreatePlaylistPopup() {
-    if (!service || !fullyConnected) return
+    if (!service || !accountConnected) return
     createPlaylistName = ""
     createPlaylistPopup.open()
   }
@@ -1646,7 +1680,7 @@ Item {
       }
       Button {
         width: parent.width
-        text: "After this context"
+        text: "After this album or playlist"
         iconText: "󰓛"
         foreground: root.foreground
         leftAlign: true
@@ -1704,6 +1738,10 @@ Item {
           event.accepted = true
           return
         }
+        if (root.leaveUtilityTab()) {
+          event.accepted = true
+          return
+        }
         if (root.currentTab === "detail" || root.navigationStack.length) {
           root.disarmEscapeClose()
           root.goBack()
@@ -1742,23 +1780,29 @@ Item {
       }
       Shortcut {
         sequence: "Ctrl+,"
-        enabled: root.fullyConnected && !root.shortcutsBlocked
+        enabled: root.accountConnected && !root.shortcutsBlocked
         onActivated: root.chooseTab("setup")
       }
       Shortcut {
         sequence: "Alt+Shift+H"
-        enabled: root.fullyConnected && !root.shortcutsBlocked
+        enabled: root.accountConnected && !root.shortcutsBlocked
         onActivated: root.chooseTab("home")
       }
       Shortcut {
         sequence: "Alt+Shift+Q"
-        enabled: root.fullyConnected && !root.shortcutsBlocked
+        enabled: root.accountConnected && !root.shortcutsBlocked
         onActivated: root.chooseTab("queue")
       }
       Shortcut {
         sequence: "Alt+Shift+D"
-        enabled: root.fullyConnected && !root.shortcutsBlocked
+        enabled: root.accountConnected && !root.shortcutsBlocked
         onActivated: root.chooseTab("devices")
+      }
+      Shortcut {
+        sequence: "Ctrl+Shift+L"
+        enabled: !root.shortcutsBlocked && !root.textInputFocused()
+          && root.service && root.service.lyricsAvailable
+        onActivated: root.openLyrics()
       }
       Shortcut {
         sequence: "Space"
@@ -2007,7 +2051,7 @@ Item {
                   horizontalPadding: Style.space(7)
                   focusable: true
                   tooltipText: "Create a new playlist"
-                  enabled: root.fullyConnected && root.service
+                  enabled: root.accountConnected && root.service
                     && !root.service.playlistActionBusy
                   onClicked: root.openCreatePlaylistPopup()
                 }
@@ -2211,6 +2255,7 @@ Item {
             Row {
               id: unifiedSearchBar
               visible: root.currentTab !== "login" && root.currentTab !== "devices"
+                && root.currentTab !== "setup"
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.top: statusBanner.visible ? statusBanner.bottom : pageHeader.bottom
@@ -2412,7 +2457,7 @@ Item {
                 Text {
                   width: parent.width
                   visible: root.service && root.service.album !== ""
-                    && root.service.currentTrackId() !== ""
+                    && root.service.currentTrackId !== ""
                   text: root.service ? root.service.album : ""
                   color: root.accent
                   font.family: root.fontFamily
@@ -2476,14 +2521,16 @@ Item {
                   foreground: root.foreground
                   selected: root.service && root.service.repeatMode !== "off"
                   tooltipText: root.shortcutHint("Repeat: "
-                    + (root.service ? root.service.repeatMode : "off"), "Ctrl+R")
+                    + Api.repeatModeLabel(root.service
+                      ? root.service.repeatMode : "off"), "Ctrl+R")
                   enabled: root.service && root.service.playbackControllable
                   onClicked: if (root.service) root.service.cycleRepeat()
                 }
                 Button {
                   iconText: "󰎈"
                   foreground: root.foreground
-                  tooltipText: "Open lyrics in Omasing"
+                  tooltipText: root.shortcutHint("Open lyrics in Omasing",
+                    "Ctrl+Shift+L")
                   enabled: root.service && root.service.lyricsAvailable
                   onClicked: root.openLyrics()
                 }
@@ -2584,6 +2631,19 @@ Item {
                     text: "Volume · Ctrl+Up / Ctrl+Down · M to mute"
                   }
                 }
+              }
+
+              Text {
+                width: parent.width
+                visible: root.service && root.service.playbackDeviceName !== ""
+                text: root.service
+                  ? ((root.service.playing ? "Playing on " : "Connected to ")
+                    + root.service.playbackDeviceName)
+                  : ""
+                color: Qt.darker(root.foreground, 1.4)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
               }
             }
           }
@@ -2964,7 +3024,8 @@ Item {
                 browseContexts: true
                 loading: root.service && root.service.artistAlbumsLoading
                 hasMore: root.service && root.service.artistAlbumsNext !== ""
-                emptyMessage: root.service && root.service.artistAlbumsLoading
+                emptyMessage: root.service && (root.service.artistAlbumsLoading
+                  || root.service.detailLoading)
                   ? "Finding releases…" : "No matching albums or EPs."
                 onActivated: function(item, items, uri) {
                   root.activateMedia(item, items, uri)
@@ -3007,7 +3068,8 @@ Item {
                 browseContexts: false
                 loading: root.service && root.service.artistSongsLoading
                 hasMore: root.service && root.service.artistSongsNext !== ""
-                emptyMessage: root.service && root.service.artistSongsLoading
+                emptyMessage: root.service && (root.service.artistSongsLoading
+                  || root.service.detailLoading)
                   ? "Finding songs…" : "No matching songs."
                 onActivated: function(item, items, uri) {
                   root.activateMedia(item, items, uri)
@@ -3418,7 +3480,8 @@ Item {
           restoredContentY: root.scrollFor("search:" + root.searchType)
           stateKey: "search:" + root.searchType
           emptyMessage: root.service && root.service.searchLoading
-            ? "Searching…" : "No " + root.searchType + " results."
+            ? "Searching…" : "No " + Api.searchTypeLabel(root.searchType)
+              + " results."
           onActivated: function(item, items, uri) {
             root.activateMedia(item, items, uri)
           }
@@ -3494,7 +3557,11 @@ Item {
           hasMore: root.service && root.service.libraryNext(root.libraryType) !== ""
           restoredContentY: root.scrollFor("library:" + root.libraryType)
           stateKey: "library:" + root.libraryType
-          emptyMessage: "No saved items in this section."
+          emptyMessage: root.service && root.service.libraryLoading(root.libraryType)
+            ? "Loading your library…"
+            : (root.libraryFilter.trim()
+              ? "No matches in " + root.activeSearchScope.label + "."
+              : "No saved items in this section.")
           onActivated: function(item, items, uri) {
             root.activateMedia(item, items, uri)
           }
@@ -3724,6 +3791,24 @@ Item {
 
           FastScrollHandler { parent: queueList; flickable: queueList }
 
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            anchors.topMargin: Style.space(16)
+            width: Math.max(80, parent.width - Style.space(24))
+            visible: queueList.count === 0
+            text: root.service && root.service.queueLoading
+              ? "Loading the queue…"
+              : (root.queueFilter.trim()
+                ? "No matching songs in the queue."
+                : "Nothing is queued to play next.")
+            color: Qt.darker(root.foreground, 1.4)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
+          }
+
           delegate: MediaRow {
             required property var modelData
             required property int index
@@ -3788,6 +3873,27 @@ Item {
                 && !root.service.deviceActivationBusy
               onClicked: root.service.loadDevices(null, undefined, true)
             }
+          }
+
+          Button {
+            text: "Start this computer"
+            iconText: "󰓃"
+            foreground: root.foreground
+            visible: root.service && root.service.fullyConnected
+              && !root.service.daemon.running
+            enabled: root.service && !root.service.daemon.busy
+            onClicked: if (root.service) root.service.startEngine()
+          }
+
+          Text {
+            width: parent.width
+            visible: root.service && root.service.devicesLoading
+              && root.service.devices.length === 0
+            text: "Looking for speakers and this computer…"
+            color: Qt.darker(root.foreground, 1.4)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
           }
 
           Text {
@@ -4026,7 +4132,7 @@ Item {
 
               Text {
                 width: parent.width
-                text: "Spotify may open two approval pages the first time. Finish both and Omarchy Spotify will bring you back here automatically."
+                text: "Two short steps. First connect your Spotify account so you can browse. Then approve playback on this computer if you want to listen here."
                 color: Qt.darker(root.foreground, 1.3)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -4080,14 +4186,29 @@ Item {
                 }
               }
 
-              Button {
+              Row {
                 width: parent.width
-                text: root.connectionButtonText()
-                iconText: "󰍂"
-                foreground: root.foreground
-                selected: root.fullyConnected
-                enabled: root.service && !root.fullyConnected && !root.service.loginBusy
-                onClicked: if (root.service) root.service.login()
+                spacing: Style.space(7)
+
+                Button {
+                  width: root.service && root.service.loginBusy
+                    ? Math.max(80, parent.width - cancelLoginButton.width
+                      - parent.spacing) : parent.width
+                  text: root.connectionButtonText()
+                  iconText: "󰍂"
+                  foreground: root.foreground
+                  selected: root.fullyConnected
+                  enabled: root.service && !root.fullyConnected && !root.service.loginBusy
+                  onClicked: if (root.service) root.service.login()
+                }
+
+                Button {
+                  id: cancelLoginButton
+                  text: "Cancel"
+                  foreground: root.foreground
+                  visible: root.service && root.service.loginBusy
+                  onClicked: if (root.service) root.service.cancelLogin()
+                }
               }
 
               Text {
@@ -4208,6 +4329,12 @@ Item {
                 visible: !root.fullyConnected
                 enabled: root.service && !root.service.loginBusy
                 onClicked: if (root.service) root.service.login()
+              }
+              Button {
+                text: "Cancel"
+                foreground: root.foreground
+                visible: root.service && root.service.loginBusy
+                onClicked: if (root.service) root.service.cancelLogin()
               }
               Button {
                 text: "Reconnect Spotify"
@@ -4345,6 +4472,7 @@ Item {
                   placeholderText: "Omarchy Spotify"
                   text: root.draftDeviceName
                   onTextEdited: root.draftDeviceName = text
+                  onEditingFinished: root.persistDraftSettings()
                 }
               }
               Column {
@@ -4366,6 +4494,7 @@ Item {
                   text: root.draftIdleMinutes
                   validator: IntValidator { bottom: 0; top: 1440 }
                   onTextEdited: root.draftIdleMinutes = text
+                  onEditingFinished: root.persistDraftSettings()
                 }
               }
             }
@@ -4391,7 +4520,10 @@ Item {
                 tooltipText: root.draftShowMiniPlayer
                   ? "Clicking the bar icon opens the mini-player first"
                   : "Clicking the bar icon opens the full player directly"
-                onClicked: root.draftShowMiniPlayer = !root.draftShowMiniPlayer
+                onClicked: {
+                  root.draftShowMiniPlayer = !root.draftShowMiniPlayer
+                  root.persistDraftSettings()
+                }
               }
             }
 
@@ -4411,15 +4543,15 @@ Item {
                 text: "Super + Shift + M · " + root.draftShortcutPlayer
                 iconText: "󰌌"
                 foreground: root.foreground
-                selected: root.draftShortcutPlayer !== "Omarchy default"
+                selected: root.draftShortcutPlayer !== "Omarchy Music app"
                 focusable: true
-                tooltipText: "Cycle between Omarchy's music app, full player, and mini-player"
+                tooltipText: "Cycle between Omarchy's Music app, full player, and mini-player"
                 onClicked: root.cycleShortcutPlayer()
               }
 
               Text {
                 width: parent.width
-                text: "Cycles Omarchy default → Full player → Mini player. The shortcut uses this preference after it is bound once."
+                text: "Cycles Omarchy Music app → Full player → Mini player. Bind Super+Shift+M once in Hyprland, then this preference chooses what it opens."
                 color: Qt.darker(root.foreground, 1.45)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -4451,6 +4583,7 @@ Item {
                   onClicked: {
                     root.draftShowTitle = !root.draftShowTitle
                     root.enforceScrollAvailability()
+                    root.persistDraftSettings()
                   }
                 }
                 Button {
@@ -4461,6 +4594,7 @@ Item {
                   onClicked: {
                     root.draftShowArtist = !root.draftShowArtist
                     root.enforceScrollAvailability()
+                    root.persistDraftSettings()
                   }
                 }
                 Button {
@@ -4469,7 +4603,10 @@ Item {
                   selected: root.draftScrollBarText
                   enabled: Api.canScrollBarText(root.draftShowTitle, root.draftShowArtist)
                   tooltipText: "Scroll bar text only when it is too wide to fit"
-                  onClicked: root.draftScrollBarText = !root.draftScrollBarText
+                  onClicked: {
+                    root.draftScrollBarText = !root.draftScrollBarText
+                    root.persistDraftSettings()
+                  }
                 }
               }
 
@@ -4518,6 +4655,7 @@ Item {
                   }
                   onReleased: function(value) {
                     root.draftScrollSpeed = Api.normalizedScrollSpeed(value)
+                    root.persistDraftSettings()
                   }
                 }
               }
@@ -4563,21 +4701,13 @@ Item {
               wrapMode: Text.WordWrap
             }
 
-            Row {
+            Text {
               width: parent.width
-
-              Item {
-                width: Math.max(0, parent.width - saveChangesButton.implicitWidth)
-                height: 1
-              }
-              Button {
-                id: saveChangesButton
-                text: "Save changes"
-                iconText: "󰆓"
-                foreground: root.foreground
-                selected: true
-                onClicked: root.saveSettings()
-              }
+              text: "Changes apply immediately. Device name and audio quality update the next time local playback starts."
+              color: Qt.darker(root.foreground, 1.45)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
             }
           }
         }

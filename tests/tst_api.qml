@@ -105,12 +105,39 @@ TestCase {
   }
 
   function test_catalogSearchText_scopesResultsToArtist() {
+    compare(Api.sanitizeSearchTerm("AC/DC \"Live\""), "AC/DC Live")
     compare(Api.catalogSearchText("Miles Davis", "blue in green"),
       "blue in green artist:\"Miles Davis\"")
     compare(Api.catalogSearchText("AC/DC \"Live\"", ""),
       "artist:\"AC/DC Live\"")
     compare(Api.artistPlaylistSearchText("Miles Davis", "blue in green"),
       "blue in green Miles Davis")
+  }
+
+  function test_volumeAndSeekHelpers_clampMuteAndRemember() {
+    compare(Api.nextVolume(0.5, 0.1), 0.6)
+    compare(Api.nextVolume(0.98, 0.1), 1)
+    compare(Api.nextVolume(0.02, -0.1), 0)
+    verify(Api.shouldRememberVolume(0.05))
+    verify(!Api.shouldRememberVolume(0.001))
+    compare(Api.unmuteVolume(0.4), 0.4)
+    compare(Api.unmuteVolume(0), 0.05)
+    compare(Api.seekPosition(10, 10, 183), 20)
+    compare(Api.seekPosition(180, 10, 183), 183)
+    compare(Api.seekPosition(5, -10, 183), 0)
+    compare(Api.seekPosition(40, 10, 0), 50)
+  }
+
+  function test_shallowCopyAndAssign_copyWithoutSharingIdentity() {
+    var source = { name: "Work", volume: 12 }
+    var copy = Api.shallowCopy(source)
+    compare(copy.name, "Work")
+    verify(copy !== source)
+    source.name = "Kitchen"
+    compare(copy.name, "Work")
+    compare(Api.assign({ a: 1 }, { b: 2, a: 3 }).a, 3)
+    compare(Api.rateLimitSuffix("4"), ". Try again in 4 seconds")
+    compare(Api.rateLimitSuffix(""), "")
   }
 
   function test_responsiveMediaRowsAndSearchColumnsUseMeasuredWidth() {
@@ -279,10 +306,21 @@ TestCase {
 
   function test_universalSearchVisibility_isExplicitAndHiddenFromDevices() {
     verify(Api.universalSearchVisible("search", false))
-    verify(Api.universalSearchVisible("setup", true))
+    verify(!Api.universalSearchVisible("setup", true))
     verify(!Api.universalSearchVisible("setup", false))
     verify(!Api.universalSearchVisible("devices", true))
     verify(!Api.universalSearchVisible("login", true))
+  }
+
+  function test_previousContentTab_skipsSettingsAndDevices() {
+    compare(Api.previousContentTab("setup", "home"), "home")
+    compare(Api.previousContentTab("devices", "library"), "library")
+    compare(Api.previousContentTab("devices", "setup"), "home")
+    compare(Api.previousContentTab("setup", "devices"), "home")
+    compare(Api.previousContentTab("setup", ""), "home")
+    compare(Api.previousContentTab("home", "library"), "")
+    compare(Api.rememberContentTab("setup"), "")
+    compare(Api.rememberContentTab("playlists"), "playlists")
   }
 
   function test_tracksForArtist_filtersBroadSearchByStableArtistId() {
@@ -345,6 +383,21 @@ TestCase {
       id: "original", name: "Love The Way You Lie",
       artists: [{ id: "eminem", name: "Eminem" }]
     }))
+  }
+
+  function test_uniqueRadioTracks_keepsSeedFirstAndDropsDuplicateUris() {
+    var seed = { uri: "spotify:track:seed", name: "Seed" }
+    var radio = Api.uniqueRadioTracks(seed, [
+      { uri: "spotify:track:seed", name: "Duplicate seed" },
+      { uri: "spotify:track:two", name: "Two" },
+      { uri: "", name: "Missing" },
+      { uri: "spotify:track:two", name: "Two again" },
+      { uri: "spotify:track:three", name: "Three" }
+    ])
+    compare(radio.length, 3)
+    compare(radio[0], seed)
+    compare(radio[1].name, "Two")
+    compare(radio[2].name, "Three")
   }
 
   function test_discoveryPlaylists_keepsOfficialRelevantResultsInUsefulOrder() {
@@ -702,11 +755,61 @@ TestCase {
   }
 
   function test_visibleUiStartsAndRefreshesLocalReceiver() {
-    compare(Api.visibleLocalReceiverAction(false, true, false, false), "idle")
-    compare(Api.visibleLocalReceiverAction(true, false, false, false), "idle")
-    compare(Api.visibleLocalReceiverAction(true, true, false, true), "wait")
-    compare(Api.visibleLocalReceiverAction(true, true, false, false), "start")
-    compare(Api.visibleLocalReceiverAction(true, true, true, false), "refresh")
+    compare(Api.visibleLocalReceiverAction(false, true, false, false, true), "idle")
+    compare(Api.visibleLocalReceiverAction(true, false, false, false, true), "idle")
+    compare(Api.visibleLocalReceiverAction(true, true, false, true, true), "wait")
+    compare(Api.visibleLocalReceiverAction(true, true, false, false, false), "idle")
+    compare(Api.visibleLocalReceiverAction(true, true, false, false, true), "start")
+    compare(Api.visibleLocalReceiverAction(true, true, true, false, false), "refresh")
+  }
+
+  function test_remotePlaybackPoll_skipsBackgroundLocalPlayback() {
+    verify(Api.remotePlaybackPollShouldRun(true, false, true, false, true))
+    verify(Api.remotePlaybackPollShouldRun(true, false, false, true, true))
+    verify(!Api.remotePlaybackPollShouldRun(true, false, false, false, true))
+    verify(!Api.remotePlaybackPollShouldRun(true, true, true, true, true))
+    verify(!Api.remotePlaybackPollShouldRun(false, false, true, true, true))
+    compare(Api.remotePlaybackPollInterval(true, true, false), 5000)
+    compare(Api.remotePlaybackPollInterval(true, false, true), 15000)
+    compare(Api.remotePlaybackPollInterval(false, true, false), 15000)
+  }
+
+  function test_normalizedShortcutPlayer_mapsLegacyDefault() {
+    compare(Api.normalizedShortcutPlayer("Omarchy default"), "Omarchy Music app")
+    compare(Api.normalizedShortcutPlayer("Full player"), "Full player")
+    compare(Api.normalizedShortcutPlayer("Mini player"), "Mini player")
+    compare(Api.normalizedShortcutPlayer(""), "Omarchy Music app")
+  }
+
+  function test_repeatAndSearchLabels_areHumanReadable() {
+    compare(Api.repeatModeLabel("off"), "Off")
+    compare(Api.repeatModeLabel("track"), "This song")
+    compare(Api.repeatModeLabel("context"), "All")
+    compare(Api.searchTypeLabel("track"), "Songs")
+    compare(Api.searchTypeLabel("audiobook"), "Books")
+    compare(Api.spotifyTypeLabel("track"), "Song")
+    compare(Api.spotifyTypeLabel("playlist"), "Playlist")
+  }
+
+  function test_backendLoadFields_mapsWebApiBodies() {
+    compare(JSON.stringify(Api.backendLoadFields({
+      context_uri: "spotify:album:abc",
+      offset: { position: 3 }
+    })), JSON.stringify({
+      play: true,
+      context_uri: "spotify:album:abc",
+      offset_index: 3
+    }))
+    compare(JSON.stringify(Api.backendLoadFields({
+      uris: ["spotify:track:one", "spotify:track:two"],
+      position_ms: 1500
+    })), JSON.stringify({
+      play: true,
+      uris: ["spotify:track:one", "spotify:track:two"],
+      position_ms: 1500
+    }))
+    compare(Api.backendLoadFields(null), null)
+    compare(Api.backendLoadFields({}), null)
   }
 
   function test_currentPlaybackDeviceWorksBeforeDeviceListLoads() {
@@ -875,6 +978,9 @@ TestCase {
     compare(Api.spotifyConnectTokenType("authorization_code"), "authorization_code")
     compare(Api.spotifyConnectTokenType("default"), "default")
     compare(Api.spotifyConnectTokenType("unexpected"), "default")
+    verify(Api.isSpotifyConnectDeviceId("abcdEFGH1234"))
+    verify(!Api.isSpotifyConnectDeviceId("short"))
+    verify(!Api.isSpotifyConnectDeviceId("bad id"))
   }
 
   function test_normalizePlaybackState_keepsRemoteTrackAndNullableDeviceId() {
@@ -904,6 +1010,30 @@ TestCase {
     compare(state.progressSeconds, 42)
     compare(state.repeatMode, "context")
     compare(state.shuffle, true)
+    compare(state.contextUri, "")
+    compare(state.contextHref, "")
+    compare(state.contextType, "")
+  }
+
+  function test_normalizePlaybackState_keepsRadioContextFields() {
+    var state = Api.normalizePlaybackState({
+      is_playing: true,
+      progress_ms: 1000,
+      device: { id: "phone", name: "Phone", type: "Smartphone", is_active: true },
+      context: {
+        uri: "spotify:playlist:radio",
+        href: "https://api.spotify.com/v1/playlists/radio",
+        type: "playlist"
+      },
+      item: {
+        id: "track", uri: "spotify:track:track", type: "track",
+        name: "A song", duration_ms: 180000
+      }
+    }, 192)
+
+    compare(state.contextUri, "spotify:playlist:radio")
+    compare(state.contextHref, "https://api.spotify.com/v1/playlists/radio")
+    compare(state.contextType, "playlist")
   }
 
   function test_normalizePlaybackState_preservesUnknownRemoteVolume() {

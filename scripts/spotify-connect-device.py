@@ -63,6 +63,65 @@ def emit(payload: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
+def receiver_cache_path() -> Path:
+    runtime = str(os.environ.get("XDG_RUNTIME_DIR") or "")
+    if not runtime.startswith("/"):
+        raise ConnectError("invalid runtime directory")
+    return Path(runtime) / "omarchy-spotify" / "connect-receivers.json"
+
+
+def write_receiver_cache(devices: list[dict[str, Any]]) -> None:
+    path = receiver_cache_path()
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    payload = {
+        "schemaVersion": 1,
+        "savedAt": int(time.time()),
+        "devices": [
+            {
+                "id": item["id"],
+                "address": item["address"],
+                "port": item["port"],
+                "cpath": item["cpath"],
+                "brand": item.get("brand") or "",
+                "serviceVersion": item.get("serviceVersion") or "1.0",
+            }
+            for item in devices
+            if item.get("id") and item.get("address") and item.get("port")
+        ],
+    }
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(path)
+
+
+def read_cached_receiver(device_id: str) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(receiver_cache_path().read_text(encoding="utf-8"))
+        if int(payload.get("schemaVersion") or 0) != 1:
+            return None
+        saved_at = int(payload.get("savedAt") or 0)
+        if saved_at <= 0 or time.time() - saved_at > 300:
+            return None
+        for item in payload.get("devices") or []:
+            if str((item or {}).get("id") or "") != device_id:
+                continue
+            port = int(item.get("port"))
+            if port < 1 or port > 65535:
+                return None
+            return {
+                "id": device_id,
+                "address": safe_address(str(item.get("address") or "")),
+                "port": port,
+                "cpath": endpoint_path(str(item.get("cpath") or "/")),
+                "brand": str(item.get("brand") or ""),
+                "serviceVersion": str(item.get("serviceVersion") or "1.0"),
+            }
+    except (OSError, TypeError, ValueError, json.JSONDecodeError, ConnectError):
+        return None
+    return None
+
+
 def avahi_unescape(value: str) -> str:
     return re.sub(r"\\([0-9]{3})", lambda match: chr(int(match.group(1))), value)
 
@@ -607,13 +666,26 @@ def activate_receiver(device_id: str, access_token: str = "") -> dict[str, Any]:
         token_type = "default"
     fields: dict[str, str] = {}
     attempts = 0
+    minted_access_token = False
     while attempts < 7:
         attempts += 1
         if token_type == "authorization_code":
             blob = exchange_authorization_code(access_token, receiver)
             client_key = ""
         elif token_type == "accesstoken":
-            blob = exchange_access_token(access_token, receiver)
+            # Official ZeroConf access-token login accepts the short-lived
+            # streaming token as the blob. Device-scoped minting is only a
+            # fallback: Spotify's device-auth reply is not always JSON, and
+            # failing that call used to abort before addUser ran.
+            if minted_access_token:
+                try:
+                    blob = exchange_access_token(access_token, receiver)
+                except ConnectError:
+                    token_type = "default"
+                    time.sleep(0.25)
+                    continue
+            else:
+                blob = validated_access_token(access_token)
             client_key = ""
         else:
             public_key = str(info.get("publicKey") or "")
@@ -645,13 +717,17 @@ def activate_receiver(device_id: str, access_token: str = "") -> dict[str, Any]:
                 receiver["address"], receiver["port"], f'{receiver["cpath"]}?{info_query}'
             )
             # A receiver may advertise access-token login before its reusable
-            # credential endpoint is awake. Retain the former behavior as a
-            # compatibility fallback after the advertised flow is rejected.
-            if token_type == "accesstoken":
+            # credential endpoint is awake. Try a device-scoped token first,
+            # then the reusable-credential blob.
+            if token_type == "accesstoken" and not minted_access_token:
+                minted_access_token = True
+            elif token_type == "accesstoken":
                 token_type = "default"
             continue
         if status_value == 202 and status_string == "ERROR-LOGIN-FAILED" and attempts < 7:
-            if token_type == "accesstoken":
+            if token_type == "accesstoken" and not minted_access_token:
+                minted_access_token = True
+            elif token_type == "accesstoken":
                 token_type = "default"
             time.sleep(0.25)
             continue
@@ -662,7 +738,7 @@ def activate_receiver(device_id: str, access_token: str = "") -> dict[str, Any]:
 def control_receiver(device_id: str, action: str, value: str = "") -> dict[str, Any]:
     if not DEVICE_ID_RE.fullmatch(device_id):
         raise ConnectError("invalid receiver id")
-    receiver = find_receiver(device_id, attempts=3)
+    receiver = read_cached_receiver(device_id) or find_receiver(device_id, attempts=3)
     if receiver is None:
         raise ConnectError("receiver is no longer discoverable")
     if str(receiver.get("brand") or "").strip().casefold() != "sonos":
@@ -732,6 +808,10 @@ def main() -> int:
     try:
         if command == "discover":
             devices = discover_receivers(include_volume=True)
+            try:
+                write_receiver_cache(devices)
+            except (OSError, ConnectError):
+                pass
             for item in devices:
                 for private_field in (
                     "address", "port", "cpath", "serviceVersion", "publicKey", "clientId"

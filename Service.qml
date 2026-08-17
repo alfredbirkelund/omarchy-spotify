@@ -24,11 +24,11 @@ Item {
   readonly property string pluginDir: manifest && manifest.__sourceDir
     ? String(manifest.__sourceDir) : ""
 
-  property var settings: ({
+  readonly property var defaultSettingValues: ({
     deviceName: "Omarchy Spotify",
     idleShutdownMinutes: 15,
     showMiniPlayer: "On",
-    shortcutPlayer: "Omarchy default",
+    shortcutPlayer: "Omarchy Music app",
     showTrackTitle: "On",
     showArtistName: "Off",
     scrollBarText: "Off",
@@ -37,22 +37,23 @@ Item {
     searchHistory: "[]",
     sessionState: "{}"
   })
+  property var settings: Api.shallowCopy(defaultSettingValues)
 
   readonly property string deviceName: String(settings.deviceName || "Omarchy Spotify").trim() || "Omarchy Spotify"
   readonly property int idleShutdownMinutes: Math.max(0, Math.min(1440,
     Math.floor(Number(settings.idleShutdownMinutes) || 0)))
   readonly property bool showMiniPlayer: String(settings.showMiniPlayer || "On") !== "Off"
-  readonly property string shortcutPlayer: {
-    var value = String(settings.shortcutPlayer || "Omarchy default")
-    return value === "Full player" ? "Full player"
-      : (value === "Mini player" ? "Mini player" : "Omarchy default")
-  }
+  readonly property string shortcutPlayer: Api.normalizedShortcutPlayer(
+    settings.shortcutPlayer)
   readonly property bool showTrackTitle: String(settings.showTrackTitle || "On") !== "Off"
   readonly property bool showArtistName: String(settings.showArtistName || "Off") === "On"
   readonly property bool scrollBarText: String(settings.scrollBarText || "Off") === "On"
   readonly property real scrollSpeed: Api.normalizedScrollSpeed(settings.scrollSpeed)
-  readonly property int bitrateKbps: String(settings.audioQuality || "320 kbps").indexOf("96") === 0
-    ? 96 : (String(settings.audioQuality || "320 kbps").indexOf("160") === 0 ? 160 : 320)
+  readonly property int bitrateKbps: {
+    var quality = String(settings.audioQuality || "320 kbps")
+    return quality.indexOf("96") === 0 ? 96
+      : (quality.indexOf("160") === 0 ? 160 : 320)
+  }
   readonly property string audioQuality: bitrateKbps + " kbps"
   readonly property var searchHistory: Api.parseStringList(settings.searchHistory, 12)
   readonly property var sessionState: {
@@ -63,6 +64,9 @@ Item {
   readonly property alias auth: authManager
   readonly property alias api: spotifyApi
   readonly property alias daemon: daemonManager
+  readonly property alias backend: backendClient
+  readonly property bool accountConnected: authManager.loggedIn
+  readonly property bool sessionPending: !authManager.sessionChecked
   readonly property bool fullyConnected: daemonManager.playbackReady
     && authManager.loggedIn && daemonManager.credentialsAvailable
   readonly property bool loginBusy: daemonManager.setupBusy
@@ -70,19 +74,7 @@ Item {
     || authManager.sessionBusy || !authManager.sessionChecked
     || daemonManager.authenticationBusy || daemonManager.credentialsClearBusy
     || !daemonManager.credentialsChecked || !daemonManager.requirementsChecked
-  readonly property string loginProgress: daemonManager.setupBusy
-    ? "Preparing playback on this computer"
-    : (daemonManager.credentialsClearBusy
-    ? "Signing out"
-    : (authManager.loginBusy
-      ? "Approve Spotify access in your browser"
-      : (authManager.sessionBusy || !authManager.sessionChecked
-        ? "Checking your saved Spotify session"
-        : (!daemonManager.requirementsChecked || !daemonManager.credentialsChecked
-          ? "Checking local playback"
-          : (daemonManager.authenticationBusy
-            ? "Approve local playback in your browser"
-            : (fullyConnected ? "Connected to Spotify" : "Ready to connect"))))))
+  readonly property string loginProgress: loginProgressText()
 
   readonly property var mprisPlayers: Mpris.players ? Mpris.players.values : []
   readonly property var activePlayer: spotifydPlayer()
@@ -101,13 +93,13 @@ Item {
   property string remoteControlDiscoveryKey: ""
   readonly property var remoteTrack: remotePlayback ? remotePlayback.item : null
   readonly property var currentArtists: remoteTrack
-    && (useRemotePlayback || (currentTrackId() !== ""
-      && String(remoteTrack.id || "") === currentTrackId()))
+    && (useRemotePlayback || (currentTrackId !== ""
+      && String(remoteTrack.id || "") === currentTrackId))
     ? Api.arrayValues(remoteTrack.artists) : []
   readonly property bool currentArtistContextAvailable: Api.artistContextAvailable(
     useRemotePlayback && remoteTrack ? remoteTrack.type : "",
-    currentTrackId(), currentArtists)
-  readonly property var currentLyricsSong: Api.lyricsSong(currentTrackId(),
+    currentTrackId, currentArtists)
+  readonly property var currentLyricsSong: Api.lyricsSong(currentTrackId,
     title, artist, album, lengthSeconds, artUrl, positionSeconds)
   readonly property bool lyricsAvailable: currentLyricsSong !== null
   readonly property string lyricsPluginId: "stappmus.lyrics"
@@ -128,8 +120,8 @@ Item {
   property var pendingLyricsSong: null
   property int lyricsPluginLaunchAttempts: 0
   readonly property var currentAlbumItem: remoteTrack
-    && (useRemotePlayback || (currentTrackId() !== ""
-      && String(remoteTrack.id || "") === currentTrackId()))
+    && (useRemotePlayback || (currentTrackId !== ""
+      && String(remoteTrack.id || "") === currentTrackId))
     ? remoteTrack.albumItem : null
   readonly property var remoteDevice: remotePlayback ? remotePlayback.device : null
   readonly property bool remotePlaybackIsLocal: !!remoteDevice
@@ -192,8 +184,28 @@ Item {
     ? String(remoteTrack.uri || "") : metadataString("xesam:url")
   readonly property string currentExternalUrl: useRemotePlayback && remoteTrack
     ? String(remoteTrack.externalUrl || spotifyWebUrl(currentUri)) : spotifyWebUrl(currentUri)
+  readonly property string currentTrackId: {
+    // When a remote device owns playback, stale metadata from an idle local
+    // spotifyd player must not turn a podcast episode into a song.
+    if (useRemotePlayback) {
+      if (!remoteTrack || remoteTrack.type !== "track") return ""
+      return Api.spotifyTrackId(remoteTrack.uri)
+        || String(remoteTrack.id || "").trim()
+    }
+
+    var id = Api.spotifyTrackId(currentUri)
+    if (id) return id
+
+    // spotifyd exposes the recording as an MPRIS object path such as
+    // /spotify/track/<id>, but does not currently publish xesam:url.
+    id = Api.spotifyTrackId(metadataString("mpris:trackid"))
+    if (id) return id
+
+    return remoteTrack && remotePlaybackIsLocal && remoteTrack.type === "track"
+      ? String(remoteTrack.id || "").trim() : ""
+  }
   readonly property var currentTrackItem: Api.currentPlaybackTrack(
-    currentTrackId(), remoteTrack, title, artist, album, artUrl,
+    currentTrackId, remoteTrack, title, artist, album, artUrl,
     lengthSeconds, currentExternalUrl)
   readonly property string currentTrackItemUri: currentTrackItem
     ? String(currentTrackItem.uri || "") : ""
@@ -240,8 +252,9 @@ Item {
   property var queue: []
   property var devices: []
   property var apiDevices: []
-  property var pendingDeviceLoadCallback: null
   property string pendingDeviceLoadError: ""
+  property var deviceLoadWaiters: []
+  property bool pendingDeviceDiscover: false
   property string selectedDeviceId: ""
   property bool selectedDeviceExplicit: false
   property string localDeviceId: ""
@@ -349,6 +362,7 @@ Item {
     && radioContextSelected && playing
   property bool localActivationRequested: false
   property int deviceProbeAttempts: 0
+  property int localSocketWaitAttempts: 0
   property int visibleLocalDeviceRefreshAttempts: 0
   property bool loginFlowActive: false
   property string pendingConnectDeviceId: ""
@@ -366,40 +380,36 @@ Item {
   signal lyricsPluginPromptRequested(string surface, string availability)
   signal lyricsPluginOpened(string surface)
 
+  function loginProgressText() {
+    if (daemonManager.setupBusy) return "Preparing playback on this computer"
+    if (daemonManager.credentialsClearBusy) return "Signing out"
+    if (authManager.loginBusy) return "Approve Spotify access in your browser"
+    if (authManager.sessionBusy || !authManager.sessionChecked)
+      return "Checking your saved Spotify session"
+    if (!daemonManager.requirementsChecked || !daemonManager.credentialsChecked)
+      return "Checking local playback"
+    if (daemonManager.authenticationBusy)
+      return "Approve local playback in your browser"
+    return fullyConnected ? "Connected to Spotify" : "Ready to connect"
+  }
+
   function defaults() {
-    var fallback = {
-      deviceName: "Omarchy Spotify",
-      idleShutdownMinutes: 15,
-      showMiniPlayer: "On",
-      shortcutPlayer: "Omarchy default",
-      showTrackTitle: "On",
-      showArtistName: "Off",
-      scrollBarText: "Off",
-      scrollSpeed: "1",
-      audioQuality: "320 kbps",
-      searchHistory: "[]",
-      sessionState: "{}"
-    }
+    var fallback = Api.shallowCopy(defaultSettingValues)
     var source = manifest && manifest.barWidget && manifest.barWidget.defaults
       ? manifest.barWidget.defaults : null
-    if (!source) return fallback
-    for (var key in source) fallback[key] = source[key]
-    return fallback
+    return source ? Api.assign(fallback, source) : fallback
   }
 
   function normalizedSettings(values) {
     var next = defaults()
     var source = values || {}
-    if (source.deviceName !== undefined) next.deviceName = source.deviceName
-    if (source.idleShutdownMinutes !== undefined)
-      next.idleShutdownMinutes = source.idleShutdownMinutes
-    if (source.showMiniPlayer !== undefined) next.showMiniPlayer = source.showMiniPlayer
-    if (source.shortcutPlayer !== undefined) next.shortcutPlayer = source.shortcutPlayer
-    if (source.showTrackTitle !== undefined) next.showTrackTitle = source.showTrackTitle
-    if (source.showArtistName !== undefined) next.showArtistName = source.showArtistName
-    if (source.scrollBarText !== undefined) next.scrollBarText = source.scrollBarText
-    if (source.scrollSpeed !== undefined) next.scrollSpeed = source.scrollSpeed
-    if (source.audioQuality !== undefined) next.audioQuality = source.audioQuality
+    var keys = ["deviceName", "idleShutdownMinutes", "showMiniPlayer",
+      "shortcutPlayer", "showTrackTitle", "showArtistName", "scrollBarText",
+      "scrollSpeed", "audioQuality"]
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i]
+      if (source[key] !== undefined) next[key] = source[key]
+    }
     if (source.searchHistory !== undefined)
       next.searchHistory = JSON.stringify(Api.parseStringList(source.searchHistory, 12))
     if (source.sessionState !== undefined) {
@@ -413,9 +423,7 @@ Item {
     next.idleShutdownMinutes = Math.max(0, Math.min(1440,
       Math.floor(Number(next.idleShutdownMinutes) || 0)))
     next.showMiniPlayer = String(next.showMiniPlayer || "On") === "Off" ? "Off" : "On"
-    var shortcutTarget = String(next.shortcutPlayer || "Omarchy default")
-    next.shortcutPlayer = shortcutTarget === "Full player" ? "Full player"
-      : (shortcutTarget === "Mini player" ? "Mini player" : "Omarchy default")
+    next.shortcutPlayer = Api.normalizedShortcutPlayer(next.shortcutPlayer)
     next.showTrackTitle = String(next.showTrackTitle || "On") === "Off" ? "Off" : "On"
     next.showArtistName = String(next.showArtistName || "Off") === "On" ? "On" : "Off"
     next.scrollBarText = String(next.scrollBarText || "Off") === "On" ? "On" : "Off"
@@ -440,8 +448,7 @@ Item {
         result.push(item)
         continue
       }
-      var copy = ({})
-      for (var key in item) copy[key] = item[key]
+      var copy = Api.shallowCopy(item)
       copy.name = nextName
       copy.local = true
       result.push(copy)
@@ -462,11 +469,7 @@ Item {
   }
 
   function persistSettings(values) {
-    var merged = ({})
-    for (var existing in settings) merged[existing] = settings[existing]
-    var source = values || {}
-    for (var key in source) merged[key] = source[key]
-    var next = normalizedSettings(merged)
+    var next = normalizedSettings(Api.assign(Api.shallowCopy(settings), values))
     applySettings(next)
     if (shell && typeof shell.updateEntryInline === "function")
       shell.updateEntryInline(pluginId, next)
@@ -653,7 +656,7 @@ Item {
 
   function ensureVisibleLocalReceiver() {
     var action = Api.visibleLocalReceiverAction(uiVisible, fullyConnected,
-      daemonManager.running, daemonManager.busy)
+      daemonManager.running, daemonManager.busy, idleShutdownMinutes === 0)
     if (action === "idle") {
       cancelVisibleLocalDeviceRefresh()
       return
@@ -665,7 +668,7 @@ Item {
 
   function refreshVisibleLocalDevice() {
     var action = Api.visibleLocalReceiverAction(uiVisible, fullyConnected,
-      daemonManager.running, daemonManager.busy)
+      daemonManager.running, daemonManager.busy, idleShutdownMinutes === 0)
     if (action === "idle") {
       cancelVisibleLocalDeviceRefresh()
       return
@@ -835,6 +838,7 @@ Item {
         rememberRemoteVolume(device, device.volumePercent)
     }
     remotePlayback = state
+    verifyRadioPlaybackContext()
     var discoveryKey = state && state.device && state.device.active
         && String(state.device.type).toLowerCase() === "speaker"
         && (state.device.restricted
@@ -940,8 +944,9 @@ Item {
 
   function loadProfile() {
     if (currentUserId) return
+    var expected = dataSerial
     spotifyApi.request("GET", "/me", null, null, function(status, payload, error) {
-      if (error || !payload) return
+      if (expected !== root.dataSerial || error || !payload) return
       root.currentUserId = String(payload.id || "")
       root.currentUserName = String(payload.display_name || "")
     })
@@ -965,10 +970,6 @@ Item {
       && String(item.ownerId || "") === currentUserId
   }
 
-  function playlistContentsAvailable(item) {
-    return !!item && item.type === "playlist" && !!item.id
-  }
-
   function editablePlaylists() {
     var result = []
     for (var i = 0; i < playlists.length; i++)
@@ -982,8 +983,7 @@ Item {
     if (!key || !snapshot) return
     function updated(item) {
       if (!item || String(item.id || "") !== key) return item
-      var copy = ({})
-      for (var propertyName in item) copy[propertyName] = item[propertyName]
+      var copy = Api.shallowCopy(item)
       copy.snapshotId = snapshot
       return copy
     }
@@ -1017,8 +1017,7 @@ Item {
     if (!validRadioPlaylist(value)) return
     lastRadioPlaylist = value
     radioContextSelected = false
-    var state = ({})
-    for (var key in sessionState) state[key] = sessionState[key]
+    var state = Api.shallowCopy(sessionState)
     state.lastRadioPlaylist = value
     persistSession(state)
   }
@@ -1037,18 +1036,13 @@ Item {
       radioContextSelected = false
       return
     }
-    var expectedSerial = radioSerial
     var expectedPlaylist = lastRadioPlaylist
-    spotifyApi.request("GET", "/me/player", null, null,
-      function(status, payload, error) {
-        if (error || expectedSerial !== root.radioSerial
-            || !root.sameRadioPlaylist(expectedPlaylist, root.lastRadioPlaylist)) return
-        var context = payload && payload.context ? payload.context : null
-        root.radioContextSelected = !!context
-          && (String(context.uri || "") === String(expectedPlaylist.uri)
-            || (context.type === "playlist"
-              && String(context.href || "").indexOf("/playlists/" + expectedPlaylist.id) >= 0))
-      })
+    var contextUri = remotePlayback ? String(remotePlayback.contextUri || "") : ""
+    var contextType = remotePlayback ? String(remotePlayback.contextType || "") : ""
+    var contextHref = remotePlayback ? String(remotePlayback.contextHref || "") : ""
+    radioContextSelected = contextUri === String(expectedPlaylist.uri)
+      || (contextType === "playlist"
+        && contextHref.indexOf("/playlists/" + expectedPlaylist.id) >= 0)
   }
 
   // Restore the keyring-backed session only when a Spotify API surface is
@@ -1068,37 +1062,107 @@ Item {
     })
   }
 
-  function loadPlaylists(append, callback, serial) {
-    if (playlistsLoading) {
+  function libraryCollectionSpec(kind) {
+    var value = String(kind || "tracks")
+    if (value === "playlists")
+      return {
+        items: "playlists", next: "playlistsNext",
+        loading: "playlistsLoading", loaded: "playlistsLoaded",
+        path: "/me/playlists", query: { limit: 30 },
+        mapper: "playlist", cursor: false, checkSaved: true, mergeDiscover: true
+      }
+    if (value === "albums")
+      return {
+        items: "savedAlbums", next: "savedAlbumsNext",
+        loading: "savedAlbumsLoading", loaded: "savedAlbumsLoaded",
+        path: "/me/albums", query: { limit: 30 },
+        mapper: "context", cursor: false
+      }
+    if (value === "artists")
+      return {
+        items: "followedArtists", next: "followedArtistsNext",
+        loading: "followedArtistsLoading", loaded: "followedArtistsLoaded",
+        path: "/me/following", query: { type: "artist", limit: 30 },
+        mapper: "context", cursor: true
+      }
+    if (value === "shows")
+      return {
+        items: "savedShows", next: "savedShowsNext",
+        loading: "savedShowsLoading", loaded: "savedShowsLoaded",
+        path: "/me/shows", query: { limit: 30 },
+        mapper: "context", cursor: false
+      }
+    if (value === "episodes")
+      return {
+        items: "savedEpisodes", next: "savedEpisodesNext",
+        loading: "savedEpisodesLoading", loaded: "savedEpisodesLoaded",
+        path: "/me/episodes", query: { limit: 30 },
+        mapper: "track", cursor: false
+      }
+    if (value === "audiobooks")
+      return {
+        items: "savedAudiobooks", next: "savedAudiobooksNext",
+        loading: "savedAudiobooksLoading", loaded: "savedAudiobooksLoaded",
+        path: "/me/audiobooks", query: { limit: 30 },
+        mapper: "context", cursor: false
+      }
+    return {
+      items: "savedTracks", next: "savedTracksNext",
+      loading: "savedTracksLoading", loaded: "savedTracksLoaded",
+      path: "/me/tracks", query: { limit: 30 },
+      mapper: "track", cursor: false
+    }
+  }
+
+  function libraryMapper(kind) {
+    if (kind === "playlist")
+      return function(value) { return Api.normalizePlaylist(value, 96) }
+    if (kind === "track")
+      return function(value) { return Api.normalizeTrack(value, 96) }
+    return function(value) { return Api.normalizeContext(value, 96) }
+  }
+
+  function loadLibraryCollection(kind, append, callback, serial) {
+    var spec = libraryCollectionSpec(kind)
+    if (root[spec.loading]) {
       if (typeof callback === "function") callback()
       return
     }
-    var path = append ? playlistsNext : "/me/playlists"
+    var path = append ? root[spec.next] : spec.path
     if (!path) {
       if (typeof callback === "function") callback()
       return
     }
     var expected = serial === undefined ? dataSerial : serial
-    playlistsLoading = true
-    spotifyApi.request("GET", path, append ? null : { limit: 30 }, null,
+    root[spec.loading] = true
+    spotifyApi.request("GET", path, append ? null : spec.query, null,
       function(status, payload, error) {
-        root.playlistsLoading = false
+        root[spec.loading] = false
         if (expected !== root.dataSerial) return
         if (error) root.fail(error)
         else {
-          var page = Api.normalizePage(payload, function(value) {
-            return Api.normalizePlaylist(value, 96)
-          })
-          root.playlists = (append ? Api.mergeUnique(root.playlists, page.items) : page.items)
+          var mapper = root.libraryMapper(spec.mapper)
+          var page = spec.cursor
+            ? Api.normalizeCursorPage(payload && payload.artists, mapper)
+            : Api.normalizePage(payload, mapper)
+          var items = (append
+            ? Api.mergeUnique(root[spec.items], page.items) : page.items)
             .slice(0, root.cacheLimit)
-          root.playlistsNext = root.playlists.length >= root.cacheLimit ? "" : page.next
-          root.playlistsLoaded = true
-          root.checkSavedItems(page.items)
-          if (root.discoverLoaded || root.discoverLoading)
+          root[spec.items] = items
+          root[spec.next] = items.length >= root.cacheLimit ? "" : page.next
+          root[spec.loaded] = true
+          if (spec.checkSaved === true) root.checkSavedItems(page.items)
+          else root.markItemsSaved(page.items, true)
+          if (spec.mergeDiscover === true
+              && (root.discoverLoaded || root.discoverLoading))
             root.mergeDiscoverCandidates(page.items)
         }
         if (typeof callback === "function") callback()
       })
+  }
+
+  function loadPlaylists(append, callback, serial) {
+    loadLibraryCollection("playlists", append, callback, serial)
   }
 
   function loadMorePlaylists() {
@@ -1106,38 +1170,7 @@ Item {
   }
 
   function loadSavedTracks(append, callback, serial) {
-    if (savedTracksLoading) {
-      if (typeof callback === "function") callback()
-      return
-    }
-    var path = append ? savedTracksNext : "/me/tracks"
-    if (!path) {
-      if (typeof callback === "function") callback()
-      return
-    }
-    var expected = serial === undefined ? dataSerial : serial
-    savedTracksLoading = true
-    spotifyApi.request("GET", path, append ? null : { limit: 30 }, null,
-      function(status, payload, error) {
-        root.savedTracksLoading = false
-        if (expected !== root.dataSerial) return
-        if (error) root.fail(error)
-        else {
-          var page = Api.normalizePage(payload, function(value) {
-            return Api.normalizeTrack(value, 96)
-          })
-          root.savedTracks = (append ? Api.mergeUnique(root.savedTracks, page.items) : page.items)
-            .slice(0, root.cacheLimit)
-          root.savedTracksNext = root.savedTracks.length >= root.cacheLimit ? "" : page.next
-          root.savedTracksLoaded = true
-          root.markItemsSaved(page.items, true)
-        }
-        if (typeof callback === "function") callback()
-      })
-  }
-
-  function loadMoreSavedTracks() {
-    loadSavedTracks(true)
+    loadLibraryCollection("tracks", append, callback, serial)
   }
 
   function setSavedState(uri, value) {
@@ -1238,17 +1271,20 @@ Item {
       seen[uri] = true
       uris.push(uri)
     }
+    var expected = dataSerial
     markSavedUrisChecking(uris, true)
-    for (var start = 0; start < uris.length; start += 40) {
-      (function(chunk) {
-        spotifyApi.request("GET", "/me/library/contains", { uris: chunk }, null,
-          function(status, payload, error) {
-            root.markSavedUrisChecking(chunk, false)
-            if (error || !Array.isArray(payload)) return
-            root.rememberSavedStates(chunk, payload)
-          })
-      })(uris.slice(start, start + 40))
-    }
+    for (var start = 0; start < uris.length; start += 40)
+      requestContains(uris.slice(start, start + 40), expected)
+  }
+
+  function requestContains(chunk, expected) {
+    spotifyApi.request("GET", "/me/library/contains", { uris: chunk }, null,
+      function(status, payload, error) {
+        if (expected !== root.dataSerial) return
+        root.markSavedUrisChecking(chunk, false)
+        if (error || !Array.isArray(payload)) return
+        root.rememberSavedStates(chunk, payload)
+      })
   }
 
   function toggleSaved(item) {
@@ -1288,103 +1324,23 @@ Item {
   }
 
   function loadSavedAlbums(append) {
-    if (savedAlbumsLoading) return
-    var path = append ? savedAlbumsNext : "/me/albums"
-    if (!path) return
-    savedAlbumsLoading = true
-    spotifyApi.request("GET", path, append ? null : { limit: 30 }, null,
-      function(status, payload, error) {
-        root.savedAlbumsLoading = false
-        if (error) { root.fail(error); return }
-        var page = Api.normalizePage(payload, function(value) {
-          return Api.normalizeContext(value, 96)
-        })
-        root.savedAlbums = (append ? Api.mergeUnique(root.savedAlbums, page.items) : page.items)
-          .slice(0, root.cacheLimit)
-        root.savedAlbumsNext = root.savedAlbums.length >= root.cacheLimit ? "" : page.next
-        root.savedAlbumsLoaded = true
-        root.markItemsSaved(page.items, true)
-      })
+    loadLibraryCollection("albums", append)
   }
 
   function loadFollowedArtists(append) {
-    if (followedArtistsLoading) return
-    var path = append ? followedArtistsNext : "/me/following"
-    if (!path) return
-    followedArtistsLoading = true
-    spotifyApi.request("GET", path, append ? null : { type: "artist", limit: 30 }, null,
-      function(status, payload, error) {
-        root.followedArtistsLoading = false
-        if (error) { root.fail(error); return }
-        var page = Api.normalizeCursorPage(payload && payload.artists, function(value) {
-          return Api.normalizeContext(value, 96)
-        })
-        root.followedArtists = (append
-          ? Api.mergeUnique(root.followedArtists, page.items) : page.items).slice(0, root.cacheLimit)
-        root.followedArtistsNext = root.followedArtists.length >= root.cacheLimit ? "" : page.next
-        root.followedArtistsLoaded = true
-        root.markItemsSaved(page.items, true)
-      })
+    loadLibraryCollection("artists", append)
   }
 
   function loadSavedShows(append) {
-    if (savedShowsLoading) return
-    var path = append ? savedShowsNext : "/me/shows"
-    if (!path) return
-    savedShowsLoading = true
-    spotifyApi.request("GET", path, append ? null : { limit: 30 }, null,
-      function(status, payload, error) {
-        root.savedShowsLoading = false
-        if (error) { root.fail(error); return }
-        var page = Api.normalizePage(payload, function(value) {
-          return Api.normalizeContext(value, 96)
-        })
-        root.savedShows = (append ? Api.mergeUnique(root.savedShows, page.items) : page.items)
-          .slice(0, root.cacheLimit)
-        root.savedShowsNext = root.savedShows.length >= root.cacheLimit ? "" : page.next
-        root.savedShowsLoaded = true
-        root.markItemsSaved(page.items, true)
-      })
+    loadLibraryCollection("shows", append)
   }
 
   function loadSavedEpisodes(append) {
-    if (savedEpisodesLoading) return
-    var path = append ? savedEpisodesNext : "/me/episodes"
-    if (!path) return
-    savedEpisodesLoading = true
-    spotifyApi.request("GET", path, append ? null : { limit: 30 }, null,
-      function(status, payload, error) {
-        root.savedEpisodesLoading = false
-        if (error) { root.fail(error); return }
-        var page = Api.normalizePage(payload, function(value) {
-          return Api.normalizeTrack(value, 96)
-        })
-        root.savedEpisodes = (append
-          ? Api.mergeUnique(root.savedEpisodes, page.items) : page.items).slice(0, root.cacheLimit)
-        root.savedEpisodesNext = root.savedEpisodes.length >= root.cacheLimit ? "" : page.next
-        root.savedEpisodesLoaded = true
-        root.markItemsSaved(page.items, true)
-      })
+    loadLibraryCollection("episodes", append)
   }
 
   function loadSavedAudiobooks(append) {
-    if (savedAudiobooksLoading) return
-    var path = append ? savedAudiobooksNext : "/me/audiobooks"
-    if (!path) return
-    savedAudiobooksLoading = true
-    spotifyApi.request("GET", path, append ? null : { limit: 30 }, null,
-      function(status, payload, error) {
-        root.savedAudiobooksLoading = false
-        if (error) { root.fail(error); return }
-        var page = Api.normalizePage(payload, function(value) {
-          return Api.normalizeContext(value, 96)
-        })
-        root.savedAudiobooks = (append
-          ? Api.mergeUnique(root.savedAudiobooks, page.items) : page.items).slice(0, root.cacheLimit)
-        root.savedAudiobooksNext = root.savedAudiobooks.length >= root.cacheLimit ? "" : page.next
-        root.savedAudiobooksLoaded = true
-        root.markItemsSaved(page.items, true)
-      })
+    loadLibraryCollection("audiobooks", append)
   }
 
   function libraryItems(kind) {
@@ -1430,12 +1386,7 @@ Item {
   function loadLibrary(kind, append, force) {
     var value = String(kind || "tracks")
     if (append !== true && force !== true && libraryLoaded(value)) return
-    if (value === "albums") loadSavedAlbums(append === true)
-    else if (value === "artists") loadFollowedArtists(append === true)
-    else if (value === "shows") loadSavedShows(append === true)
-    else if (value === "episodes") loadSavedEpisodes(append === true)
-    else if (value === "audiobooks") loadSavedAudiobooks(append === true)
-    else loadSavedTracks(append === true)
+    loadLibraryCollection(value, append === true)
   }
 
   function openPlaylist(playlist) {
@@ -1453,10 +1404,12 @@ Item {
       : "/playlists/" + encodeURIComponent(String(selectedPlaylist.id)) + "/items"
     if (!path) return
     var playlistId = String(selectedPlaylist.id)
+    var expected = dataSerial
     playlistItemsLoading = true
     spotifyApi.request("GET", path, append ? null : { limit: 50 }, null,
       function(status, payload, error) {
         root.playlistItemsLoading = false
+        if (expected !== root.dataSerial) return
         if (!root.selectedPlaylist || String(root.selectedPlaylist.id) !== playlistId) return
         if (error) root.fail(error)
         else {
@@ -1879,24 +1832,28 @@ Item {
       else root.artistSongsLoading = false
       root.detailLoading = root.artistCatalogLoading
       if (error) { root.fail(error); return }
-      var page = Api.normalizeSearchPage(payload, type, 96)
-      if (albums) {
-        root.artistAlbums = (append ? Api.mergeUnique(root.artistAlbums, page.items) : page.items)
-          .slice(0, root.cacheLimit)
-        root.artistAlbumsNext = root.artistAlbums.length >= root.cacheLimit ? "" : page.next
-      } else if (playlists) {
-        root.artistPlaylists = (append
-          ? Api.mergeUnique(root.artistPlaylists, page.items) : page.items)
-          .slice(0, root.cacheLimit)
-        root.artistPlaylistsNext = root.artistPlaylists.length >= root.cacheLimit
-          ? "" : page.next
-      } else {
-        root.artistSongs = (append ? Api.mergeUnique(root.artistSongs, page.items) : page.items)
-          .slice(0, root.cacheLimit)
-        root.artistSongsNext = root.artistSongs.length >= root.cacheLimit ? "" : page.next
-      }
-      root.checkSavedItems(page.items)
+      root.applyArtistCatalogPage(type, append,
+        Api.normalizeSearchPage(payload, type, 96))
     })
+  }
+
+  function applyArtistCatalogPage(type, append, page) {
+    var existing = type === "album" ? artistAlbums
+      : (type === "playlist" ? artistPlaylists : artistSongs)
+    var items = (append ? Api.mergeUnique(existing, page.items) : page.items)
+      .slice(0, cacheLimit)
+    var next = items.length >= cacheLimit ? "" : page.next
+    if (type === "album") {
+      artistAlbums = items
+      artistAlbumsNext = next
+    } else if (type === "playlist") {
+      artistPlaylists = items
+      artistPlaylistsNext = next
+    } else {
+      artistSongs = items
+      artistSongsNext = next
+    }
+    checkSavedItems(page.items)
   }
 
   function requestArtistTopSongs(append, expectedDetail, expectedCatalog, artist,
@@ -1972,27 +1929,6 @@ Item {
     })
   }
 
-  function currentTrackId() {
-    // When a remote device owns playback, stale metadata from an idle local
-    // spotifyd player must not turn a podcast episode into a song.
-    if (useRemotePlayback) {
-      if (!remoteTrack || remoteTrack.type !== "track") return ""
-      return Api.spotifyTrackId(remoteTrack.uri)
-        || String(remoteTrack.id || "").trim()
-    }
-
-    var id = Api.spotifyTrackId(currentUri)
-    if (id) return id
-
-    // spotifyd exposes the recording as an MPRIS object path such as
-    // /spotify/track/<id>, but does not currently publish xesam:url.
-    id = Api.spotifyTrackId(metadataString("mpris:trackid"))
-    if (id) return id
-
-    return remoteTrack && remotePlaybackIsLocal && remoteTrack.type === "track"
-      ? String(remoteTrack.id || "").trim() : ""
-  }
-
   function currentContext(kind, callback) {
     if (typeof callback !== "function") return
     if (kind === "artist" && currentArtists.length) {
@@ -2005,7 +1941,7 @@ Item {
       callback(currentAlbumItem)
       return
     }
-    var id = currentTrackId()
+    var id = currentTrackId
     if (!id) {
       if (kind === "artist" && currentArtistContextAvailable)
         resolveArtist(artist, callback)
@@ -2052,10 +1988,12 @@ Item {
 
   function loadHome() {
     if (homeLoading) return
+    var expected = dataSerial
     homeLoaded = false
     homeRequestsPending = 3
     spotifyApi.request("GET", "/me/player/recently-played", { limit: 30 }, null,
       function(status, payload, error) {
+        if (expected !== root.dataSerial) return
         if (!error) {
           var page = Api.normalizePage(payload, function(value) {
             return Api.normalizeTrack(value, 96)
@@ -2067,6 +2005,7 @@ Item {
     spotifyApi.request("GET", "/me/top/tracks", {
       limit: 30, time_range: "medium_term"
     }, null, function(status, payload, error) {
+      if (expected !== root.dataSerial) return
       if (!error) {
         var page = Api.normalizePage(payload, function(value) {
           return Api.normalizeTrack(value, 96)
@@ -2078,6 +2017,7 @@ Item {
     spotifyApi.request("GET", "/me/top/artists", {
       limit: 30, time_range: "medium_term"
     }, null, function(status, payload, error) {
+      if (expected !== root.dataSerial) return
       if (!error) {
         var page = Api.normalizePage(payload, function(value) {
           return Api.normalizeContext(value, 96)
@@ -2211,8 +2151,7 @@ Item {
     var present = ({})
     for (var j = 0; j < apiDevices.length && next.length < 32; j++) {
       var sourceDevice = apiDevices[j]
-      var apiDevice = ({})
-      for (var propertyName in sourceDevice) apiDevice[propertyName] = sourceDevice[propertyName]
+      var apiDevice = Api.shallowCopy(sourceDevice)
       var discovered = localById[String(apiDevice.id || "")]
       if (discovered) {
         if (!apiDevice.local) apiDevice.name = discovered.name
@@ -2273,7 +2212,7 @@ Item {
         localDiscovery: true,
         activationRequired: !currentMatch,
         activeUser: item.activeUser === true || currentMatch,
-        tokenType: String(item.tokenType || "default"),
+        tokenType: Api.spotifyConnectTokenType(item.tokenType),
         brand: String(item.brand || ""),
         model: String(item.model || ""),
         description: String(item.description || "")
@@ -2325,21 +2264,33 @@ Item {
     mergeConnectDevices()
     devicesLoading = false
     if (error) fail(error)
-    if (typeof callback === "function") callback()
+    var waiters = deviceLoadWaiters.slice()
+    deviceLoadWaiters = []
+    if (typeof callback === "function") waiters.push(callback)
+    for (var i = 0; i < waiters.length; i++) {
+      try { waiters[i]() }
+      catch (e) { /* callers own callback errors */ }
+    }
   }
 
   function loadDevices(callback, serial, discoverLocal) {
-    if (devicesLoading) {
-      if (typeof callback === "function") callback()
-      return
+    if (typeof callback === "function") {
+      var waiters = deviceLoadWaiters.slice()
+      waiters.push(callback)
+      deviceLoadWaiters = waiters
     }
+    if (discoverLocal === true) pendingDeviceDiscover = true
+    if (devicesLoading) return
     var expected = serial === undefined ? dataSerial : serial
+    var shouldDiscover = pendingDeviceDiscover
+    pendingDeviceDiscover = false
     devicesLoading = true
-    if (discoverLocal === true) loadPlaybackState()
+    if (shouldDiscover) loadPlaybackState()
     spotifyApi.request("GET", "/me/player/devices", null, null,
       function(status, payload, error) {
         if (expected !== root.dataSerial) {
           root.devicesLoading = false
+          root.deviceLoadWaiters = []
           return
         }
         if (!error) {
@@ -2348,13 +2299,12 @@ Item {
           for (var i = 0; i < source.length; i++) next.push(root.normalizeDevice(source[i]))
           root.apiDevices = next.slice(0, 32)
         }
-        if (discoverLocal === true) {
-          root.pendingDeviceLoadCallback = callback
+        if (shouldDiscover) {
           root.pendingDeviceLoadError = error || ""
           if (spotifyConnectManager.loading) return
           spotifyConnectManager.refresh()
         } else {
-          root.finishDeviceLoad(callback, error || "")
+          root.finishDeviceLoad(null, error || "")
         }
       })
   }
@@ -2393,7 +2343,9 @@ Item {
       clearSearch()
       return
     }
+    var expected = dataSerial
     spotifyApi.search(normalized, function(groups, error) {
+      if (expected !== root.dataSerial) return
       root.searchLoading = false
       if (error) root.fail(error)
       else {
@@ -2417,17 +2369,14 @@ Item {
     return page ? String(page.next || "") : ""
   }
 
-  function searchTotal(type) {
-    var page = searchGroups[String(type || "track")]
-    return page ? Number(page.total) || 0 : 0
-  }
-
   function loadMoreSearch(type) {
     var value = String(type || "track")
     var path = searchNext(value)
     if (!path || searchLoading) return
+    var expected = dataSerial
     searchLoading = true
     spotifyApi.request("GET", path, null, null, function(status, payload, error) {
+      if (expected !== root.dataSerial) return
       root.searchLoading = false
       if (error) { root.fail(error); return }
       var incoming = ({})
@@ -2443,7 +2392,6 @@ Item {
   }
 
   function clearSearch() {
-    spotifyApi.cancelSearch()
     searchLoading = false
     searchQuery = ""
     searchGroups = Api.searchGroups({}, 128)
@@ -2458,12 +2406,7 @@ Item {
   function deviceForId(id) {
     var key = String(id || "")
     for (var i = 0; i < devices.length; i++)
-      if (devices[i].id === key) return devices[i]
-    return null
-  }
-
-  function activeDevice() {
-    for (var i = 0; i < devices.length; i++) if (devices[i].active) return devices[i]
+      if (String(devices[i].id || "") === key) return devices[i]
     return null
   }
 
@@ -2598,12 +2541,31 @@ Item {
     })
   }
 
+  function clearPendingPlayback(keepActivation) {
+    pendingPlayback = null
+    pendingPlaybackBody = null
+    pendingPlaybackMessage = ""
+    pendingPlaybackRadio = null
+    pendingPlaybackSerial = 0
+    if (keepActivation !== true) localActivationRequested = false
+  }
+
   function dispatchPendingPlayback(playbackSerial) {
     if (playbackSerial !== pendingPlaybackSerial || !pendingPlaybackBody) return
     var target = autoselectLocalDevice() || chooseDevice()
     if (target && !target.local) {
       localActivationRequested = false
       sendPendingPlayback(Api.playbackTargetDeviceId(target, selectedDeviceExplicit))
+      return
+    }
+    if (!daemonManager.credentialsAvailable && (!target || target.local)) {
+      fail("Approve playback on this computer in Settings, then try again")
+      clearPendingPlayback()
+      return
+    }
+    if (!daemonManager.usingFallbackRuntime
+        && (backendClient.ready || daemonManager.playbackReady)) {
+      waitForLocalSocketThenPlay(playbackSerial)
       return
     }
     if (target && target.local && daemonManager.running) {
@@ -2613,16 +2575,52 @@ Item {
     }
     if (!daemonManager.binaryAvailable || !daemonManager.unitAvailable) {
       fail("Playback on this computer needs to be set up in Settings")
-      pendingPlayback = null
-      pendingPlaybackBody = null
-      pendingPlaybackMessage = ""
-      pendingPlaybackRadio = null
-      pendingPlaybackSerial = 0
-      localActivationRequested = false
+      clearPendingPlayback()
       return
     }
     daemonManager.start()
     deviceProbeTimer.restart()
+  }
+
+  function waitForLocalSocketThenPlay(playbackSerial) {
+    if (playbackSerial !== pendingPlaybackSerial || !pendingPlaybackBody) return
+    if (backendClient.ready) {
+      sendLocalSocketPlayback(playbackSerial)
+      return
+    }
+    if (!daemonManager.binaryAvailable || !daemonManager.unitAvailable) {
+      fail("Playback on this computer needs to be set up in Settings")
+      clearPendingPlayback()
+      return
+    }
+    if (!daemonManager.running && !daemonManager.busy) daemonManager.start()
+    localSocketWaitAttempts = 0
+    localSocketWaitTimer.restart()
+  }
+
+  function sendLocalSocketPlayback(playbackSerial) {
+    if (playbackSerial !== pendingPlaybackSerial || !pendingPlaybackBody) return
+    var body = pendingPlaybackBody
+    var successMessage = pendingPlaybackMessage
+    var radioPlaylist = pendingPlaybackRadio
+    clearPendingPlayback()
+    localSocketWaitTimer.stop()
+    backendClient.loadPlayback(body, function(ok, result, error) {
+      if (ok) {
+        if (playbackSerial === root.radioSerial)
+          root.radioContextSelected = !!radioPlaylist
+        if (successMessage) root.succeed(successMessage)
+        root.loadQueue()
+        root.loadPlaybackState()
+        return
+      }
+      root.pendingPlaybackBody = body
+      root.pendingPlaybackMessage = successMessage
+      root.pendingPlaybackRadio = radioPlaylist
+      root.pendingPlaybackSerial = playbackSerial
+      root.sendPendingPlayback(Api.playbackTargetDeviceId(
+        root.localDevice() || root.chooseDevice(), root.selectedDeviceExplicit))
+    })
   }
 
   function playItem(item, sourceItems, contextUri, successMessage, explicitRadio) {
@@ -2680,12 +2678,7 @@ Item {
       root.deviceProbeAttempts++
       if (root.deviceProbeAttempts < 8) deviceProbeTimer.restart()
       else {
-        root.pendingPlayback = null
-        root.pendingPlaybackBody = null
-        root.pendingPlaybackMessage = ""
-        root.pendingPlaybackRadio = null
-        root.pendingPlaybackSerial = 0
-        root.localActivationRequested = false
+        root.clearPendingPlayback()
         root.fail("Playback on this computer did not become available. Reconnect Spotify in Settings, then try again")
       }
     })
@@ -2712,11 +2705,7 @@ Item {
     var radioPlaylist = pendingPlaybackRadio
     var playbackSerial = pendingPlaybackSerial
     if (!body) return
-    pendingPlayback = null
-    pendingPlaybackBody = null
-    pendingPlaybackMessage = ""
-    pendingPlaybackRadio = null
-    pendingPlaybackSerial = 0
+    clearPendingPlayback(true)
     apiAction("PUT", "/me/player/play", { device_id: deviceId }, body, successMessage,
       function(ok) {
         if (ok) {
@@ -2789,17 +2778,12 @@ Item {
     }, null, function(status, payload, error) {
       if (expected !== root.radioSerial) return
       var source = payload && Array.isArray(payload.tracks) ? payload.tracks : []
-      var radio = [item]
-      var seen = ({})
-      seen[String(item.uri)] = true
+      var extras = []
       for (var i = 0; i < source.length; i++) {
         var track = Api.normalizeTrack(source[i], 96)
-        var uri = String((track && track.uri) || "")
-        if (uri && !seen[uri]) {
-          seen[uri] = true
-          radio.push(track)
-        }
+        if (track) extras.push(track)
       }
+      var radio = Api.uniqueRadioTracks(item, extras)
       if (!error && radio.length > 1) {
         root.playItem(item, radio, "", "Track radio started")
         return
@@ -2823,18 +2807,8 @@ Item {
       if (expected !== root.radioSerial) return
       var page = error ? { items: [] }
         : Api.normalizeSearchPage(payload, "track", 96)
-      var matching = Api.tracksForArtist(page.items, artist)
-      var radio = [item]
-      var seen = ({})
-      seen[String(item.uri)] = true
-      for (var i = 0; i < matching.length; i++) {
-        var track = matching[i]
-        var uri = String((track && track.uri) || "")
-        if (uri && !seen[uri]) {
-          seen[uri] = true
-          radio.push(track)
-        }
-      }
+      var radio = Api.uniqueRadioTracks(item,
+        Api.tracksForArtist(page.items, artist))
       if (radio.length > 1) root.playItem(item, radio, "", "Track radio started")
       else root.fail("Spotify could not find a radio mix for this song")
     })
@@ -2855,8 +2829,7 @@ Item {
 
   function applySonosControlResult(action, value) {
     if (!remotePlayback) return
-    var nextState = ({})
-    for (var key in remotePlayback) nextState[key] = remotePlayback[key]
+    var nextState = Api.shallowCopy(remotePlayback)
     if (action === "play" || action === "pause") {
       nextState.progressSeconds = positionSeconds
       nextState.receivedAt = Date.now()
@@ -2865,8 +2838,7 @@ Item {
       nextState.progressSeconds = Math.max(0, Number(value) || 0)
       nextState.receivedAt = Date.now()
     } else if (action === "volume" && remoteDevice) {
-      var nextDevice = ({})
-      for (var propertyName in remoteDevice) nextDevice[propertyName] = remoteDevice[propertyName]
+      var nextDevice = Api.shallowCopy(remoteDevice)
       nextDevice.volumePercent = Math.max(0, Math.min(100, Number(value) || 0))
       nextState.device = nextDevice
       rememberRemoteVolume(remoteDevice, nextDevice.volumePercent)
@@ -2890,33 +2862,40 @@ Item {
       activePlayer.togglePlaying()
       return
     }
-    apiAction("PUT", playing ? "/me/player/pause" : "/me/player/play",
-      controlDeviceId() ? { device_id: controlDeviceId() } : null, null, "",
-      function(ok) { if (ok) root.loadPlaybackState() })
+    remotePlayerAction("PUT", playing ? "/me/player/pause" : "/me/player/play",
+      controlQuery())
   }
 
   function next() {
     noteActivity()
     if (sendSonosControl("next", "")) return
     if (!useRemotePlayback && hasLocalPlayer && activePlayer.canGoNext) activePlayer.next()
-    else apiAction("POST", "/me/player/next",
-      controlDeviceId() ? { device_id: controlDeviceId() } : null, null, "",
-      function(ok) { if (ok) root.loadPlaybackState() })
+    else remotePlayerAction("POST", "/me/player/next", controlQuery())
   }
 
   function previous() {
     noteActivity()
     if (sendSonosControl("previous", "")) return
     if (!useRemotePlayback && hasLocalPlayer && activePlayer.canGoPrevious) activePlayer.previous()
-    else apiAction("POST", "/me/player/previous",
-      controlDeviceId() ? { device_id: controlDeviceId() } : null, null, "",
-      function(ok) { if (ok) root.loadPlaybackState() })
+    else remotePlayerAction("POST", "/me/player/previous", controlQuery())
   }
 
   function controlDeviceId() {
     if (useRemotePlayback) return remoteDevice && !remoteDevice.restricted
       ? String(remoteDevice.id || "") : ""
     return String(selectedDeviceId || "")
+  }
+
+  function controlQuery(extra) {
+    var query = extra ? Api.shallowCopy(extra) : ({})
+    var id = controlDeviceId()
+    if (id) query.device_id = id
+    return Object.keys(query).length ? query : null
+  }
+
+  function remotePlayerAction(method, path, query) {
+    apiAction(method, path, query, null, "",
+      function(ok) { if (ok) root.loadPlaybackState() })
   }
 
   function seekSeconds(seconds) {
@@ -2928,10 +2907,9 @@ Item {
     if (!useRemotePlayback && hasLocalPlayer
         && activePlayer.canSeek && activePlayer.positionSupported)
       activePlayer.position = value
-    else apiAction("PUT", "/me/player/seek", {
-      position_ms: Math.round(value * 1000),
-      device_id: controlDeviceId() || undefined
-    }, null, "", function(ok) {
+    else apiAction("PUT", "/me/player/seek",
+      controlQuery({ position_ms: Math.round(value * 1000) }),
+      null, "", function(ok) {
       if (!ok) root.clearPendingRemoteSeek(remoteSerial)
       root.loadPlaybackState()
     })
@@ -2954,10 +2932,9 @@ Item {
     if (sendSonosControl("volume", String(Math.round(normalized * 100)))) return
     if (localVolume)
       activePlayer.volume = normalized
-    else apiAction("PUT", "/me/player/volume", {
-      volume_percent: Math.round(normalized * 100),
-      device_id: controlDeviceId() || undefined
-    }, null, "", function(ok) {
+    else apiAction("PUT", "/me/player/volume",
+      controlQuery({ volume_percent: Math.round(normalized * 100) }),
+      null, "", function(ok) {
       if (!ok) root.clearPendingRemoteVolume(remoteSerial)
       root.loadPlaybackState()
     })
@@ -2969,10 +2946,8 @@ Item {
     if (sendSonosControl("mode", sonosPlayMode(repeatMode, enabled))) return
     if (!useRemotePlayback && hasLocalPlayer && activePlayer.shuffleSupported)
       activePlayer.shuffle = enabled
-    else apiAction("PUT", "/me/player/shuffle", {
-      state: enabled ? "true" : "false",
-      device_id: controlDeviceId() || undefined
-    }, null, "", function(ok) { if (ok) root.loadPlaybackState() })
+    else remotePlayerAction("PUT", "/me/player/shuffle",
+      controlQuery({ state: enabled ? "true" : "false" }))
   }
 
   function cycleRepeat() {
@@ -2983,10 +2958,8 @@ Item {
       activePlayer.loopState = nextMode === "track" ? MprisLoopState.Track
         : (nextMode === "context" ? MprisLoopState.Playlist : MprisLoopState.None)
     } else {
-      apiAction("PUT", "/me/player/repeat", {
-        state: nextMode,
-        device_id: controlDeviceId() || undefined
-      }, null, "", function(ok) { if (ok) root.loadPlaybackState() })
+      remotePlayerAction("PUT", "/me/player/repeat",
+        controlQuery({ state: nextMode }))
     }
   }
 
@@ -3024,7 +2997,7 @@ Item {
     sleepTrackUri = ""
     sleepEndsAt = 0
     sleepRemainingSeconds = 0
-    succeed("Playback will stay asleep when this context ends")
+    succeed("Playback will pause after this album or playlist")
   }
 
   function cancelSleepTimer(showStatus) {
@@ -3073,7 +3046,7 @@ Item {
       return "Sleep in " + minutes + ":" + (seconds < 10 ? "0" : "") + seconds
     }
     if (sleepMode === "track") return "Sleep after this item"
-    if (sleepMode === "context") return "Sleep after this context"
+    if (sleepMode === "context") return "Sleep after this album or playlist"
     return "Sleep timer"
   }
 
@@ -3082,21 +3055,20 @@ Item {
       fail("Only tracks and episodes can be added to the queue")
       return
     }
+    if (!useRemotePlayback && backendClient.ready) {
+      backendClient.sendCommand("add_to_queue", { uri: item.uri },
+        function(ok, result, error) {
+          if (ok) {
+            root.succeed("Added to queue")
+            root.loadQueue()
+          } else root.fail(error || "Could not add that item to the queue")
+        })
+      return
+    }
     apiAction("POST", "/me/player/queue", {
       uri: item.uri,
       device_id: controlDeviceId() || undefined
     }, null, "Added to queue", function(ok) { if (ok) root.loadQueue() })
-  }
-
-  function saveTrack(item) {
-    if (!item || item.type !== "track" || !item.uri) return
-    apiAction("PUT", "/me/library", { uris: item.uri }, null,
-      "Saved to Liked Songs", function(ok) {
-        if (ok) {
-          root.setSavedState(item.uri, true)
-          root.loadSavedTracks(false)
-        }
-      })
   }
 
   function startEngine() {
@@ -3108,29 +3080,31 @@ Item {
   }
 
   function stopEngine() {
-    pendingPlayback = null
-    pendingPlaybackBody = null
-    pendingPlaybackMessage = ""
-    pendingPlaybackRadio = null
-    pendingPlaybackSerial = 0
-    localActivationRequested = false
+    clearPendingPlayback()
     deviceProbeTimer.stop()
+    localSocketWaitTimer.stop()
+    localSocketWaitAttempts = 0
     daemonManager.stop()
   }
 
   function login() {
-    if (loginBusy) return
+    if (authManager.loginBusy || authManager.sessionBusy
+        || daemonManager.setupBusy || daemonManager.authenticationBusy) return
     noteActivity()
     lastError = ""
     statusClearTimer.stop()
     statusMessage = ""
     loginFlowActive = true
-    if (!daemonManager.playbackReady) {
-      daemonManager.setupPlayback()
-      return
-    }
     if (!authManager.loggedIn) {
       authManager.beginLogin()
+      return
+    }
+    continueLocalPlaybackSetup()
+  }
+
+  function continueLocalPlaybackSetup() {
+    if (!daemonManager.playbackReady) {
+      daemonManager.setupPlayback()
       return
     }
     if (!daemonManager.credentialsAvailable) {
@@ -3138,6 +3112,15 @@ Item {
       return
     }
     finishLoginFlow()
+  }
+
+  function cancelLogin() {
+    loginFlowActive = false
+    lastError = ""
+    statusMessage = ""
+    authManager.cancelLogin()
+    connectAuthManager.cancelLogin()
+    daemonManager.cancelAuthentication()
   }
 
   function reconnectAccount() {
@@ -3163,12 +3146,7 @@ Item {
     if (loginBusy || daemonManager.busy) return
     loginFlowActive = false
     dataSerial++
-    pendingPlayback = null
-    pendingPlaybackBody = null
-    pendingPlaybackMessage = ""
-    pendingPlaybackRadio = null
-    pendingPlaybackSerial = 0
-    localActivationRequested = false
+    clearPendingPlayback()
     deviceProbeTimer.stop()
     spotifyApi.cancelSearch()
     daemonManager.clearCredentials()
@@ -3179,11 +3157,7 @@ Item {
 
   function clearData() {
     radioSerial++
-    pendingPlayback = null
-    pendingPlaybackBody = null
-    pendingPlaybackMessage = ""
-    pendingPlaybackRadio = null
-    pendingPlaybackSerial = 0
+    clearPendingPlayback()
     radioContextSelected = false
     playlists = []
     playlistsLoaded = false
@@ -3288,7 +3262,11 @@ Item {
     playlistConversionBusy = false
     queueLoading = false
     devicesLoading = false
+    deviceLoadWaiters = []
+    pendingDeviceDiscover = false
     searchLoading = false
+    localSocketWaitAttempts = 0
+    localSocketWaitTimer.stop()
     cancelSleepTimer(false)
   }
 
@@ -3332,17 +3310,15 @@ Item {
     target: authManager
     function onLoginSucceeded() {
       root.syncCurrentTrackSaved(true)
-      if (!root.loginFlowActive) {
-        root.succeed("Spotify account connected")
-        return
-      }
-      if (root.loginFlowActive && !root.daemon.credentialsAvailable) {
-        root.succeed("Spotify connected · connecting playback on this computer")
-        root.daemon.authenticate()
-        return
-      }
+      var continueSetup = root.loginFlowActive && (!root.daemon.playbackReady
+        || !root.daemon.credentialsAvailable)
       root.finishLoginFlow()
-      if (root.localActivationRequested) root.deviceProbeTimer.restart()
+      if (continueSetup) {
+        root.loginFlowActive = true
+        root.succeed("Spotify connected · finishing playback on this computer")
+        root.continueLocalPlaybackSetup()
+      }
+      if (root.localActivationRequested) deviceProbeTimer.restart()
     }
     function onLoggedOut() { root.clearData() }
     function onSessionUnavailable(reason) {
@@ -3354,7 +3330,7 @@ Item {
   Connections {
     target: daemonManager
     function onSetupSucceeded() {
-      if (root.loginFlowActive) root.login()
+      if (root.loginFlowActive) root.continueLocalPlaybackSetup()
       else root.succeed("Playback on this computer is ready")
     }
     function onSetupFailed(reason) {
@@ -3385,18 +3361,14 @@ Item {
   Connections {
     target: spotifyConnectManager
     function onRefreshed() {
-      var callback = root.pendingDeviceLoadCallback
       var error = root.pendingDeviceLoadError
-      root.pendingDeviceLoadCallback = null
       root.pendingDeviceLoadError = ""
-      root.finishDeviceLoad(callback, error)
+      root.finishDeviceLoad(null, error)
     }
     function onRefreshFailed(reason) {
-      var callback = root.pendingDeviceLoadCallback
       var apiError = root.pendingDeviceLoadError
-      root.pendingDeviceLoadCallback = null
       root.pendingDeviceLoadError = ""
-      root.finishDeviceLoad(callback, apiError)
+      root.finishDeviceLoad(null, apiError)
       // Local discovery is supplemental. If Spotify already supplied devices
       // or an active playback target, a transient Avahi failure must not turn
       // a working connection into a user-visible error.
@@ -3544,11 +3516,33 @@ Item {
 
   Timer {
     id: remotePlaybackTimer
-    interval: root.uiVisible ? 5000 : 15000
+    interval: Api.remotePlaybackPollInterval(root.uiVisible,
+      root.useRemotePlayback, root.hasLocalPlayer)
     repeat: true
-    running: root.auth.loggedIn && !root.remotePlaybackLoading
-      && (root.uiVisible || (root.useRemotePlayback && root.playing))
+    running: Api.remotePlaybackPollShouldRun(root.auth.loggedIn,
+      root.remotePlaybackLoading, root.uiVisible, root.useRemotePlayback,
+      root.playing)
     onTriggered: root.loadPlaybackState()
+  }
+
+  Timer {
+    id: localSocketWaitTimer
+    interval: 200
+    repeat: true
+    onTriggered: {
+      if (root.backend.ready && root.pendingPlaybackBody) {
+        stop()
+        root.localSocketWaitAttempts = 0
+        root.sendLocalSocketPlayback(root.pendingPlaybackSerial)
+        return
+      }
+      root.localSocketWaitAttempts++
+      if (root.localSocketWaitAttempts >= 25) {
+        stop()
+        root.localSocketWaitAttempts = 0
+        if (root.pendingPlaybackBody) deviceProbeTimer.restart()
+      }
+    }
   }
 
   Timer {
@@ -3630,5 +3624,10 @@ Item {
     deviceName: root.deviceName
     bitrateKbps: root.bitrateKbps
     mprisPresent: root.hasLocalPlayer
+  }
+
+  BackendClient {
+    id: backendClient
+    wanted: daemonManager.running && !daemonManager.usingFallbackRuntime
   }
 }

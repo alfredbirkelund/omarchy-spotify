@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Open the first-run setup from the mini-player, show login progress and
+  errors there, and let you cancel a stuck browser approval.
+- Unlock browsing after the Spotify account connects, instead of waiting for
+  local playback approval, and keep playback setup in the background.
+- Play on this computer through the backend socket instead of waiting for
+  Spotify to list the device. The Web API remains the fallback.
+- Apply Settings immediately, hide search on the Settings page, and rename
+  the keyboard-shortcut default to Omarchy Music app.
+- Poll remote playback only when a speaker is active or the target is unknown,
+  and start the local receiver only when you play here, choose this computer,
+  or keep it available with 0 idle minutes.
+- Reuse the last local speaker discovery for Sonos controls instead of
+  browsing the LAN for every volume or seek command.
+- Show where music is playing in the full player, humanize repeat and sleep
+  labels, add lyrics shortcut parity, and fill empty queue, devices, and
+  search states.
+- Escape leaves Settings or Devices and returns to the last real page,
+  skipping those menus in the back path, so closing the window still takes
+  two Esc presses after you are back on a normal page.
+
 - Build the plugin-owned backend's Cargo artifacts in
   `$XDG_CACHE_HOME/omarchy-spotify/target` instead of the plugin directory.
   Omarchy hot-reloads a plugin whenever any file inside it changes, so the old
@@ -37,6 +57,9 @@
 - Give the mini-player keyboard focus, visible control selection, and complete
   keyboard operation for playback, seeking, volume, likes, lyrics, and opening
   the full player.
+- Connect JBL access-token speakers such as Bar 800 by sending the streaming
+  token directly. Spotify's device-auth mint is now only a fallback, because a
+  non-JSON reply was aborting activation before the speaker was contacted.
 
 ## 1.0.2 — 2026-08-15
 
