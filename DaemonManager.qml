@@ -29,6 +29,8 @@ Item {
   property bool binaryChecked: false
   property bool unitAvailable: false
   property bool unitChecked: false
+  property bool usingFallbackRuntime: false
+  property bool automaticSetupAttempted: false
   property bool credentialsAvailable: false
   property bool credentialsChecked: false
   property bool serviceActive: false
@@ -77,6 +79,18 @@ Item {
     }
     checkCredentials()
     requestConfiguration()
+  }
+
+  // Omarchy deliberately does not execute install hooks while cloning a
+  // plugin. Once this enabled plugin is loaded, install its bundled backend
+  // into the user's runtime directory. This is unprivileged and also migrates
+  // older installations that previously selected the spotifyd fallback.
+  function installBundledBackendIfNeeded() {
+    if (automaticSetupAttempted || setupBusy || !pluginDir
+        || !requirementsChecked) return
+    if (playbackReady && !usingFallbackRuntime) return
+    automaticSetupAttempted = true
+    setupPlayback()
   }
 
   function setupPlayback() {
@@ -242,6 +256,7 @@ Item {
     onExited: function(exitCode) {
       root.binaryAvailable = exitCode === 0
       root.binaryChecked = true
+      root.installBundledBackendIfNeeded()
     }
   }
 
@@ -252,7 +267,10 @@ Item {
     onExited: function(exitCode) {
       root.unitAvailable = exitCode === 0
       root.unitChecked = true
+      root.usingFallbackRuntime = exitCode === 0
+        && String(stdout.text || "").trim() === "omarchy-spotifyd.service"
       if (exitCode === 0) root.requestConfiguration()
+      root.installBundledBackendIfNeeded()
     }
   }
 

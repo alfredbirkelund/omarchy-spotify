@@ -51,11 +51,12 @@ or speaker tuning.
   `avahi-browse`, `systemctl`, and Python 3
 
 Omarchy's plugin installer deliberately clones and validates plugins without
-running install hooks or privileged code. `scripts/setup-playback.sh` therefore
-finishes setup only after the user clicks the first-run button. It installs a
-bundled backend build when present, builds it with Cargo for a source checkout,
-or uses Polkit to install the official Arch `spotifyd` fallback when neither is
-available. Configuration and user units need no privilege.
+running install hooks or privileged code. The enabled plugin therefore installs
+its bundled backend on first load, using only unprivileged user-level files.
+Release builds include the `x86_64` backend so users never need Cargo. A source
+checkout can still build it with Cargo; `spotifyd` is retained only as a
+last-resort fallback when neither backend is available. Configuration and user
+units need no privilege.
 
 Omarchy treats any write inside a plugin directory as a change to the plugin and
 hot-reloads it, so the backend is compiled to

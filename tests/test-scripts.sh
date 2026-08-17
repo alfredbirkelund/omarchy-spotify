@@ -5,6 +5,12 @@ source_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 test_root=$(mktemp -d)
 trap 'rm -rf -- "$test_root"' EXIT
 
+# Plugin releases must carry the backend because Omarchy does not run install
+# hooks while cloning a plugin and end users should not need a Rust toolchain.
+release_arch=$(uname -m)
+release_backend="$source_root/backend/dist/$release_arch/omarchy-spotify-backend"
+[[ -x $release_backend ]]
+
 pkce_output=$("$source_root/scripts/pkce.sh")
 IFS=$'\t' read -r verifier challenge state <<<"$pkce_output"
 
@@ -112,6 +118,17 @@ OMARCHY_SPOTIFY_SKIP_BACKEND_BUILD=1 \
   "$source_root/scripts/setup-playback.sh" >/dev/null
 [[ -f $runtime_spotify_config && -f $runtime_unit ]]
 grep -qx 'device_name = "Omarchy Spotify"' "$runtime_spotify_config"
+
+# A clean release install must prefer the bundled backend without Cargo or
+# package installation. This is the path used after an enabled plugin loads.
+rm -f -- "$runtime_backend/omarchy-spotify-backend"
+PATH="$mock_bin:$PATH" \
+XDG_CONFIG_HOME="$runtime_config" \
+XDG_CACHE_HOME="$runtime_cache" \
+OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
+  "$source_root/scripts/setup.sh" >/dev/null
+runtime_backend_unit="$runtime_config/systemd/user/omarchy-spotify.service"
+[[ -x $runtime_backend/omarchy-spotify-backend && -f $runtime_backend_unit ]]
 
 mkdir -p "$runtime_config/omarchy-spotify" "$runtime_cache/spotifyd"
 cp -- "$source_root/config/spotifyd.conf" "$runtime_config/omarchy-spotify/spotifyd.conf"
