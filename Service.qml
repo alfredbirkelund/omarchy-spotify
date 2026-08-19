@@ -119,6 +119,7 @@ Item {
   property string lyricsPluginRequestSurface: ""
   property var pendingLyricsSong: null
   property int lyricsPluginLaunchAttempts: 0
+  property double lyricsPluginInstallStartedAt: 0
   readonly property var currentAlbumItem: remoteTrack
     && (useRemotePlayback || (currentTrackId !== ""
       && String(remoteTrack.id || "") === currentTrackId))
@@ -249,11 +250,11 @@ Item {
   property string playlistItemsError: ""
   property int playlistItemsStatus: 0
   property var selectedPlaylist: null
+  property string currentUserId: ""
+  property string currentUserName: ""
   readonly property string playlistItemsEmptyMessage: Api.playlistItemsEmptyMessage(
     selectedPlaylist, playlistItems.length, playlistItemsError,
     playlistItemsStatus, currentUserId)
-  property string currentUserId: ""
-  property string currentUserName: ""
   property var queue: []
   property var devices: []
   property var apiDevices: []
@@ -514,6 +515,7 @@ Item {
 
   function syncSettings() {
     applySettings(configuredEntry() || {})
+    resumeLyricsInstallIntent()
   }
 
   function isSpotifyd(player) {
@@ -587,11 +589,32 @@ Item {
     return lyricsPluginAvailability
   }
 
+  function pendingLyricsInstall() {
+    var pending = sessionState && sessionState.pendingLyricsInstall
+    return pending && typeof pending === "object" ? pending : null
+  }
+
+  function persistLyricsInstallIntent() {
+    if (!pendingLyricsSong) return
+    var state = Api.shallowCopy(sessionState)
+    state.pendingLyricsInstall = Api.lyricsInstallIntent(pendingLyricsSong,
+      lyricsPluginRequestSurface, Date.now())
+    persistSession(state)
+  }
+
+  function clearLyricsInstallIntent() {
+    if (!pendingLyricsInstall()) return
+    persistSession(Api.sessionWithoutLyricsInstall(sessionState))
+  }
+
   function confirmLyricsPlugin(surface) {
     if (lyricsPluginBusy) return false
     if (surface) lyricsPluginRequestSurface = String(surface)
     if (!pendingLyricsSong) pendingLyricsSong = currentLyricsSong
-    if (!pendingLyricsSong) return false
+    if (!pendingLyricsSong) {
+      lyricsPluginError = "Play a song first, then try lyrics again."
+      return false
+    }
     lyricsPluginError = ""
 
     if (lyricsPluginAvailability === "ready") {
@@ -608,24 +631,97 @@ Item {
     }
     lyricsPluginOperation = lyricsPluginAvailability
     lyricsPluginBusy = true
+    persistLyricsInstallIntent()
+
+    // Adding a plugin writes into ~/.config/omarchy/plugins, which reloads
+    // the shell and would kill a child Process before enable finishes.
+    // Detach the add and resume from the saved intent after reload.
+    if (lyricsPluginAvailability === "missing") {
+      lyricsPluginInstallStartedAt = Date.now()
+      Quickshell.execDetached(command)
+      lyricsPluginInstallPoll.restart()
+      return true
+    }
+
     lyricsPluginSetupProcess.command = command
     lyricsPluginSetupProcess.running = true
+    return true
+  }
+
+  function resumeLyricsInstallIntent() {
+    var intent = pendingLyricsInstall()
+    if (!intent) return
+    if (!Api.lyricsInstallIntentIsFresh(intent, Date.now(), 180000)) {
+      clearLyricsInstallIntent()
+      return
+    }
+    if (!pendingLyricsSong) pendingLyricsSong = intent.song
+    if (!lyricsPluginRequestSurface)
+      lyricsPluginRequestSurface = String(intent.surface || "")
+
+    if (lyricsPluginAvailability === "ready") {
+      lyricsPluginInstallPoll.stop()
+      lyricsPluginBusy = false
+      lyricsPluginError = ""
+      lyricsPluginLaunchAttempts = 0
+      clearLyricsInstallIntent()
+      launchLyricsPlugin()
+      return
+    }
+
+    if (lyricsPluginBusy || lyricsPluginSetupProcess.running
+        || lyricsPluginInstallPoll.running)
+      return
+
+    if (lyricsPluginAvailability === "disabled") {
+      confirmLyricsPlugin(lyricsPluginRequestSurface)
+      return
+    }
+
+    lyricsPluginBusy = true
+    lyricsPluginOperation = "missing"
+    lyricsPluginInstallStartedAt = Number(intent.startedAt) || Date.now()
+    lyricsPluginInstallPoll.restart()
+  }
+
+  function finishLyricsPluginInstallWatch() {
+    if (lyricsPluginAvailability === "ready") {
+      lyricsPluginBusy = false
+      lyricsPluginError = ""
+      lyricsPluginLaunchAttempts = 0
+      clearLyricsInstallIntent()
+      launchLyricsPlugin()
+      return true
+    }
+    if (lyricsPluginAvailability === "disabled") {
+      lyricsPluginBusy = false
+      confirmLyricsPlugin(lyricsPluginRequestSurface)
+      return true
+    }
+    if (Date.now() - lyricsPluginInstallStartedAt < 90000) return false
+    lyricsPluginBusy = false
+    lyricsPluginError = "Omasing could not be installed. Check your network and try again."
+    clearLyricsInstallIntent()
+    lyricsPluginPromptRequested(lyricsPluginRequestSurface,
+      lyricsPluginAvailability)
     return true
   }
 
   function cancelLyricsPlugin(surface) {
     if (lyricsPluginBusy) return
     if (surface && String(surface) !== lyricsPluginRequestSurface) return
+    lyricsPluginInstallPoll.stop()
     lyricsPluginRequestSurface = ""
     pendingLyricsSong = null
     lyricsPluginError = ""
+    clearLyricsInstallIntent()
   }
 
   function launchLyricsPlugin() {
     if (!pendingLyricsSong || lyricsPluginLaunchProcess.running) return
     lyricsPluginLaunchAttempts++
-    lyricsPluginLaunchProcess.command = ["omarchy-shell", lyricsPluginId,
-      "lyrics", JSON.stringify(pendingLyricsSong)]
+    lyricsPluginLaunchProcess.command = ["/usr/bin/omarchy-shell",
+      lyricsPluginId, "lyrics", JSON.stringify(pendingLyricsSong)]
     lyricsPluginLaunchProcess.running = true
   }
 
@@ -639,7 +735,7 @@ Item {
       lyricsPluginOpened(openedSurface)
       return
     }
-    if (lyricsPluginLaunchAttempts < 8) {
+    if (lyricsPluginLaunchAttempts < 20) {
       lyricsPluginLaunchRetry.restart()
       return
     }
@@ -3304,6 +3400,7 @@ Item {
         && currentUri !== sleepTrackUri) finishSleepTimer()
   }
   onCurrentTrackItemUriChanged: syncCurrentTrackSaved(false)
+  onLyricsPluginAvailabilityChanged: resumeLyricsInstallIntent()
   onShellChanged: settingsSync.restart()
   onUiVisibleChanged: {
     if (uiVisible) {
@@ -3474,9 +3571,16 @@ Item {
 
   Timer {
     id: lyricsPluginLaunchRetry
-    interval: 180
+    interval: 250
     repeat: false
     onTriggered: root.launchLyricsPlugin()
+  }
+
+  Timer {
+    id: lyricsPluginInstallPoll
+    interval: 400
+    repeat: true
+    onTriggered: if (root.finishLyricsPluginInstallWatch()) stop()
   }
 
   Process {

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Finish installing Omasing after the shell reloads. Adding the plugin writes
+  into the plugin directory, which used to kill the installer before the
+  lyrics widget could be enabled.
+
 - Recreate the local playback socket after a failed first connect, so a
   fresh install does not wait on Spotify's Web API to start a track.
 - Say when a track starts through Spotify because the local socket was

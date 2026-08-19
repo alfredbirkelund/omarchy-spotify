@@ -758,11 +758,34 @@ function optionalPluginSetupCommand(state, pluginId, repositoryUrl) {
   var availability = String(state || "")
   var id = String(pluginId || "").trim()
   var url = String(repositoryUrl || "").trim()
+  // Use the absolute binary so a Quickshell Process/execDetached does not
+  // depend on the shell's PATH. --yes keeps add non-interactive.
   if (availability === "missing" && url)
-    return ["omarchy", "plugin", "add", url, "--enable", "--yes"]
+    return ["/usr/bin/omarchy", "plugin", "add", url, "--enable", "--yes"]
   if (availability === "disabled" && id)
-    return ["omarchy", "plugin", "enable", id, "--section", "center"]
+    return ["/usr/bin/omarchy", "plugin", "enable", id, "--section", "center"]
   return []
+}
+
+function lyricsInstallIntent(song, surface, now) {
+  if (!song || typeof song !== "object") return null
+  return {
+    song: song,
+    surface: String(surface || ""),
+    startedAt: Number(now) || Date.now()
+  }
+}
+
+function lyricsInstallIntentIsFresh(intent, now, lifetimeMs) {
+  if (!intent || typeof intent !== "object" || !intent.song) return false
+  return timestampIsFresh(intent.startedAt, now,
+    lifetimeMs === undefined ? 180000 : lifetimeMs)
+}
+
+function sessionWithoutLyricsInstall(session) {
+  var next = shallowCopy(session)
+  delete next.pendingLyricsInstall
+  return next
 }
 
 function universalSearchVisible(tab, active) {
