@@ -138,6 +138,60 @@ TestCase {
     compare(Api.assign({ a: 1 }, { b: 2, a: 3 }).a, 3)
     compare(Api.rateLimitSuffix("4"), ". Try again in 4 seconds")
     compare(Api.rateLimitSuffix(""), "")
+    compare(Api.rateLimitRetryMs("4"), 4000)
+    compare(Api.rateLimitRetryMs("0"), 250)
+    compare(Api.rateLimitRetryMs("120"), 30000)
+    compare(Api.rateLimitRetryMs(""), 10000)
+    compare(Api.rateLimitRetryMs("Wed, 21 Oct 2015 07:28:00 GMT"), 10000)
+    compare(Api.apiCooldownMs(1000, 1500), 500)
+    compare(Api.apiCooldownMs(1500, 1000), 0)
+    compare(Api.nextRateLimitedUntil(1000, "2", 0), 3000)
+    compare(Api.nextRateLimitedUntil(1000, "1", 4000), 4000)
+    compare(Api.responseRetryAfter({
+      getResponseHeader: function(name) {
+        return name === "Retry-After" ? "10" : ""
+      }
+    }), "10")
+    verify(Api.localSocketFallbackMessage().indexOf("local player") >= 0)
+  }
+
+  function test_apiRequestQueue_ordersMutationsAndSkipsAborted() {
+    compare(Api.API_MAX_IN_FLIGHT, 2)
+    verify(Api.apiRequestIsMutating("PUT"))
+    verify(Api.apiRequestIsMutating("POST"))
+    verify(!Api.apiRequestIsMutating("GET"))
+    var queued = Api.enqueueApiJob([], { method: "GET", id: "one" })
+    queued = Api.enqueueApiJob(queued, { method: "GET", id: "two" })
+    queued = Api.enqueueApiJob(queued, { method: "PUT", id: "play" })
+    compare(queued[0].id, "play")
+    compare(queued[1].id, "one")
+    var skipped = Api.dequeueApiJob([
+      { id: "stale", handle: { aborted: true } },
+      { id: "live", handle: { aborted: false } }
+    ])
+    compare(skipped.job.id, "live")
+    compare(skipped.queue.length, 0)
+    compare(Api.dequeueApiJob([]).job, null)
+  }
+
+  function test_playlistItemsEmptyMessage_distinguishesHiddenAndFailedLists() {
+    var own = { id: "own", ownerId: "user-1", collaborative: false }
+    var followed = { id: "weekly", ownerId: "spotify", collaborative: false }
+    compare(Api.playlistOwnedByUser(own, "user-1"), true)
+    compare(Api.playlistOwnedByUser(followed, "user-1"), false)
+    compare(Api.playlistItemsEmptyMessage(null, 0, "", 0, "user-1"), "")
+    compare(Api.playlistItemsEmptyMessage(own, 3, "", 200, "user-1"), "")
+    compare(Api.playlistItemsEmptyMessage(own, 0, "", 200, "user-1"),
+      "This playlist has no visible items.")
+    compare(Api.playlistItemsEmptyMessage(followed, 0, "", 200, "user-1"),
+      Api.playlistItemsHiddenMessage())
+    compare(Api.playlistItemsEmptyMessage(followed, 0, "Forbidden", 403, "user-1"),
+      Api.playlistItemsHiddenMessage())
+    compare(Api.playlistItemsEmptyMessage(own, 0,
+      "API rate limit exceeded. Try again in 10 seconds.", 429, "user-1"),
+      "Couldn't load this playlist. Try again in a moment.")
+    compare(Api.playlistItemsEmptyMessage(followed, 0, "", 200, ""),
+      "This playlist has no visible items.")
   }
 
   function test_responsiveMediaRowsAndSearchColumnsUseMeasuredWidth() {

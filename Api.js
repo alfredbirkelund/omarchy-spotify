@@ -216,6 +216,92 @@ function rateLimitSuffix(retryAfter) {
   return value ? ". Try again in " + value + " seconds" : ""
 }
 
+var API_MAX_IN_FLIGHT = 2
+
+function rateLimitRetryMs(retryAfter) {
+  var value = String(retryAfter || "").trim()
+  var seconds = Number(value)
+  if (!value || !isFinite(seconds) || seconds < 0) return 10000
+  return Math.min(30000, Math.max(250, Math.round(seconds * 1000)))
+}
+
+function responseRetryAfter(xhr) {
+  if (!xhr || typeof xhr.getResponseHeader !== "function") return ""
+  var value = xhr.getResponseHeader("Retry-After")
+  if (!value) value = xhr.getResponseHeader("retry-after")
+  return value ? String(value) : ""
+}
+
+function apiRequestIsMutating(method) {
+  var value = String(method || "GET").toUpperCase()
+  return value !== "GET" && value !== "HEAD"
+}
+
+function enqueueApiJob(queue, job, preferFront) {
+  var next = arrayValues(queue)
+  if (!job) return next
+  if (preferFront === true || apiRequestIsMutating(job.method)) next.unshift(job)
+  else next.push(job)
+  return next
+}
+
+function dequeueApiJob(queue) {
+  var next = arrayValues(queue)
+  while (next.length) {
+    var job = next.shift()
+    if (!job || (job.handle && job.handle.aborted === true)) continue
+    return { job: job, queue: next }
+  }
+  return { job: null, queue: next }
+}
+
+function apiCooldownMs(now, until) {
+  var wait = (Number(until) || 0) - (Number(now) || 0)
+  return wait > 0 ? Math.ceil(wait) : 0
+}
+
+function nextRateLimitedUntil(now, retryAfter, currentUntil) {
+  var proposed = (Number(now) || 0) + rateLimitRetryMs(retryAfter)
+  var existing = Number(currentUntil) || 0
+  return proposed > existing ? proposed : existing
+}
+
+function playlistOwnedByUser(playlist, userId) {
+  var user = String(userId || "")
+  return !!playlist && !!user && String(playlist.ownerId || "") === user
+}
+
+function playlistItemsHiddenByApi(status, owned, collaborative, knownUser) {
+  if (owned === true || collaborative === true || knownUser !== true) return false
+  var code = Number(status) || 0
+  return code === 403 || code === 200
+}
+
+function playlistItemsHiddenMessage() {
+  return "Spotify does not expose the contents of this playlist unless you own or collaborate on it. You can still play it as a Spotify context."
+}
+
+function playlistItemsEmptyMessage(playlist, itemCount, error, status, userId) {
+  if (!playlist) return ""
+  var count = Number(itemCount) || 0
+  var owned = playlistOwnedByUser(playlist, userId)
+  var collaborative = !!(playlist && playlist.collaborative === true)
+  var knownUser = String(userId || "") !== ""
+  if (error) {
+    if (playlistItemsHiddenByApi(status, owned, collaborative, knownUser))
+      return playlistItemsHiddenMessage()
+    return "Couldn't load this playlist. Try again in a moment."
+  }
+  if (count > 0) return ""
+  if (playlistItemsHiddenByApi(200, owned, collaborative, knownUser))
+    return playlistItemsHiddenMessage()
+  return "This playlist has no visible items."
+}
+
+function localSocketFallbackMessage() {
+  return "The local player was not ready, so this track is starting through Spotify."
+}
+
 // A visible surface may keep an already-running local receiver registered, but
 // it only starts one when the user asked to keep this computer available
 // (idle minutes is 0). Ordinary opens wait for an explicit local play.

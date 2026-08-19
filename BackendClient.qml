@@ -15,13 +15,15 @@ Item {
   height: 0
 
   property bool wanted: false
-  readonly property bool connected: backendSocket.connected
+  readonly property var activeSocket: socketLoader.item
+  readonly property bool connected: !!(activeSocket && activeSocket.connected)
   property string lifecycle: ""
   property bool sessionConnected: false
   property var lastState: null
   property int nextId: 1
   property var pending: ({})
   property int reconnectAttempt: 0
+  property bool replacingSocket: false
 
   readonly property string socketPath: {
     var runtime = Quickshell.env("XDG_RUNTIME_DIR")
@@ -43,7 +45,8 @@ Item {
   }
 
   function sendCommand(name, fields, callback) {
-    if (!backendSocket.connected) {
+    var socket = activeSocket
+    if (!socket || !socket.connected) {
       if (typeof callback === "function")
         callback(false, null, "Playback on this computer is not ready")
       return 0
@@ -55,8 +58,8 @@ Item {
     for (var existing in pending) nextPending[existing] = pending[existing]
     nextPending[String(id)] = typeof callback === "function" ? callback : null
     pending = nextPending
-    backendSocket.write(JSON.stringify(payload) + "\n")
-    backendSocket.flush()
+    socket.write(JSON.stringify(payload) + "\n")
+    socket.flush()
     return id
   }
 
@@ -96,12 +99,34 @@ Item {
     }
   }
 
+  function clearSocket() {
+    reconnectTimer.stop()
+    socketRecreateTimer.stop()
+    replacingSocket = true
+    socketLoader.active = false
+    replacingSocket = false
+  }
+
+  function startSocket() {
+    if (!wanted) return
+    if (activeSocket && activeSocket.connected) return
+    replacingSocket = true
+    socketLoader.active = false
+    socketRecreateTimer.restart()
+  }
+
+  function scheduleReconnect() {
+    if (!wanted || replacingSocket) return
+    if (activeSocket && activeSocket.connected) return
+    reconnectAttempt = Math.min(12, reconnectAttempt + 1)
+    reconnectTimer.restart()
+  }
+
   onWantedChanged: {
     reconnectAttempt = 0
-    if (wanted) reconnectTimer.restart()
+    if (wanted) startSocket()
     else {
-      reconnectTimer.stop()
-      backendSocket.connected = false
+      clearSocket()
       lifecycle = ""
       sessionConnected = false
       lastState = null
@@ -109,25 +134,45 @@ Item {
     }
   }
 
-  Socket {
-    id: backendSocket
-    path: root.socketPath
-    connected: false
-    parser: SplitParser {
-      splitMarker: "\n"
-      onRead: function(line) { root.handleLine(line) }
-    }
-    onConnectionStateChanged: {
-      if (connected) {
-        root.reconnectAttempt = 0
-        root.sendCommand("hello", null, null)
-      } else if (root.wanted) {
-        root.lifecycle = ""
-        reconnectTimer.restart()
+  Component.onCompleted: if (wanted) startSocket()
+
+  Component {
+    id: socketComponent
+    Socket {
+      path: root.socketPath
+      connected: true
+      parser: SplitParser {
+        splitMarker: "\n"
+        onRead: function(line) { root.handleLine(line) }
       }
+      onConnectionStateChanged: {
+        if (connected) {
+          root.reconnectAttempt = 0
+          root.sendCommand("hello", null, null)
+        } else {
+          root.lifecycle = ""
+          root.scheduleReconnect()
+        }
+      }
+      onError: function() { root.scheduleReconnect() }
     }
-    onError: function() {
-      if (root.wanted) reconnectTimer.restart()
+  }
+
+  Loader {
+    id: socketLoader
+    active: false
+    sourceComponent: socketComponent
+  }
+
+  // A failed connect leaves Quickshell's Socket holding a dead QLocalSocket.
+  // Setting connected=true again is a no-op, so each retry creates a new Socket.
+  Timer {
+    id: socketRecreateTimer
+    interval: 0
+    repeat: false
+    onTriggered: {
+      root.replacingSocket = false
+      if (root.wanted) socketLoader.active = true
     }
   }
 
@@ -135,10 +180,6 @@ Item {
     id: reconnectTimer
     interval: Math.min(1500, 180 + root.reconnectAttempt * 120)
     repeat: false
-    onTriggered: {
-      if (!root.wanted || backendSocket.connected) return
-      root.reconnectAttempt = Math.min(12, root.reconnectAttempt + 1)
-      backendSocket.connected = true
-    }
+    onTriggered: root.startSocket()
   }
 }

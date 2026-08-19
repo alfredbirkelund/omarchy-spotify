@@ -3706,7 +3706,7 @@ Item {
           loading: root.service && root.service.playlistItemsLoading
           hasMore: root.service && root.service.playlistItemsNext !== ""
           emptyMessage: root.service && root.service.selectedPlaylist
-            ? "This playlist has no visible items."
+            ? root.service.playlistItemsEmptyMessage
             : (root.compactWidth ? "Choose a playlist above."
               : "Choose a playlist from the sidebar.")
           restoredContentY: root.scrollFor("playlist:" + (root.service

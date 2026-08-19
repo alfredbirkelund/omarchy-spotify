@@ -4,6 +4,8 @@ import "Api.js" as Api
 
 // Thin authenticated transport. It performs no polling and owns only one
 // special request: search, which is cancelled whenever a newer query arrives.
+// Requests share a small in-flight cap and a Retry-After cooldown so a
+// development-mode app does not burst into Spotify's 429 window.
 Item {
   id: root
 
@@ -15,35 +17,85 @@ Item {
 
   property var searchRequest: null
   property int searchSerial: 0
+  property var requestQueue: []
+  property int requestsInFlight: 0
+  property double rateLimitedUntil: 0
+  property bool pumpingRequests: false
+  property bool pumpAgain: false
 
   function abortRequest(handle) {
-    if (!handle) return
+    if (!handle || handle.aborted) return
     handle.aborted = true
-    if (handle.xhr && handle.xhr.abort) handle.xhr.abort()
+    var xhr = handle.xhr
     handle.xhr = null
+    if (xhr && xhr.abort) xhr.abort()
+    releaseRequestSlot(handle)
   }
 
   function requestError(status, payload, xhr, fallback) {
     var error = Api.responseError(status, payload, fallback)
-    if (status === 429 && xhr && xhr.getResponseHeader)
-      error += Api.rateLimitSuffix(xhr.getResponseHeader("Retry-After"))
+    if (status === 429)
+      error += Api.rateLimitSuffix(Api.responseRetryAfter(xhr))
     return error
   }
 
-  function request(method, path, query, body, callback, retried, existingHandle) {
-    var handle = existingHandle || { aborted: false, xhr: null }
-    var url = Api.safeApiUrl(path)
-    if (!url) {
-      if (typeof callback === "function")
-        callback(0, null, "Something went wrong while contacting Spotify", null)
-      return handle
+  function enqueueJob(job, preferFront) {
+    requestQueue = Api.enqueueApiJob(requestQueue, job, preferFront)
+    pumpRequests()
+    return job.handle
+  }
+
+  function releaseRequestSlot(handle) {
+    if (handle && handle.slotOpen !== true) return
+    if (handle) handle.slotOpen = false
+    requestsInFlight = Math.max(0, requestsInFlight - 1)
+    pumpRequests()
+  }
+
+  function pumpRequests() {
+    if (pumpingRequests) {
+      pumpAgain = true
+      return
     }
-    url = Api.appendQuery(url, query)
+    pumpingRequests = true
+    pumpAgain = false
+    while (requestsInFlight < Api.API_MAX_IN_FLIGHT) {
+      var wait = Api.apiCooldownMs(Date.now(), rateLimitedUntil)
+      if (wait > 0) {
+        rateLimitTimer.interval = Math.max(50, wait)
+        rateLimitTimer.restart()
+        break
+      }
+      var taken = Api.dequeueApiJob(requestQueue)
+      requestQueue = taken.queue
+      if (!taken.job) break
+      taken.job.handle.slotOpen = true
+      requestsInFlight += 1
+      startJob(taken.job)
+    }
+    pumpingRequests = false
+    if (pumpAgain) pumpRequests()
+  }
+
+  function startJob(job) {
+    var handle = job.handle
+    var url = Api.safeApiUrl(job.path)
+    if (!url) {
+      if (typeof job.callback === "function")
+        callbackIfCurrent(job, 0, null, "Something went wrong while contacting Spotify", null)
+      releaseRequestSlot(handle)
+      return
+    }
+    url = Api.appendQuery(url, job.query)
 
     auth.withAccessToken(function(token, tokenError) {
-      if (handle.aborted) return
+      if (handle.aborted) {
+        releaseRequestSlot(handle)
+        return
+      }
       if (!token) {
-        if (typeof callback === "function") callback(0, null, tokenError || "Not logged in", null)
+        callbackIfCurrent(job, 0, null, tokenError || "Not logged in", null)
+        releaseRequestSlot(handle)
         return
       }
       var xhr = new XMLHttpRequest()
@@ -51,28 +103,60 @@ Item {
       xhr.onreadystatechange = function() {
         if (xhr.readyState !== XMLHttpRequest.DONE) return
         if (handle.xhr === xhr) handle.xhr = null
-        if (handle.aborted) return
+        if (handle.aborted) {
+          releaseRequestSlot(handle)
+          return
+        }
         var payload = Api.parseJson(xhr.responseText, null)
-        if (xhr.status === 401 && retried !== true) {
+        if (xhr.status === 401 && job.retried !== true) {
           auth.invalidateAccessToken()
-          root.request(method, path, query, body, callback, true, handle)
+          job.retried = true
+          requestQueue = Api.enqueueApiJob(requestQueue, job, true)
+          releaseRequestSlot(handle)
+          return
+        }
+        if (xhr.status === 429 && job.rateLimitRetried !== true) {
+          rateLimitedUntil = Api.nextRateLimitedUntil(Date.now(),
+            Api.responseRetryAfter(xhr), rateLimitedUntil)
+          job.rateLimitRetried = true
+          requestQueue = Api.enqueueApiJob(requestQueue, job, true)
+          releaseRequestSlot(handle)
           return
         }
         var ok = xhr.status >= 200 && xhr.status < 300
         var error = ok ? "" : root.requestError(xhr.status, payload, xhr,
           "Spotify could not complete this request")
-        if (typeof callback === "function") callback(xhr.status, payload, error, xhr)
+        callbackIfCurrent(job, xhr.status, payload, error, xhr)
+        releaseRequestSlot(handle)
       }
-      xhr.open(String(method || "GET"), url)
+      xhr.open(String(job.method || "GET"), url)
       xhr.setRequestHeader("Authorization", "Bearer " + token)
-      if (body !== undefined && body !== null) {
+      if (job.body !== undefined && job.body !== null) {
         xhr.setRequestHeader("Content-Type", "application/json")
-        xhr.send(JSON.stringify(body))
+        xhr.send(JSON.stringify(job.body))
       } else {
         xhr.send()
       }
     })
-    return handle
+  }
+
+  function callbackIfCurrent(job, status, payload, error, xhr) {
+    if (typeof job.callback === "function")
+      job.callback(status, payload, error, xhr)
+  }
+
+  function request(method, path, query, body, callback, retried, existingHandle) {
+    var handle = existingHandle || { aborted: false, xhr: null }
+    return enqueueJob({
+      method: method,
+      path: path,
+      query: query,
+      body: body,
+      callback: callback,
+      retried: retried === true,
+      rateLimitRetried: false,
+      handle: handle
+    }, retried === true)
   }
 
   function cancelSearch() {
@@ -101,5 +185,11 @@ Item {
       if (error) callback(Api.searchGroups({}, 128), error)
       else callback(Api.searchGroups(payload, 128), "")
     })
+  }
+
+  Timer {
+    id: rateLimitTimer
+    repeat: false
+    onTriggered: root.pumpRequests()
   }
 }

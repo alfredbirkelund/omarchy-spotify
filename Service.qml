@@ -246,7 +246,12 @@ Item {
   property string savedAudiobooksNext: ""
   property var playlistItems: []
   property string playlistItemsNext: ""
+  property string playlistItemsError: ""
+  property int playlistItemsStatus: 0
   property var selectedPlaylist: null
+  readonly property string playlistItemsEmptyMessage: Api.playlistItemsEmptyMessage(
+    selectedPlaylist, playlistItems.length, playlistItemsError,
+    playlistItemsStatus, currentUserId)
   property string currentUserId: ""
   property string currentUserName: ""
   property var queue: []
@@ -966,8 +971,8 @@ Item {
   }
 
   function playlistOwned(item) {
-    return !!item && item.type === "playlist" && !!currentUserId
-      && String(item.ownerId || "") === currentUserId
+    return !!item && item.type === "playlist"
+      && Api.playlistOwnedByUser(item, currentUserId)
   }
 
   function editablePlaylists() {
@@ -1395,6 +1400,8 @@ Item {
     selectedPlaylist = playlist
     playlistItems = []
     playlistItemsNext = ""
+    playlistItemsError = ""
+    playlistItemsStatus = 0
     loadPlaylistItems(false)
   }
 
@@ -1411,27 +1418,38 @@ Item {
         root.playlistItemsLoading = false
         if (expected !== root.dataSerial) return
         if (!root.selectedPlaylist || String(root.selectedPlaylist.id) !== playlistId) return
-        if (error) root.fail(error)
-        else {
-          var fallbackPosition = append && root.playlistItems.length
-            ? Api.playlistPositionAt(root.playlistItems,
-              root.playlistItems.length - 1) + 1 : 0
-          var responseOffset = Number(payload && payload.offset)
-          var nextPlaylistPosition = isFinite(responseOffset)
-            ? Math.max(0, Math.floor(responseOffset)) : fallbackPosition
-          var page = Api.normalizePage(payload, function(value) {
-            var position = nextPlaylistPosition++
-            var normalized = Api.normalizeTrack(value, 96)
-            if (normalized) normalized.playlistPosition = position
-            return normalized
-          })
-          // A playlist can intentionally contain the same track more than
-          // once. Preserve every occurrence so visible indexes continue to
-          // match the positions accepted by Spotify's reorder endpoint.
-          root.playlistItems = (append ? root.playlistItems.concat(page.items) : page.items)
-            .slice(0, root.cacheLimit)
-          root.playlistItemsNext = root.playlistItems.length >= root.cacheLimit ? "" : page.next
+        if (error) {
+          var hidden = Api.playlistItemsHiddenByApi(status,
+            root.playlistOwned(root.selectedPlaylist),
+            root.selectedPlaylist.collaborative === true,
+            root.currentUserId !== "")
+          if (!append) {
+            root.playlistItemsStatus = status
+            root.playlistItemsError = hidden ? "" : error
+          }
+          if (!hidden || append) root.fail(error)
+          return
         }
+        var fallbackPosition = append && root.playlistItems.length
+          ? Api.playlistPositionAt(root.playlistItems,
+            root.playlistItems.length - 1) + 1 : 0
+        var responseOffset = Number(payload && payload.offset)
+        var nextPlaylistPosition = isFinite(responseOffset)
+          ? Math.max(0, Math.floor(responseOffset)) : fallbackPosition
+        var page = Api.normalizePage(payload, function(value) {
+          var position = nextPlaylistPosition++
+          var normalized = Api.normalizeTrack(value, 96)
+          if (normalized) normalized.playlistPosition = position
+          return normalized
+        })
+        // A playlist can intentionally contain the same track more than
+        // once. Preserve every occurrence so visible indexes continue to
+        // match the positions accepted by Spotify's reorder endpoint.
+        root.playlistItemsError = ""
+        root.playlistItemsStatus = status
+        root.playlistItems = (append ? root.playlistItems.concat(page.items) : page.items)
+          .slice(0, root.cacheLimit)
+        root.playlistItemsNext = root.playlistItems.length >= root.cacheLimit ? "" : page.next
       })
   }
 
@@ -1603,6 +1621,8 @@ Item {
     if (selectedPlaylist && selectedPlaylist.id === playlist.id) {
       playlistItems = []
       playlistItemsNext = ""
+      playlistItemsError = ""
+      playlistItemsStatus = 0
       loadPlaylistItems(false)
     }
     if (detailItem && detailItem.type === "playlist" && detailItem.id === playlist.id)
@@ -1762,7 +1782,7 @@ Item {
       root.detailLoading = false
       root.checkSavedItems(root.detailItems)
       if (type === "playlist" && !payload.items && !payload.tracks)
-        root.detailMessage = "Spotify does not expose the contents of this playlist unless you own or collaborate on it. You can still play it as a Spotify context."
+        root.detailMessage = Api.playlistItemsHiddenMessage()
     })
   }
 
@@ -2618,6 +2638,7 @@ Item {
       root.pendingPlaybackMessage = successMessage
       root.pendingPlaybackRadio = radioPlaylist
       root.pendingPlaybackSerial = playbackSerial
+      root.succeed(Api.localSocketFallbackMessage())
       root.sendPendingPlayback(Api.playbackTargetDeviceId(
         root.localDevice() || root.chooseDevice(), root.selectedDeviceExplicit))
     })
@@ -3182,6 +3203,8 @@ Item {
     savedAudiobooksNext = ""
     playlistItems = []
     playlistItemsNext = ""
+    playlistItemsError = ""
+    playlistItemsStatus = 0
     selectedPlaylist = null
     currentUserId = ""
     currentUserName = ""
@@ -3540,7 +3563,10 @@ Item {
       if (root.localSocketWaitAttempts >= 25) {
         stop()
         root.localSocketWaitAttempts = 0
-        if (root.pendingPlaybackBody) deviceProbeTimer.restart()
+        if (root.pendingPlaybackBody) {
+          root.succeed(Api.localSocketFallbackMessage())
+          deviceProbeTimer.restart()
+        }
       }
     }
   }

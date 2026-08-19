@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Recreate the local playback socket after a failed first connect, so a
+  fresh install does not wait on Spotify's Web API to start a track.
+- Say when a track starts through Spotify because the local socket was
+  not ready.
+- Retry Spotify 429 responses after Retry-After, and keep at most two API
+  calls in flight so development-mode apps hit the rate limit less often.
+- Explain empty playlists when Spotify withholds tracks or the list
+  failed to load.
+
 - Open the first-run setup from the mini-player, show login progress and
   errors there, and let you cancel a stuck browser approval.
 - Unlock browsing after the Spotify account connects, instead of waiting for
