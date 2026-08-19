@@ -23,7 +23,6 @@ Item {
   property int nextId: 1
   property var pending: ({})
   property int reconnectAttempt: 0
-  property bool replacingSocket: false
 
   readonly property string socketPath: {
     var runtime = Quickshell.env("XDG_RUNTIME_DIR")
@@ -99,42 +98,18 @@ Item {
     }
   }
 
-  function clearSocket() {
-    reconnectTimer.stop()
-    socketRecreateTimer.stop()
-    replacingSocket = true
-    socketLoader.active = false
-    replacingSocket = false
-  }
-
-  function startSocket() {
-    if (!wanted) return
-    if (activeSocket && activeSocket.connected) return
-    replacingSocket = true
-    socketLoader.active = false
-    socketRecreateTimer.restart()
-  }
-
-  function scheduleReconnect() {
-    if (!wanted || replacingSocket) return
-    if (activeSocket && activeSocket.connected) return
-    reconnectAttempt = Math.min(12, reconnectAttempt + 1)
-    reconnectTimer.restart()
-  }
-
   onWantedChanged: {
+    if (wanted) return
+    reconnectTimer.stop()
+    socketLoader.active = false
+    lifecycle = ""
+    sessionConnected = false
+    lastState = null
     reconnectAttempt = 0
-    if (wanted) startSocket()
-    else {
-      clearSocket()
-      lifecycle = ""
-      sessionConnected = false
-      lastState = null
-      resetPending("Playback on this computer stopped")
-    }
+    resetPending("Playback on this computer stopped")
   }
 
-  Component.onCompleted: if (wanted) startSocket()
+  onConnectedChanged: if (connected) reconnectAttempt = 0
 
   Component {
     id: socketComponent
@@ -146,15 +121,9 @@ Item {
         onRead: function(line) { root.handleLine(line) }
       }
       onConnectionStateChanged: {
-        if (connected) {
-          root.reconnectAttempt = 0
-          root.sendCommand("hello", null, null)
-        } else {
-          root.lifecycle = ""
-          root.scheduleReconnect()
-        }
+        if (connected) root.sendCommand("hello", null, null)
+        else root.lifecycle = ""
       }
-      onError: function() { root.scheduleReconnect() }
     }
   }
 
@@ -167,19 +136,15 @@ Item {
   // A failed connect leaves Quickshell's Socket holding a dead QLocalSocket.
   // Setting connected=true again is a no-op, so each retry creates a new Socket.
   Timer {
-    id: socketRecreateTimer
-    interval: 0
-    repeat: false
-    onTriggered: {
-      root.replacingSocket = false
-      if (root.wanted) socketLoader.active = true
-    }
-  }
-
-  Timer {
     id: reconnectTimer
     interval: Math.min(1500, 180 + root.reconnectAttempt * 120)
-    repeat: false
-    onTriggered: root.startSocket()
+    repeat: true
+    triggeredOnStart: true
+    running: root.wanted && !root.connected
+    onTriggered: {
+      root.reconnectAttempt = Math.min(12, root.reconnectAttempt + 1)
+      socketLoader.active = false
+      socketLoader.active = true
+    }
   }
 }
