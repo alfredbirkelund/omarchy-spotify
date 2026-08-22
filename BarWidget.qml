@@ -183,13 +183,11 @@ BarWidget {
     }
 
     function volumeUp(): string {
-      root.adjustVolume(0.05)
-      return "ok"
+      return root.adjustVolume(0.05) ? "ok" : "unavailable"
     }
 
     function volumeDown(): string {
-      root.adjustVolume(-0.05)
-      return "ok"
+      return root.adjustVolume(-0.05) ? "ok" : "unavailable"
     }
   }
 
@@ -267,10 +265,11 @@ BarWidget {
   }
 
   function adjustVolume(delta) {
-    if (!spotify || !spotify.volumeSupported) return
+    if (!spotify || !spotify.volumeSupported) return false
     var next = Api.nextVolume(spotify.volume, delta)
     if (Api.shouldRememberVolume(next)) volumeBeforeMute = next
     spotify.setVolume(next)
+    return true
   }
 
   function toggleMute() {
