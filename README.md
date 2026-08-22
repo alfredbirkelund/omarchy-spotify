@@ -36,20 +36,35 @@ too.
 
 | Shortcut | What it does |
 | --- | --- |
-| `Ctrl+K` or `/` | Jump to search |
-| `Ctrl+F` / `Ctrl+L` | Search this page / all of Spotify |
+| `Ctrl+F` or `/` | Search |
+| `Ctrl+F` or `/` again | Toggle this area / all of Spotify |
+| `Tab` / `F6` | Move between sidebar, search, the song list, and the player |
+| `Arrow keys` | Move to a control; Enter activates |
+| `C` | Row actions; arrows or Enter choose |
 | `Space` | Play or pause |
 | `Ctrl+Left` / `Ctrl+Right` | Previous or next song |
 | `Shift+Left` / `Shift+Right` | Seek 10 seconds |
 | `Ctrl+Up` / `Ctrl+Down` | Change volume |
 | `M` | Mute or restore volume |
+| `Ctrl+Shift+A` | Open the current song's artist |
+| `Ctrl+Shift+B` | Open the current song's album |
 | `Ctrl+/` | See every keyboard shortcut |
+| `Ctrl+H` | Hide visible shortcut hints |
+
+The first shortcut, Tab, or opening the player from the keyboard lights
+matching controls with the next key. Hold Ctrl, Shift, or Alt to see those
+chords; the matching hints remain until you release the held modifiers. While
+hints are visible, the header keeps a **Ctrl+H · Hide hints** action in reach.
+It turns hints off until you enable them again in Settings.
+
+![Shortcut hints appearing after Tab and adapting when Ctrl is held](docs/media/shortcut-hints.gif)
 
 The mini-player takes keyboard focus when it is opened from a shortcut. Use
 `Tab` or the arrow keys to select every control, `Enter` to activate buttons,
 left/right to adjust a selected slider, and `Esc` to close. The playback
 shortcuts above work there too; `Ctrl+S` toggles shuffle, `Ctrl+R` cycles
-repeat, `Ctrl+Shift+L` opens lyrics, and `O` expands the full player.
+repeat, `Ctrl+Shift+L` opens lyrics, `Ctrl+Shift+A` and `Ctrl+Shift+B` open the
+current artist or album in the full player, and `O` expands the full player.
 
 ## See it in action
 
@@ -86,20 +101,8 @@ The essentials are always one click away, without reopening the full app.
 omarchy plugin add https://github.com/stappmus/Omarchy-Spotify.git --enable
 ```
 
-To replace Omarchy's existing **Super+Shift+M · Music** binding, add this to
-`~/.config/hypr/bindings.lua`:
-
-```lua
-  hl.unbind("SUPER + SHIFT + M") -- previously: Music
-  o.bind("SUPER + SHIFT + M", "Omarchy Spotify",
-    "omarchy shell -q quickshell.spotify.player togglePlayer")
-```
-
-Run `hyprctl reload` and check `hyprctl configerrors` after saving. In Omarchy
-Spotify's Settings, choose whether that shortcut launches Omarchy's Music
-app, toggles the full player, or toggles the mini-player. Separate
-bindings can call `toggleMiniPlayer` or
-`toggleFullPlayer` on the same `quickshell.spotify.player` target.
+In Omarchy Spotify's Settings, choose whether **Super+Shift+M** launches
+Omarchy's Music app, toggles the full player, or toggles the mini-player.
 
 Click the Spotify icon on the left side of the bar. The mini-player asks you
 to **Set up and continue**, then Spotify sign-in finishes in your browser. You
