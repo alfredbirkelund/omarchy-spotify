@@ -104,6 +104,16 @@ omarchy plugin add https://github.com/stappmus/Omarchy-Spotify.git --enable
 In Omarchy Spotify's Settings, choose whether **Super+Shift+M** launches
 Omarchy's Music app, toggles the full player, or toggles the mini-player.
 
+Raise or lower Spotify volume from a keybinding without opening the player:
+
+```bash
+omarchy shell -q quickshell.spotify.player volumeUp
+omarchy shell -q quickshell.spotify.player volumeDown
+```
+
+Each step is 5%, the same as Ctrl+Up / Ctrl+Down. This changes Spotify's own
+volume, including speakers, not the computer's output level.
+
 Click the Spotify icon on the left side of the bar. The mini-player asks you
 to **Set up and continue**, then Spotify sign-in finishes in your browser. You
 can move the widget later with Omarchy's bar controls.

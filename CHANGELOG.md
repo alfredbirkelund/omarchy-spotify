@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Change Spotify volume from a keybinding with `volumeUp` and `volumeDown` on
+  `quickshell.spotify.player`, 5% per call, without opening the player. The
+  commands return `unavailable` when volume cannot be changed.
+
 - Finish installing Omasing after the shell reloads. Adding the plugin writes
   into the plugin directory, which used to kill the installer before the
   lyrics widget could be enabled.
