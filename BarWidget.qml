@@ -181,6 +181,16 @@ BarWidget {
     function toggleFullPlayer(): string {
       return root.toggleFullPlayerShortcut()
     }
+
+    function volumeUp(): string {
+      root.adjustVolume(0.05)
+      return "ok"
+    }
+
+    function volumeDown(): string {
+      root.adjustVolume(-0.05)
+      return "ok"
+    }
   }
 
   function openCurrentArtist() {
