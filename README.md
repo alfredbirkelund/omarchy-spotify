@@ -57,7 +57,7 @@ chords; the matching hints remain until you release the held modifiers. While
 hints are visible, the header keeps a **Ctrl+H · Hide hints** action in reach.
 It turns hints off until you enable them again in Settings.
 
-![Shortcut hints appearing after Tab and adapting when Ctrl is held](docs/media/shortcut-hints.gif)
+![Shortcut hints guiding focus down the Recently played song list](docs/media/shortcut-hints.gif)
 
 The mini-player takes keyboard focus when it is opened from a shortcut. Use
 `Tab` or the arrow keys to select every control, `Enter` to activate buttons,
