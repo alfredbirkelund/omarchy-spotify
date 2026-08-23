@@ -559,14 +559,16 @@ BarWidget {
       ? root.spotify.title + (root.spotify.artist ? " — " + root.spotify.artist : "")
       : (root.spotify && !root.spotify.accountConnected
         ? "Set up Omarchy Spotify" : "Omarchy Spotify")
-    // Size from the painted glyph and label plus the real inner chrome. TextMetrics
-    // advanceWidth is often a few pixels short of NativeRendering, which clipped
-    // the last letter on titles that should have fit.
+    // Size from the painted glyph and label plus the real inner chrome.
     readonly property real fittedWidth: Math.ceil(barGlyph.implicitWidth
       + barContent.spacing + barLabel.implicitWidth + scaledHorizontalMargin * 2)
+    readonly property real barTextCap: root.spotify ? root.spotify.maxBarTextWidth : 240
+
     fixedWidth: root.vertical ? root.barSize
       : (root.iconOnly ? Style.bar.statusSlot
-        : Math.min(Style.space(240), Math.max(root.barSize, fittedWidth)))
+        : Math.max(root.barSize, barTextCap > 0
+          ? Math.min(Style.space(barTextCap), fittedWidth)
+          : fittedWidth))
     fixedHeight: root.vertical && root.iconOnly ? Style.bar.statusSlot : -1
     clip: true
 

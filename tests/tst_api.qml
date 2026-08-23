@@ -32,6 +32,36 @@ TestCase {
     verify(!Api.canScrollBarText(false, false))
   }
 
+  function test_normalizedMaxBarTextWidth_defaultsClampsAndSnaps() {
+    compare(Api.normalizedMaxBarTextWidth(undefined), 240)
+    compare(Api.normalizedMaxBarTextWidth(null), 240)
+    compare(Api.normalizedMaxBarTextWidth(""), 240)
+    compare(Api.normalizedMaxBarTextWidth("nonsense"), 240)
+    compare(Api.normalizedMaxBarTextWidth(-40), 240)
+    // 0 is the uncapped sentinel and must survive normalization untouched.
+    compare(Api.normalizedMaxBarTextWidth(0), 0)
+    compare(Api.normalizedMaxBarTextWidth("0"), 0)
+    compare(Api.normalizedMaxBarTextWidth(240), 240)
+    compare(Api.normalizedMaxBarTextWidth(247), 240)
+    compare(Api.normalizedMaxBarTextWidth(265), 280)
+    compare(Api.normalizedMaxBarTextWidth(10), 160)
+    compare(Api.normalizedMaxBarTextWidth(9999), 560)
+  }
+
+  function test_barTextWidthSlider_notchesCoverEveryNormalizedWidth() {
+    var slider = Api.barTextWidthSlider()
+    // The uncapped notch must sit past every real width, so no stored value can
+    // normalize onto it and be mistaken for "unlimited".
+    for (var i = 0; i < slider.ticks; i++) {
+      var stop = slider.min + i * slider.step
+      if (stop === slider.unlimited) continue
+      compare(Api.normalizedMaxBarTextWidth(stop), stop)
+    }
+    compare(slider.min + (slider.ticks - 1) * slider.step, slider.unlimited)
+    verify(Api.normalizedMaxBarTextWidth(slider.unlimited) < slider.unlimited)
+    compare(Api.normalizedMaxBarTextWidth(240), 240)
+  }
+
   function test_normalizedScrollSpeed_defaultsClampsAndSnaps() {
     compare(Api.normalizedScrollSpeed(undefined), 1)
     compare(Api.normalizedScrollSpeed("not-a-speed"), 1)

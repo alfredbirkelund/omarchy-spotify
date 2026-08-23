@@ -56,6 +56,8 @@
   fully opaque.
 - Size the bar track label from the painted text so a fitting title keeps its
   last letter instead of clipping a few pixels short.
+- Choose a 160–560 px maximum width for the bar track label, or let it grow
+  without a limit.
 - Finish installing Omasing after the shell reloads. Adding the plugin writes
   into the plugin directory, which used to kill the installer before the
   lyrics widget could be enabled.

@@ -38,6 +38,7 @@
       "showArtistName": "Off",
       "scrollBarText": "Off",
       "scrollSpeed": "1",
+      "maxBarTextWidth": "240",
       "audioQuality": "320 kbps"
     },
     "schema": [
@@ -128,6 +129,13 @@
         "label": "Bar text scroll speed",
         "defaultValue": "1",
         "description": "Multiplier from 0.25 to 3.00. The default speed is 1."
+      },
+      {
+        "key": "maxBarTextWidth",
+        "type": "string",
+        "label": "Maximum bar text width",
+        "defaultValue": "240",
+        "description": "Width from 160 to 560 px. Use 0 for unlimited."
       },
       {
         "key": "audioQuality",

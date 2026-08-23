@@ -129,6 +129,34 @@ function canScrollBarText(showTitle, showArtist) {
   return showTitle === true || showArtist === true
 }
 
+var BAR_TEXT_WIDTH_MIN = 160
+var BAR_TEXT_WIDTH_MAX = 560
+var BAR_TEXT_WIDTH_STEP = 40
+
+// Slider geometry for the bar label cap. The uncapped notch sits one step past
+// the widest real width, so 0 has somewhere to live without a second control.
+function barTextWidthSlider() {
+  return {
+    min: BAR_TEXT_WIDTH_MIN,
+    step: BAR_TEXT_WIDTH_STEP,
+    unlimited: BAR_TEXT_WIDTH_MAX + BAR_TEXT_WIDTH_STEP,
+    ticks: (BAR_TEXT_WIDTH_MAX - BAR_TEXT_WIDTH_MIN) / BAR_TEXT_WIDTH_STEP + 2
+  }
+}
+
+// Cap in unscaled px, snapped to the slider's notches. 0 means no cap;
+// anything unparseable falls back to the historical 240px bound.
+function normalizedMaxBarTextWidth(value) {
+  if (value === undefined || value === null || String(value).trim() === "")
+    return 240
+  var width = Number(value)
+  if (!isFinite(width) || width < 0) return 240
+  if (width === 0) return 0
+  var clamped = Math.max(BAR_TEXT_WIDTH_MIN, Math.min(BAR_TEXT_WIDTH_MAX, width))
+  return BAR_TEXT_WIDTH_MIN + Math.round(
+    (clamped - BAR_TEXT_WIDTH_MIN) / BAR_TEXT_WIDTH_STEP) * BAR_TEXT_WIDTH_STEP
+}
+
 function normalizedScrollSpeed(value) {
   var speed = Number(value)
   if (!isFinite(speed)) speed = 1
