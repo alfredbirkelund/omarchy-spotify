@@ -6,6 +6,56 @@
   `quickshell.spotify.player`, 5% per call, without opening the player. The
   commands return `unavailable` when volume cannot be changed.
 
+- Start and keep the laptop's Spotify Connect receiver registered whenever the
+  full player or mini-player is open; apply the idle shutdown timeout only after
+  every player surface closes.
+- Store local-playback authorization in durable XDG state instead of disposable
+  cache storage, with automatic fallback migration for existing credentials.
+- Build the playback-credential check command only after the plugin directory is
+  known, so a shell/plugin reload cannot falsely request authorization again.
+
+- Keep Ctrl+Up / Ctrl+Down volume steps on the last requested level until
+  the player acknowledges them, and send at most one volume command every
+  80 ms, so holding the shortcut no longer stutters or skips.
+- Wait 600 ms after the last search keystroke before calling Spotify, cancel
+  in-flight results while typing, and keep the search field’s text independent
+  of result rendering so the caret does not hitch.
+
+- Use the Omarchy theme muted color for captions, timestamps, and inactive
+  icons, so light themes keep secondary text quiet.
+- Color like/heart controls with the theme urgent red.
+- Tab or F6 moves a visible cursor between the sidebar, search, the song
+  list, and the player. The Tab overlay always marks that next stop, even
+  on Play, Search, or a neighbor that also has an arrow. On a playlist,
+  Tab lands on the visible songs, not the current track; the next Tab
+  leaves that list. Tab leaves the search field and skips the In-area
+  toggle (use Ctrl+F or / for that), then moves to the Songs/Artists
+  filters and the results. On an artist page, Tab moves from albums into the Top 10 songs.
+  Arrow keys choose a control or neighboring row, Enter activates the
+  highlighted control (sort cycles the order; library chips change the
+  filter), and C opens row actions. Inside that menu, arrows or Enter
+  choose an action; j and k also move, without their own hints. Tab overlays only
+  appear after shortcut mode is latched.
+- Use `Ctrl+F` or `/` to search, and press either again to move between the
+  current area and all of Spotify. Escape leaves search, including in-area
+  filters, instead of staying in the field.
+- After the first shortcut, matching controls glow in the theme accent and
+  show the next key to press. Hold Ctrl, Shift, or Alt to see those chords;
+  hints require an exact modifier match, so Ctrl+Shift only shows shortcuts
+  that actually use Ctrl+Shift. A visible `Ctrl+H · Hide hints` action in
+  the player header turns the overlay off until Shortcut hints is enabled
+  again in Settings.
+- Open the playing song's artist with `Ctrl+Shift+A` and its album with
+  `Ctrl+Shift+B` from the full player or mini-player. Shortcut hints sit in
+  a reserved slot beside the truncated names. Hold Ctrl+Shift to see A and B;
+  those modifier hints remain visible across repeated chords until the
+  corresponding modifier is actually released.
+- Open actions for the selected or playing song with `C`, or the ⋮
+  control beside the like button. Right-click the now-playing block too.
+- Fade overflowing bar text only while it is scrolling, so a still label stays
+  fully opaque.
+- Size the bar track label from the painted text so a fitting title keeps its
+  last letter instead of clipping a few pixels short.
 - Finish installing Omasing after the shell reloads. Adding the plugin writes
   into the plugin directory, which used to kill the installer before the
   lyrics widget could be enabled.
@@ -14,10 +64,15 @@
   fresh install does not wait on Spotify's Web API to start a track.
 - Say when a track starts through Spotify because the local socket was
   not ready.
-- Retry Spotify 429 responses after Retry-After, and keep at most two API
-  calls in flight so development-mode apps hit the rate limit less often.
+- Retry Spotify 429 responses after Retry-After, keep at most two API
+  calls in flight, and send one at a time after a rate limit so a
+  1-second cooldown does not fail the page.
 - Explain empty playlists when Spotify withholds tracks or the list
   failed to load.
+- Continue playlist pagination past 200 songs instead of treating the shared
+  collection cache limit as the end of the playlist.
+- Offer both newest-first and oldest-first date sorting, with undated items
+  kept at the end in either direction.
 
 - Open the first-run setup from the mini-player, show login progress and
   errors there, and let you cancel a stuck browser approval.

@@ -21,11 +21,6 @@ Item {
   property bool authenticationCancelled: false
   property bool mprisPresent: false
 
-  readonly property string cacheRoot: Quickshell.env("XDG_CACHE_HOME")
-    || (Quickshell.env("HOME") + "/.cache")
-  readonly property string credentialsPath: cacheRoot
-    + "/spotifyd/oauth/credentials.json"
-
   property bool binaryAvailable: false
   property bool binaryChecked: false
   property bool unitAvailable: false
@@ -108,7 +103,13 @@ Item {
   }
 
   function checkCredentials() {
-    if (!credentialsCheck.running) credentialsCheck.running = true
+    if (!pluginDir || credentialsCheck.running) return
+    // Build this path at launch. pluginDir is assigned after the child Process
+    // exists, and a stale initial binding can otherwise run /scripts/... and
+    // incorrectly report that a saved playback authorization is missing.
+    credentialsCheck.command = ["/usr/bin/bash",
+      pluginDir + "/scripts/playback-runtime.sh", "credentials"]
+    credentialsCheck.running = true
   }
 
   function refreshStatus() {
@@ -331,7 +332,6 @@ Item {
 
   Process {
     id: credentialsCheck
-    command: ["/usr/bin/test", "-s", root.credentialsPath]
     onExited: function(exitCode) {
       root.credentialsAvailable = exitCode === 0
       root.credentialsChecked = true

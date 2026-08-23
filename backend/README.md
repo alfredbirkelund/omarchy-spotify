@@ -6,7 +6,8 @@ librespot revision behind an interface owned by this project.
 
 The process provides:
 
-- PulseAudio/PipeWire playback with the existing credential and 1 GB cache;
+- PulseAudio/PipeWire playback with durable XDG-state authorization and a 1 GB
+  disposable audio cache;
 - Spotify Connect state and controls through librespot;
 - an MPRIS player for Quickshell and other desktop media controls; and
 - a versioned newline-delimited JSON protocol on an owner-only Unix socket.

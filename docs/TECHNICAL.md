@@ -23,9 +23,10 @@ supervised by a static systemd user unit that is never enabled at login. The
 backend embeds a commit-pinned librespot revision rather than duplicating its
 private-protocol implementation. It owns configuration, cache/authentication,
 MPRIS, lifecycle, and a stable private Unix-socket boundary. The app starts the
-unit when you play on this computer, choose it in Devices, or set idle minutes
-to 0 so it stays available. It stops after the configured idle period. The
-distro `spotifyd` unit is retained as a non-running fallback; the two units
+unit whenever its full player or mini-player is open, when you play on this
+computer, or when you choose it in Devices. Once every player surface closes,
+it stops after the configured idle period; 0 keeps it available indefinitely.
+The distro `spotifyd` unit is retained as a non-running fallback; the two units
 conflict so they cannot claim the same Connect identity together.
 
 The unit sets `PULSE_LATENCY_MSEC=30` only for local playback and caps
@@ -80,6 +81,10 @@ streaming-only PKCE grant on port `8990`.
 
 No client secret or Spotify password enters the plugin. OAuth refresh tokens
 are written to GNOME Keyring over stdin and separated by client identity.
+Reusable local-playback authorization is stored with owner-only permissions in
+`$XDG_STATE_HOME/omarchy-spotify`; older credentials under `$XDG_CACHE_HOME`
+are accepted once and migrated so clearing disposable caches cannot deauthorize
+this computer.
 Short-lived access tokens and PKCE values remain in the shell process. OAuth
 state is checked, callback listeners bind explicitly to IPv4 loopback, API URLs
 are restricted to
@@ -189,7 +194,8 @@ omarchy plugin remove quickshell.spotify --yes
 ```
 
 This stops and removes both static user units and the installed backend binary,
-deletes the app's private playback config, removes cached credentials and audio,
+deletes the app's private playback config, durable playback authorization and
+cached audio,
 and clears matching Omarchy Spotify keyring entries. The `spotifyd` package
 remains installed because another client may use it.
 

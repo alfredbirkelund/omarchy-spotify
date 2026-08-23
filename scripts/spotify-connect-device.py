@@ -385,11 +385,26 @@ def request_json_with_retry(
     raise last_error or ConnectError("receiver did not respond")
 
 
-def credentials_path() -> Path:
+def credentials_paths() -> list[Path]:
+    state_root = os.environ.get("XDG_STATE_HOME")
+    if not state_root:
+        state_root = str(Path.home() / ".local" / "state")
     cache_root = os.environ.get("XDG_CACHE_HOME")
     if not cache_root:
         cache_root = str(Path.home() / ".cache")
-    return Path(cache_root) / "spotifyd" / "oauth" / "credentials.json"
+    durable = Path(state_root) / "omarchy-spotify"
+    legacy = Path(cache_root) / "spotifyd"
+    return [
+        durable / "oauth" / "credentials.json",
+        durable / "zeroconf" / "credentials.json",
+        legacy / "oauth" / "credentials.json",
+        legacy / "zeroconf" / "credentials.json",
+    ]
+
+
+def credentials_path() -> Path:
+    paths = credentials_paths()
+    return next((path for path in paths if path.exists()), paths[0])
 
 
 def load_credentials() -> tuple[str, int, bytes]:

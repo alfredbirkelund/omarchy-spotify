@@ -40,6 +40,22 @@ class FakeResponse:
 
 
 class ConnectHelperTests(unittest.TestCase):
+    def test_credentials_prefer_durable_state_and_keep_cache_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_root:
+            root = Path(raw_root)
+            with mock.patch.dict(os.environ, {
+                "XDG_STATE_HOME": str(root / "state"),
+                "XDG_CACHE_HOME": str(root / "cache"),
+            }):
+                paths = helper.credentials_paths()
+
+        self.assertEqual(paths, [
+            root / "state/omarchy-spotify/oauth/credentials.json",
+            root / "state/omarchy-spotify/zeroconf/credentials.json",
+            root / "cache/spotifyd/oauth/credentials.json",
+            root / "cache/spotifyd/zeroconf/credentials.json",
+        ])
+
     def test_access_token_exchange_uses_receiver_identity(self) -> None:
         captured: list[object] = []
 

@@ -7,7 +7,9 @@ Row {
 
   property var itemData: null
   property color foreground: "white"
+  property color muted: Qt.darker(foreground, 1.4)
   property color accent: foreground
+  property color albumColor: accent
   property string fontFamily: ""
   property real fontPixelSize: 12
 
@@ -39,7 +41,7 @@ Row {
     fallbackText: root.itemData ? String(root.itemData.subtitle || "") : ""
     fallbackClickable: root.artists.length === 0 && !!root.primaryContext
     suffixText: root.itemData ? Api.artistSubtitleSuffix(root.itemData) : ""
-    color: Qt.darker(root.foreground, 1.4)
+    color: root.muted
     accent: root.accent
     font.family: root.fontFamily
     font.pixelSize: root.fontPixelSize
@@ -58,8 +60,8 @@ Row {
     fallbackText: root.albumContext
       ? "· " + String(root.albumContext.name || "Album") : ""
     fallbackClickable: visible
-    color: root.accent
-    accent: root.accent
+    color: root.albumColor
+    accent: root.albumColor
     font.family: root.fontFamily
     font.pixelSize: root.fontPixelSize
     onFallbackRequested: if (root.albumContext)

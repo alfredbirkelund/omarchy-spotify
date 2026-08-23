@@ -54,7 +54,7 @@ Column {
       id: resultStatus
       text: root.loading && root.resultCount === 0
         ? "Finding…" : String(root.resultCount)
-      color: Qt.darker(Color.foreground, 1.42)
+      color: Color.muted
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
     }

@@ -1,17 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Local playback's OAuth credential is separate from the Web API refresh token.
-# Remove only that exact file when the user explicitly logs out in the UI.
+# Local playback's reusable credential is separate from the Web API refresh
+# token. Remove only its exact durable and legacy files on explicit logout.
+state_root=${XDG_STATE_HOME:-"$HOME/.local/state"}
 cache_root=${XDG_CACHE_HOME:-"$HOME/.cache"}
-credentials_file="$cache_root/spotifyd/oauth/credentials.json"
 
-[[ $cache_root == /* && $cache_root != / ]] || {
-  echo "spotifyd-logout.sh: refusing an unsafe cache path" >&2
+[[ $state_root == /* && $state_root != / && $cache_root == /* && $cache_root != / ]] || {
+  echo "spotifyd-logout.sh: refusing an unsafe credential path" >&2
   exit 3
 }
-[[ $credentials_file == "$cache_root/spotifyd/oauth/credentials.json" ]] || exit 3
+
+credential_files=(
+  "$state_root/omarchy-spotify/oauth/credentials.json"
+  "$state_root/omarchy-spotify/zeroconf/credentials.json"
+  "$cache_root/spotifyd/oauth/credentials.json"
+  "$cache_root/spotifyd/zeroconf/credentials.json"
+)
+[[ ${credential_files[0]} == "$state_root/omarchy-spotify/oauth/credentials.json" ]] || exit 3
+[[ ${credential_files[2]} == "$cache_root/spotifyd/oauth/credentials.json" ]] || exit 3
 
 systemctl --user stop omarchy-spotify.service 2>/dev/null || true
 systemctl --user stop omarchy-spotifyd.service 2>/dev/null || true
-rm -f -- "$credentials_file"
+rm -f -- "${credential_files[@]}"

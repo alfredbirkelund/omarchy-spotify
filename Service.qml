@@ -29,6 +29,7 @@ Item {
     idleShutdownMinutes: 15,
     showMiniPlayer: "On",
     shortcutPlayer: "Omarchy Music app",
+    shortcutHints: "On",
     showTrackTitle: "On",
     showArtistName: "Off",
     scrollBarText: "Off",
@@ -45,6 +46,7 @@ Item {
   readonly property bool showMiniPlayer: String(settings.showMiniPlayer || "On") !== "Off"
   readonly property string shortcutPlayer: Api.normalizedShortcutPlayer(
     settings.shortcutPlayer)
+  readonly property bool shortcutHintsEnabled: String(settings.shortcutHints || "On") !== "Off"
   readonly property bool showTrackTitle: String(settings.showTrackTitle || "On") !== "Off"
   readonly property bool showArtistName: String(settings.showArtistName || "Off") === "On"
   readonly property bool scrollBarText: String(settings.scrollBarText || "Off") === "On"
@@ -86,6 +88,11 @@ Item {
   property real rememberedRemoteVolumePercent: -1
   property var pendingRemoteSeek: null
   property var pendingRemoteVolume: null
+  property real pendingSliderVolume: -1
+  property double pendingSliderUntil: 0
+  property bool volumeFlushQueued: false
+  property real queuedVolumeSlider: 0
+  property bool volumeFlushCooling: false
   property int remoteControlSerial: 0
   readonly property int remoteControlGraceMs: 8000
   property string remoteVolumeProbeKey: ""
@@ -99,6 +106,8 @@ Item {
   readonly property bool currentArtistContextAvailable: Api.artistContextAvailable(
     useRemotePlayback && remoteTrack ? remoteTrack.type : "",
     currentTrackId, currentArtists)
+  readonly property bool currentAlbumContextAvailable: album !== ""
+    && currentTrackId !== ""
   readonly property var currentLyricsSong: Api.lyricsSong(currentTrackId,
     title, artist, album, lengthSeconds, artUrl, positionSeconds)
   readonly property bool lyricsAvailable: currentLyricsSong !== null
@@ -173,8 +182,18 @@ Item {
     ? displayedRemoteVolumePercent(remoteDevice) / 100
     : (hasLocalPlayer && activePlayer.volumeSupported
       ? Math.max(0, Math.min(1, Number(activePlayer.volume) || 0)) : 0)
-  readonly property real volume: useRemotePlayback
+  readonly property real reportedSliderVolume: useRemotePlayback
     ? playbackVolume : Api.spotifydVolumeToSlider(playbackVolume)
+  readonly property real volume: pendingSliderVolume >= 0
+    ? pendingSliderVolume : reportedSliderVolume
+  readonly property bool volumePending: pendingSliderVolume >= 0
+  onReportedSliderVolumeChanged: reconcilePendingSliderVolume()
+  onUseRemotePlaybackChanged: {
+    clearPendingSliderVolume()
+    volumeFlushQueued = false
+    volumeFlushCooling = false
+    if (volumeFlushTimer) volumeFlushTimer.stop()
+  }
   readonly property bool shuffle: useRemotePlayback
     ? remotePlayback.shuffle === true
     : (hasLocalPlayer && activePlayer.shuffleSupported
@@ -410,8 +429,8 @@ Item {
     var next = defaults()
     var source = values || {}
     var keys = ["deviceName", "idleShutdownMinutes", "showMiniPlayer",
-      "shortcutPlayer", "showTrackTitle", "showArtistName", "scrollBarText",
-      "scrollSpeed", "audioQuality"]
+      "shortcutPlayer", "shortcutHints", "showTrackTitle", "showArtistName",
+      "scrollBarText", "scrollSpeed", "audioQuality"]
     for (var i = 0; i < keys.length; i++) {
       var key = keys[i]
       if (source[key] !== undefined) next[key] = source[key]
@@ -430,6 +449,7 @@ Item {
       Math.floor(Number(next.idleShutdownMinutes) || 0)))
     next.showMiniPlayer = String(next.showMiniPlayer || "On") === "Off" ? "Off" : "On"
     next.shortcutPlayer = Api.normalizedShortcutPlayer(next.shortcutPlayer)
+    next.shortcutHints = Api.normalizedShortcutHints(next.shortcutHints)
     next.showTrackTitle = String(next.showTrackTitle || "On") === "Off" ? "Off" : "On"
     next.showArtistName = String(next.showArtistName || "Off") === "On" ? "On" : "Off"
     next.scrollBarText = String(next.scrollBarText || "Off") === "On" ? "On" : "Off"
@@ -756,8 +776,9 @@ Item {
   }
 
   function ensureVisibleLocalReceiver() {
-    var action = Api.visibleLocalReceiverAction(uiVisible, fullyConnected,
-      daemonManager.running, daemonManager.busy, idleShutdownMinutes === 0)
+    var action = Api.visibleLocalReceiverAction(uiVisible,
+      fullyConnected && daemonManager.credentialsAvailable,
+      daemonManager.running, daemonManager.busy)
     if (action === "idle") {
       cancelVisibleLocalDeviceRefresh()
       return
@@ -768,8 +789,9 @@ Item {
   }
 
   function refreshVisibleLocalDevice() {
-    var action = Api.visibleLocalReceiverAction(uiVisible, fullyConnected,
-      daemonManager.running, daemonManager.busy, idleShutdownMinutes === 0)
+    var action = Api.visibleLocalReceiverAction(uiVisible,
+      fullyConnected && daemonManager.credentialsAvailable,
+      daemonManager.running, daemonManager.busy)
     if (action === "idle") {
       cancelVisibleLocalDeviceRefresh()
       return
@@ -910,6 +932,66 @@ Item {
     if (!pendingRemoteVolume
         || (serial && Number(pendingRemoteVolume.serial) !== Number(serial))) return
     pendingRemoteVolume = null
+  }
+
+  function beginPendingSliderVolume(value) {
+    pendingSliderVolume = Math.max(0, Math.min(1, Number(value) || 0))
+    pendingSliderUntil = Date.now() + remoteControlGraceMs
+    if (volumeHoldTimer) volumeHoldTimer.restart()
+  }
+
+  function clearPendingSliderVolume() {
+    pendingSliderVolume = -1
+    pendingSliderUntil = 0
+    if (volumeHoldTimer) volumeHoldTimer.stop()
+  }
+
+  function reconcilePendingSliderVolume() {
+    if (pendingSliderVolume < 0) return
+    if (!Api.pendingSliderVolumeShouldHold(reportedSliderVolume, {
+      slider: pendingSliderVolume,
+      expiresAt: pendingSliderUntil
+    }, Date.now()))
+      clearPendingSliderVolume()
+  }
+
+  function sendVolumeCommand(sliderValue) {
+    var localVolume = !useRemotePlayback && hasLocalPlayer
+      && activePlayer.volumeSupported
+    var normalized = localVolume
+      ? Api.sliderToSpotifydVolume(sliderValue) : sliderValue
+    var remoteSerial = 0
+    if (!localVolume && useRemotePlayback && remoteDevice) {
+      var remotePercent = Math.round(normalized * 100)
+      remoteSerial = beginRemoteVolume(remotePercent)
+      var receiver = findDiscoveredReceiver(remoteDevice)
+      if (receiver) spotifyConnectManager.rememberVolume(receiver.id, remotePercent)
+    }
+    if (sendSonosControl("volume", String(Math.round(normalized * 100)))) return
+    if (localVolume)
+      activePlayer.volume = normalized
+    else apiAction("PUT", "/me/player/volume",
+      controlQuery({ volume_percent: Math.round(normalized * 100) }),
+      null, "", function(ok) {
+      if (!ok) {
+        root.clearPendingRemoteVolume(remoteSerial)
+        root.clearPendingSliderVolume()
+      }
+      root.loadPlaybackState()
+    })
+  }
+
+  function flushVolume() {
+    if (!volumeFlushQueued) {
+      volumeFlushCooling = false
+      return
+    }
+    var sliderValue = queuedVolumeSlider
+    volumeFlushQueued = false
+    beginPendingSliderVolume(sliderValue)
+    sendVolumeCommand(sliderValue)
+    volumeFlushCooling = true
+    if (volumeFlushTimer) volumeFlushTimer.restart()
   }
 
   function reconcilePendingRemoteControls(state) {
@@ -1543,9 +1625,10 @@ Item {
         // match the positions accepted by Spotify's reorder endpoint.
         root.playlistItemsError = ""
         root.playlistItemsStatus = status
-        root.playlistItems = (append ? root.playlistItems.concat(page.items) : page.items)
-          .slice(0, root.cacheLimit)
-        root.playlistItemsNext = root.playlistItems.length >= root.cacheLimit ? "" : page.next
+        var playlistPage = Api.playlistPageState(root.playlistItems, page.items,
+          append, page.next)
+        root.playlistItems = playlistPage.items
+        root.playlistItemsNext = playlistPage.next
       })
   }
 
@@ -2462,6 +2545,7 @@ Item {
     var expected = dataSerial
     spotifyApi.search(normalized, function(groups, error) {
       if (expected !== root.dataSerial) return
+      if (root.searchQuery !== normalized) return
       root.searchLoading = false
       if (error) root.fail(error)
       else {
@@ -2517,6 +2601,14 @@ Item {
     spotifyApi.cancelSearch()
     searchLoading = false
     if (clearResults === true) clearSearch()
+  }
+
+  function cancelArtistCatalog() {
+    artistCatalogSerial++
+    artistAlbumsLoading = false
+    artistSongsLoading = false
+    artistPlaylistsLoading = false
+    detailLoading = false
   }
 
   function deviceForId(id) {
@@ -3034,27 +3126,11 @@ Item {
 
   function setVolume(value) {
     var sliderValue = Math.max(0, Math.min(1, Number(value) || 0))
-    var localVolume = !useRemotePlayback && hasLocalPlayer
-      && activePlayer.volumeSupported
-    var normalized = localVolume
-      ? Api.sliderToSpotifydVolume(sliderValue) : sliderValue
     noteActivity()
-    var remoteSerial = 0
-    if (!localVolume && useRemotePlayback && remoteDevice) {
-      var remotePercent = Math.round(normalized * 100)
-      remoteSerial = beginRemoteVolume(remotePercent)
-      var receiver = findDiscoveredReceiver(remoteDevice)
-      if (receiver) spotifyConnectManager.rememberVolume(receiver.id, remotePercent)
-    }
-    if (sendSonosControl("volume", String(Math.round(normalized * 100)))) return
-    if (localVolume)
-      activePlayer.volume = normalized
-    else apiAction("PUT", "/me/player/volume",
-      controlQuery({ volume_percent: Math.round(normalized * 100) }),
-      null, "", function(ok) {
-      if (!ok) root.clearPendingRemoteVolume(remoteSerial)
-      root.loadPlaybackState()
-    })
+    beginPendingSliderVolume(sliderValue)
+    queuedVolumeSlider = sliderValue
+    volumeFlushQueued = true
+    if (!volumeFlushCooling) flushVolume()
   }
 
   function setShuffle(value) {
@@ -3315,6 +3391,10 @@ Item {
     rememberedRemoteVolumePercent = -1
     pendingRemoteSeek = null
     pendingRemoteVolume = null
+    clearPendingSliderVolume()
+    volumeFlushQueued = false
+    volumeFlushCooling = false
+    volumeFlushTimer.stop()
     remoteControlSerial = 0
     remoteVolumeProbeKey = ""
     remoteControlDiscoveryKey = ""
@@ -3449,6 +3529,10 @@ Item {
 
   Connections {
     target: daemonManager
+    function onCredentialsAvailableChanged() {
+      if (daemonManager.credentialsAvailable && root.uiVisible)
+        root.ensureVisibleLocalReceiver()
+    }
     function onSetupSucceeded() {
       if (root.loginFlowActive) root.continueLocalPlaybackSetup()
       else root.succeed("Playback on this computer is ready")
@@ -3468,6 +3552,7 @@ Item {
     function onAuthenticationSucceeded() {
       if (root.loginFlowActive) root.finishLoginFlow()
       else root.succeed("Playback on this computer is connected")
+      if (root.uiVisible) root.ensureVisibleLocalReceiver()
       if (root.pendingPlayback || root.localActivationRequested) deviceProbeTimer.restart()
     }
     function onAuthenticationFailed(reason) {
@@ -3680,6 +3765,20 @@ Item {
     interval: 650
     repeat: false
     onTriggered: root.loadPlaybackState()
+  }
+
+  Timer {
+    id: volumeFlushTimer
+    interval: Api.VOLUME_FLUSH_MS
+    repeat: false
+    onTriggered: root.flushVolume()
+  }
+
+  Timer {
+    id: volumeHoldTimer
+    interval: 200
+    repeat: true
+    onTriggered: root.reconcilePendingSliderVolume()
   }
 
   Timer {

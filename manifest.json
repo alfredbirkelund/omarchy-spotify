@@ -33,6 +33,7 @@
       "idleShutdownMinutes": 15,
       "showMiniPlayer": "On",
       "shortcutPlayer": "Omarchy Music app",
+      "shortcutHints": "On",
       "showTrackTitle": "On",
       "showArtistName": "Off",
       "scrollBarText": "Off",
@@ -55,7 +56,7 @@
         "max": 1440,
         "step": 5,
         "defaultValue": 15,
-        "description": "Minutes. Use 0 to keep this computer available in Spotify Connect."
+        "description": "Minutes after the player closes. Use 0 to keep this computer available even while the player is closed."
       },
       {
         "key": "showMiniPlayer",
@@ -78,7 +79,18 @@
           "Mini player"
         ],
         "defaultValue": "Omarchy Music app",
-        "description": "Choose whether Super+Shift+M launches Omarchy's Music app, the full player, or the mini-player. Bind the shortcut once in Hyprland first."
+        "description": "Choose whether Super+Shift+M launches Omarchy's Music app, the full player, or the mini-player."
+      },
+      {
+        "key": "shortcutHints",
+        "type": "enum",
+        "label": "Shortcut hints",
+        "options": [
+          "On",
+          "Off"
+        ],
+        "defaultValue": "On",
+        "description": "After the first shortcut, matching controls show the next key to press. Shortcuts still work when this is off."
       },
       {
         "key": "showTrackTitle",

@@ -61,9 +61,10 @@ set -e
 mock_bin="$test_root/mock-bin"
 runtime_config="$test_root/runtime-config"
 runtime_cache="$test_root/runtime-cache"
+runtime_state="$test_root/runtime-state"
 runtime_backend="$test_root/runtime-backend"
 secret_log="$test_root/secret-tool.log"
-mkdir -p "$mock_bin" "$runtime_config" "$runtime_cache" "$runtime_backend"
+mkdir -p "$mock_bin" "$runtime_config" "$runtime_cache" "$runtime_state" "$runtime_backend"
 
 printf '%s\n' '#!/bin/sh' 'exit 0' >"$mock_bin/spotifyd"
 printf '%s\n' \
@@ -84,6 +85,7 @@ chmod 755 "$mock_bin/spotifyd" "$mock_bin/systemctl" "$mock_bin/secret-tool"
 PATH="$mock_bin:$PATH" \
 XDG_CONFIG_HOME="$runtime_config" \
 XDG_CACHE_HOME="$runtime_cache" \
+XDG_STATE_HOME="$runtime_state" \
 OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
 OMARCHY_SPOTIFY_SKIP_BACKEND_BUILD=1 \
   "$source_root/scripts/setup.sh" --device-name "Test speakers" >/dev/null
@@ -101,6 +103,7 @@ grep -qx 'Environment=PULSE_LATENCY_MSEC=30' "$runtime_unit"
 PATH="$mock_bin:$PATH" \
 XDG_CONFIG_HOME="$runtime_config" \
 XDG_CACHE_HOME="$runtime_cache" \
+XDG_STATE_HOME="$runtime_state" \
 OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
   "$source_root/scripts/remove-runtime.sh" >/dev/null
 
@@ -113,6 +116,7 @@ find "$runtime_config" -maxdepth 1 -type d -name 'omarchy-spotify.bak.*' \
 PATH="$mock_bin:$PATH" \
 XDG_CONFIG_HOME="$runtime_config" \
 XDG_CACHE_HOME="$runtime_cache" \
+XDG_STATE_HOME="$runtime_state" \
 OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
 OMARCHY_SPOTIFY_SKIP_BACKEND_BUILD=1 \
   "$source_root/scripts/setup-playback.sh" >/dev/null
@@ -125,6 +129,7 @@ rm -f -- "$runtime_backend/omarchy-spotify-backend"
 PATH="$mock_bin:$PATH" \
 XDG_CONFIG_HOME="$runtime_config" \
 XDG_CACHE_HOME="$runtime_cache" \
+XDG_STATE_HOME="$runtime_state" \
 OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
   "$source_root/scripts/setup.sh" >/dev/null
 runtime_backend_unit="$runtime_config/systemd/user/omarchy-spotify.service"
@@ -135,20 +140,34 @@ cp -- "$source_root/config/spotifyd.conf" "$runtime_config/omarchy-spotify/spoti
 PATH="$mock_bin:$PATH" \
 XDG_CONFIG_HOME="$runtime_config" \
 XDG_CACHE_HOME="$runtime_cache" \
+XDG_STATE_HOME="$runtime_state" \
 OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
 TEST_SECRET_LOG="$secret_log" \
   "$source_root/scripts/remove-runtime.sh" --purge >/dev/null
 
 [[ ! -e $runtime_config/omarchy-spotify && ! -e $runtime_cache/spotifyd ]]
+[[ ! -e $runtime_state/omarchy-spotify ]]
 grep -q 'clear service quickshell-spotify kind refresh-token' "$secret_log"
 
-mkdir -p "$runtime_cache/spotifyd/oauth"
+mkdir -p "$runtime_state/omarchy-spotify/oauth" "$runtime_cache/spotifyd/oauth"
 printf '%s\n' '{"mock":"credential"}' \
+  >"$runtime_state/omarchy-spotify/oauth/credentials.json"
+printf '%s\n' '{"mock":"legacy-credential"}' \
   >"$runtime_cache/spotifyd/oauth/credentials.json"
+XDG_CACHE_HOME="$runtime_cache" \
+XDG_STATE_HOME="$runtime_state" \
+  "$source_root/scripts/playback-runtime.sh" credentials
 PATH="$mock_bin:$PATH" \
 XDG_CACHE_HOME="$runtime_cache" \
+XDG_STATE_HOME="$runtime_state" \
   "$source_root/scripts/spotifyd-logout.sh"
+[[ ! -e $runtime_state/omarchy-spotify/oauth/credentials.json ]]
 [[ ! -e $runtime_cache/spotifyd/oauth/credentials.json ]]
+if XDG_CACHE_HOME="$runtime_cache" XDG_STATE_HOME="$runtime_state" \
+    "$source_root/scripts/playback-runtime.sh" credentials; then
+  echo "playback-runtime.sh reported removed credentials" >&2
+  exit 1
+fi
 
 set +e
 PATH="$mock_bin:$PATH" \
@@ -210,6 +229,8 @@ jq -e '.version == "1.0.2"
   and .barWidget.defaultSection == "left"
   and .barWidget.defaults.showMiniPlayer == "On"
   and (.barWidget.schema[] | select(.key == "showMiniPlayer").defaultValue) == "On"
+  and .barWidget.defaults.shortcutHints == "On"
+  and (.barWidget.schema[] | select(.key == "shortcutHints").defaultValue) == "On"
   and .barWidget.defaults.audioQuality == "320 kbps"
   and (.barWidget.schema[] | select(.key == "audioQuality").defaultValue) == "320 kbps"' \
   "$source_root/manifest.json" >/dev/null

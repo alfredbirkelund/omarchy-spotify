@@ -7,6 +7,7 @@ import "Api.js" as Api
 
 Item {
   id: root
+  objectName: "media-collection"
 
   required property var service
   property var sourceItems: []
@@ -25,6 +26,24 @@ Item {
   property real restoredContentY: 0
   property string stateKey: ""
   property bool restoreApplied: false
+  property bool keyboardSortSelected: false
+  property bool keyboardMoreSelected: false
+  property string keyboardSortHint: ""
+  property string keyboardMoreHint: ""
+  property string keyboardListHint: ""
+  property bool keyboardAtList: false
+  property bool keyboardAtListPrev: false
+  property bool keyboardAtListNext: false
+  property bool keyboardListIsTab: false
+  property bool keyboardListIsBacktab: false
+  property bool keyboardNavModifiers: false
+  property bool keyboardCtrlHeld: false
+  property bool keyboardShiftHeld: false
+  property bool keyboardAltHeld: false
+  property bool keyboardHintsActive: false
+  property string keyboardListId: "list"
+  readonly property int listCurrentIndex: mediaList.currentIndex
+  readonly property int listCount: mediaList.count
   property bool allowReorder: false
   property bool reorderBusy: false
   property int dragSourceIndex: -1
@@ -33,7 +52,8 @@ Item {
   property int dragAutoScrollDirection: 0
 
   readonly property var visibleItems: Api.filteredSorted(sourceItems, filterText, sortKey)
-  readonly property var sortKeys: ["default", "name", "artist", "album", "duration", "date"]
+  readonly property var sortKeys: ["default", "name", "artist", "album", "duration",
+    "date", "date-asc"]
   readonly property bool canReorder: allowReorder && !reorderBusy
     && String(filterText || "").trim() === "" && sortKey === "default"
     && visibleItems.length > 1
@@ -56,7 +76,8 @@ Item {
     if (sortKey === "artist") return "Artist"
     if (sortKey === "album") return "Album"
     if (sortKey === "duration") return "Duration"
-    if (sortKey === "date") return "Date"
+    if (sortKey === "date") return "Date: newest"
+    if (sortKey === "date-asc") return "Date: oldest"
     return "Original"
   }
 
@@ -69,6 +90,75 @@ Item {
   function focusList() {
     mediaList.forceActiveFocus()
     if (mediaList.currentIndex < 0 && mediaList.count > 0) mediaList.currentIndex = 0
+  }
+
+  function moveCurrent(delta) {
+    var next = Api.listIndexAfterMove(mediaList.count, mediaList.currentIndex, delta)
+    if (next < 0) return false
+    mediaList.currentIndex = next
+    return true
+  }
+
+  function currentContextAnchor() {
+    var index = mediaList.currentIndex
+    if (index < 0 || index >= visibleItems.length) return null
+    var row = mediaList.currentItem
+    var point = row ? row.mapToItem(null, row.width / 2, row.height / 2)
+      : ({ x: 0, y: 0 })
+    return {
+      item: visibleItems[index],
+      index: index,
+      x: point.x,
+      y: point.y,
+      items: visibleItems,
+      uri: contextUri
+    }
+  }
+
+  function activateCurrent() {
+    if (mediaList.currentItem) mediaList.currentItem.triggerPrimary()
+  }
+
+  function jumpToEdge(toEnd) {
+    if (mediaList.count <= 0) return
+    mediaList.currentIndex = toEnd ? mediaList.count - 1 : 0
+  }
+
+  function firstVisibleListIndex() {
+    if (mediaList.count <= 0) return 0
+    var y = mediaList.contentY + 1
+    if (y < mediaList.originY) y = mediaList.originY + 1
+    var index = mediaList.indexAt(Math.max(1, mediaList.width / 2), y)
+    return Api.listHintRowIndex(mediaList.count, index)
+  }
+
+  function jumpToFirstVisible() {
+    if (mediaList.count <= 0) return
+    mediaList.currentIndex = firstVisibleListIndex()
+  }
+
+  function blurList() {
+    mediaList.focus = false
+  }
+
+  function rowNavHint(index) {
+    if (!keyboardHintsActive) return ""
+    return Api.cursorListRowHint({
+      rowIndex: index,
+      currentIndex: mediaList.currentIndex,
+      count: mediaList.count,
+      tabRowIndex: firstVisibleListIndex(),
+      atList: keyboardAtList,
+      previousIsCurrent: keyboardAtListPrev,
+      nextIsCurrent: keyboardAtListNext,
+      tabIsList: keyboardListIsTab,
+      backtabIsList: keyboardListIsBacktab,
+      modifiersHeld: keyboardNavModifiers
+    })
+  }
+
+  function requestMore() {
+    if (hasMore && !loading) loadMoreRequested()
   }
 
   function reorderIndexAtSceneY(sceneY) {
@@ -225,7 +315,13 @@ Item {
         iconText: "󰒺"
         foreground: Color.foreground
         tooltipText: "Change sort order"
+        focusable: false
+        hasCursor: root.keyboardSortSelected
         onClicked: root.cycleSort()
+        ShortcutHint {
+          active: root.keyboardHintsActive && root.keyboardSortHint !== ""
+          navHint: root.keyboardSortHint
+        }
       }
 
       Text {
@@ -234,7 +330,7 @@ Item {
         text: root.visibleItems.length
           + (root.filterText ? (root.visibleItems.length === 1 ? " match" : " matches")
             : (root.visibleItems.length === 1 ? " item" : " items"))
-        color: Qt.darker(Color.foreground, 1.42)
+        color: Color.muted
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
       }
@@ -251,8 +347,8 @@ Item {
       reuseItems: true
       cacheBuffer: Style.space(160)
       interactive: root.dragSourceIndex < 0
-      activeFocusOnTab: true
-      keyNavigationEnabled: true
+      activeFocusOnTab: false
+      keyNavigationEnabled: false
       highlightFollowsCurrentItem: true
       ScrollBar.vertical: ScrollBar { }
       onMovementEnded: root.rememberView()
@@ -267,8 +363,22 @@ Item {
         onScrolled: root.rememberView()
       }
 
-      Keys.onReturnPressed: if (currentItem) currentItem.triggerPrimary()
-      Keys.onEnterPressed: if (currentItem) currentItem.triggerPrimary()
+      Keys.onReturnPressed: function(event) {
+        if (!root.keyboardAtList) {
+          event.accepted = false
+          return
+        }
+        if (currentItem) currentItem.triggerPrimary()
+        event.accepted = true
+      }
+      Keys.onEnterPressed: function(event) {
+        if (!root.keyboardAtList) {
+          event.accepted = false
+          return
+        }
+        if (currentItem) currentItem.triggerPrimary()
+        event.accepted = true
+      }
 
       delegate: MediaRow {
         required property var modelData
@@ -277,7 +387,7 @@ Item {
         foreground: Color.foreground
         accent: Color.accent
         fontFamily: Style.font.family
-        selected: ListView.isCurrentItem
+        selected: ListView.isCurrentItem && root.keyboardAtList
         browseOnActivate: root.browseContexts && modelData.kind === "context"
         showQueue: root.showQueue
         showPlaylist: root.showPlaylist
@@ -288,6 +398,27 @@ Item {
           && root.dragSourceIndex !== index
           ? (index < root.dragSourceIndex ? -1 : 1) : 0
         saved: root.service ? root.service.isSaved(modelData) : false
+        ShortcutHint {
+          ctrlHeld: root.keyboardCtrlHeld
+          shiftHeld: root.keyboardShiftHeld
+          altHeld: root.keyboardAltHeld
+          sequences: selected ? ["C"] : []
+          active: root.keyboardHintsActive && (hint !== "" || selected)
+          navHint: hint
+          readonly property string hint: {
+            mediaList.currentIndex
+            mediaList.count
+            mediaList.contentY
+            root.keyboardAtList
+            root.keyboardAtListPrev
+            root.keyboardAtListNext
+            root.keyboardListIsTab
+            root.keyboardListIsBacktab
+            root.keyboardNavModifiers
+            root.keyboardHintsActive
+            return root.rowNavHint(index)
+          }
+        }
         onActivated: function(item) {
           root.activated(item, root.visibleItems, root.contextUri)
         }
@@ -318,7 +449,7 @@ Item {
       height: visible ? contentHeight : 0
       visible: !root.loading && root.visibleItems.length === 0
       text: root.emptyMessage
-      color: Qt.darker(Color.foreground, 1.4)
+      color: Color.muted
       font.family: Style.font.family
       font.pixelSize: Style.font.bodySmall
       horizontalAlignment: Text.AlignHCenter
@@ -333,7 +464,12 @@ Item {
       text: root.loading ? "Loading…" : "Load more"
       foreground: Color.foreground
       enabled: root.hasMore && !root.loading
+      hasCursor: root.keyboardMoreSelected
       onClicked: root.loadMoreRequested()
+      ShortcutHint {
+        active: root.keyboardHintsActive && root.keyboardMoreHint !== ""
+        navHint: root.keyboardMoreHint
+      }
     }
   }
 
@@ -374,7 +510,7 @@ Item {
         Text {
           width: parent.width
           text: root.dragItem ? String(root.dragItem.subtitle || "") : ""
-          color: Qt.darker(Color.foreground, 1.3)
+          color: Color.muted
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
           elide: Text.ElideRight

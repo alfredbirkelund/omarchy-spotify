@@ -7,6 +7,7 @@ Item {
 
   property var service: null
   property color foreground: Color.foreground
+  property color muted: Color.muted
   property color urgent: Color.urgent
   property string surfaceKey: ""
   property bool cancelHasCursor: false
@@ -49,7 +50,7 @@ Item {
         : (root.availability === "ready"
           ? "The plugin is installed, but Spotify could not open its lyrics window."
           : "Lyrics are provided by the optional Omasing plugin. Install and enable it now?")
-      color: Qt.darker(root.foreground, 1.35)
+      color: root.muted
       font.family: Style.font.family
       font.pixelSize: Style.font.bodySmall
       wrapMode: Text.WordWrap
@@ -59,7 +60,7 @@ Item {
       width: parent.width
       visible: root.availability === "missing"
       text: "This downloads github.com/stappmus/Omasing. Omarchy plugins run unsandboxed inside the shell."
-      color: Qt.darker(root.foreground, 1.5)
+      color: root.muted
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
       wrapMode: Text.WordWrap

@@ -10,6 +10,7 @@ BorderSurface {
   required property var itemData
   property color foreground: Color.foreground
   property color accent: Color.accent
+  property color muted: Color.muted
   property string fontFamily: Style.font.family
   property bool selected: false
   property bool showPlay: true
@@ -201,7 +202,7 @@ BorderSurface {
           : (root.itemData.type === "album" ? "󰀥"
           : (root.itemData.type === "show" || root.itemData.type === "episode" ? "󰦔"
           : (root.itemData.type === "audiobook" || root.itemData.type === "chapter" ? "󰂺" : "󰝚")))))
-        color: Qt.darker(root.foreground, 1.35)
+        color: root.muted
         font.family: root.fontFamily
         font.pixelSize: Style.font.iconLarge
       }
@@ -229,7 +230,9 @@ BorderSurface {
         width: parent.width
         itemData: root.itemData
         foreground: root.foreground
+        muted: root.muted
         accent: root.accent
+        albumColor: root.accent
         fontFamily: root.fontFamily
         fontPixelSize: Style.font.bodySmall
         onArtistRequested: function(item) { root.artistRequested(item) }
@@ -250,7 +253,7 @@ BorderSurface {
           && (!root.compactActions || root.actionsExpanded)
         anchors.verticalCenter: parent.verticalCenter
         text: Api.millisecondsToClock(root.itemData ? root.itemData.durationMs : 0)
-        color: Qt.darker(root.foreground, 1.45)
+        color: root.muted
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
@@ -261,7 +264,8 @@ BorderSurface {
         visible: root.saveActionVisible
           && (!root.compactActions || root.actionsExpanded)
         iconText: "󰋑"
-        foreground: root.foreground
+        foreground: Color.urgent
+        accent: Color.urgent
         tooltipText: "Save to library"
         horizontalPadding: Style.space(7)
         onClicked: root.saveRequested(root.itemData)

@@ -212,17 +212,39 @@ function responseError(status, payload, fallback) {
 }
 
 function rateLimitSuffix(retryAfter) {
-  var value = String(retryAfter || "").trim()
-  return value ? ". Try again in " + value + " seconds" : ""
+  var seconds = Number(String(retryAfter || "").trim())
+  if (!isFinite(seconds) || seconds <= 0) return ""
+  seconds = Math.max(1, Math.round(seconds))
+  return ". Try again in " + seconds + (seconds === 1 ? " second" : " seconds") + "."
+}
+
+function rateLimitMessage(retryAfter) {
+  var suffix = rateLimitSuffix(retryAfter)
+  return suffix ? "Spotify is busy" + suffix
+    : "Spotify is busy. Try again in a moment."
 }
 
 var API_MAX_IN_FLIGHT = 2
+var API_MAX_RATE_LIMIT_RETRIES = 4
 
-function rateLimitRetryMs(retryAfter) {
+function rateLimitRetryMs(retryAfter, attempt) {
   var value = String(retryAfter || "").trim()
   var seconds = Number(value)
   if (!value || !isFinite(seconds) || seconds < 0) return 10000
-  return Math.min(30000, Math.max(250, Math.round(seconds * 1000)))
+  var headerMs = Math.round(seconds * 1000)
+  var retry = Math.max(0, Math.floor(Number(attempt) || 0))
+  var backoffMs = 1000 * Math.pow(2, retry)
+  // Spotify often 429s again if we retry at exactly Retry-After, especially
+  // when the header is 1 second. Wait a little longer and grow the delay.
+  return Math.min(30000, Math.max(1000, headerMs, backoffMs) + 400)
+}
+
+function shouldRetryRateLimit(retriesSoFar) {
+  return (Number(retriesSoFar) || 0) < API_MAX_RATE_LIMIT_RETRIES
+}
+
+function apiInFlightLimit(restricted) {
+  return restricted === true ? 1 : API_MAX_IN_FLIGHT
 }
 
 function responseRetryAfter(xhr) {
@@ -260,8 +282,8 @@ function apiCooldownMs(now, until) {
   return wait > 0 ? Math.ceil(wait) : 0
 }
 
-function nextRateLimitedUntil(now, retryAfter, currentUntil) {
-  var proposed = (Number(now) || 0) + rateLimitRetryMs(retryAfter)
+function nextRateLimitedUntil(now, retryAfter, currentUntil, attempt) {
+  var proposed = (Number(now) || 0) + rateLimitRetryMs(retryAfter, attempt)
   var existing = Number(currentUntil) || 0
   return proposed > existing ? proposed : existing
 }
@@ -302,15 +324,14 @@ function localSocketFallbackMessage() {
   return "The local player was not ready, so this track is starting through Spotify."
 }
 
-// A visible surface may keep an already-running local receiver registered, but
-// it only starts one when the user asked to keep this computer available
-// (idle minutes is 0). Ordinary opens wait for an explicit local play.
-function visibleLocalReceiverAction(uiVisible, fullyConnected, running, busy,
-    keepAvailable) {
+// While a player surface is open, keep this computer registered as a Spotify
+// Connect receiver. The configured idle timeout begins only after every player
+// surface closes.
+function visibleLocalReceiverAction(uiVisible, fullyConnected, running, busy) {
   if (uiVisible !== true || fullyConnected !== true) return "idle"
   if (busy === true) return "wait"
   if (running === true) return "refresh"
-  return keepAvailable === true ? "start" : "idle"
+  return "start"
 }
 
 function remotePlaybackPollShouldRun(loggedIn, loading, uiVisible, useRemote,
@@ -330,6 +351,92 @@ function normalizedShortcutPlayer(value) {
   if (text === "Full player") return "Full player"
   if (text === "Mini player") return "Mini player"
   return "Omarchy Music app"
+}
+
+function normalizedShortcutHints(value) {
+  return String(value || "On") === "Off" ? "Off" : "On"
+}
+
+function shortcutSequenceList(value) {
+  if (value === undefined || value === null || value === "") return []
+  return Array.isArray(value) ? value : [value]
+}
+
+function parseShortcutSequence(sequence) {
+  var raw = String(sequence || "").replace(/^\s+|\s+$/g, "")
+  var result = { ctrl: false, shift: false, alt: false, key: "" }
+  if (!raw) return result
+  var parts = raw.split("+")
+  for (var i = 0; i < parts.length; i++) {
+    var part = String(parts[i] || "").replace(/^\s+|\s+$/g, "")
+    if (!part) continue
+    var lower = part.toLowerCase()
+    if (lower === "ctrl" || lower === "control") result.ctrl = true
+    else if (lower === "shift") result.shift = true
+    else if (lower === "alt") result.alt = true
+    else if (lower === "meta" || lower === "super") continue
+    else result.key = part
+  }
+  return result
+}
+
+function shortcutModifiersMatch(sequence, held) {
+  var parsed = parseShortcutSequence(sequence)
+  var flags = held && typeof held === "object" ? held : {}
+  var ctrl = flags.ctrl === true
+  var shift = flags.shift === true
+  var alt = flags.alt === true
+  return parsed.ctrl === ctrl && parsed.shift === shift && parsed.alt === alt
+}
+
+function shortcutModifierFlagsAfterEvent(reportedFlags, pressed, previousFlags,
+    changedModifierFlag) {
+  var reported = Number(reportedFlags) || 0
+  var previous = Number(previousFlags) || 0
+  var changed = Number(changedModifierFlag) || 0
+  if (changed !== 0)
+    return pressed === true ? (reported | changed) : (reported & ~changed)
+  // Some Qt key-release events omit modifiers that are still physically held.
+  // A non-modifier release cannot change that state, so retain the last value.
+  return pressed === true ? reported : previous
+}
+
+function shortcutKeycap(sequence) {
+  var key = String(parseShortcutSequence(sequence).key || "")
+  var lower = key.toLowerCase()
+  if (lower === "left") return "←"
+  if (lower === "right") return "→"
+  if (lower === "up") return "↑"
+  if (lower === "down") return "↓"
+  if (lower === "space") return "Space"
+  if (lower === "esc" || lower === "escape") return "Esc"
+  if (lower === "tab") return "Tab"
+  if (lower === "menu") return "Menu"
+  return key
+}
+
+function shortcutHintCaption(sequences, held, active) {
+  if (active === false) return ""
+  var list = shortcutSequenceList(sequences)
+  var labels = []
+  var seen = {}
+  for (var i = 0; i < list.length; i++) {
+    if (!shortcutModifiersMatch(list[i], held)) continue
+    var label = shortcutKeycap(list[i])
+    if (!label || seen[label]) continue
+    seen[label] = true
+    labels.push(label)
+  }
+  return labels.join(" ")
+}
+
+function shortcutOverlayLabel(sequences, held, active, navHint) {
+  if (active === false) return ""
+  var nav = String(navHint || "")
+  var chord = shortcutHintCaption(sequences, held, true)
+  if (nav && chord && nav !== chord) return nav + " " + chord
+  if (nav) return nav
+  return chord
 }
 
 function repeatModeLabel(mode) {
@@ -365,9 +472,27 @@ function spotifyTypeLabel(type) {
 
 var MUTE_THRESHOLD = 0.001
 var UNMUTE_FLOOR = 0.05
+var SEARCH_DEBOUNCE_MS = 600
+var VOLUME_FLUSH_MS = 80
+var SLIDER_VOLUME_ACK_TOLERANCE = 0.04
 
 function nextVolume(current, delta) {
   return clampUnit((Number(current) || 0) + (Number(delta) || 0))
+}
+
+function pendingSliderVolumeShouldHold(reportedSlider, pending, now) {
+  if (!pending) return false
+  if ((Number(now) || 0) >= (Number(pending.expiresAt) || 0)) return false
+  var requested = Number(pending.slider)
+  if (!isFinite(requested)) return false
+  return Math.abs(clampUnit(reportedSlider) - clampUnit(requested))
+    > SLIDER_VOLUME_ACK_TOLERANCE
+}
+
+function displayedSliderVolume(reportedSlider, pending, now) {
+  if (pendingSliderVolumeShouldHold(reportedSlider, pending, now))
+    return clampUnit(pending.slider)
+  return clampUnit(reportedSlider)
 }
 
 function shouldRememberVolume(value) {
@@ -788,6 +913,241 @@ function sessionWithoutLyricsInstall(session) {
   return next
 }
 
+function searchShortcutAction(searchFocused, scopeAvailable, searchInContext) {
+  if (searchFocused === true)
+    return scopeAvailable === true ? "toggle-scope" : "focus"
+  if (scopeAvailable === true && searchInContext !== true) return "enter-context"
+  return "focus"
+}
+
+function cursorActionList(actions) {
+  var list = Array.isArray(actions) ? actions : []
+  var result = []
+  for (var i = 0; i < list.length; i++) {
+    var action = String(list[i] || "")
+    if (action) result.push(action)
+  }
+  return result
+}
+
+function ensureCursorAction(actions, current, fallback) {
+  var list = cursorActionList(actions)
+  if (!list.length) return ""
+  var value = String(current || "")
+  if (list.indexOf(value) >= 0) return value
+  var preferred = String(fallback || "")
+  if (preferred && list.indexOf(preferred) >= 0) return preferred
+  return list[0]
+}
+
+function moveCursorAction(actions, current, delta) {
+  var list = cursorActionList(actions)
+  if (!list.length) return ""
+  var index = list.indexOf(String(current || ""))
+  if (index < 0) index = 0
+  var step = delta < 0 ? -1 : 1
+  return list[(index + step + list.length) % list.length]
+}
+
+function cursorNavHint(query) {
+  var spec = query && typeof query === "object" ? query : {}
+  var region = String(spec.region || "")
+  var action = String(spec.action || "")
+  if (!region || !action) return ""
+  if (region === String(spec.tabRegion || "")
+      && action === String(spec.tabAction || ""))
+    return "Tab"
+  if (region === String(spec.backtabRegion || "")
+      && action === String(spec.backtabAction || ""))
+    return "⇧Tab"
+  if (spec.cursorActive === false) return ""
+  if (spec.modifiersHeld === true) return ""
+  var currentRegion = String(spec.currentRegion || "")
+  var current = String(spec.currentAction || "")
+  var listAction = String(spec.listAction || "")
+  var listIndex = Math.floor(Number(spec.listIndex))
+  var listCount = Math.max(0, Math.floor(Number(spec.listCount) || 0))
+  var atList = listAction !== "" && current === listAction
+  if (region === currentRegion && action === current) {
+    if (atList) return ""
+    return "↵"
+  }
+  if (region === currentRegion) {
+    var neighbors = cursorActionList(spec.regionActions)
+    if (action === moveCursorAction(neighbors, current, -1)) {
+      if (atList && listIndex > 0) return ""
+      return "↑"
+    }
+    if (action === moveCursorAction(neighbors, current, 1)) {
+      if (atList && listIndex >= 0 && listIndex < listCount - 1) return ""
+      return "↓"
+    }
+  }
+  return ""
+}
+
+function isCursorListAction(action) {
+  var value = String(action || "")
+  return value === "list" || value.indexOf("list-") === 0
+}
+
+function pageListActions(actions) {
+  var list = cursorActionList(actions)
+  var result = []
+  for (var i = 0; i < list.length; i++) {
+    if (isCursorListAction(list[i])) result.push(list[i])
+  }
+  return result
+}
+
+function listHintRowIndex(count, firstVisible) {
+  var n = Math.max(0, Math.floor(Number(count) || 0))
+  if (n <= 0) return -1
+  var row = Math.floor(Number(firstVisible))
+  if (row >= 0 && row < n) return row
+  return 0
+}
+
+function regionTabLanding(region, actions, query) {
+  var spec = query && typeof query === "object" ? query : {}
+  var list = cursorActionList(actions)
+  if (!list.length) return ""
+  var area = String(region || "")
+  if (area === "footer")
+    return ensureCursorAction(list, "play", list[0])
+  if (area === "header")
+    return ensureCursorAction(list, "search", list[0])
+  if (area === "page") {
+    var preferred = String(spec.pageLanding || "")
+    if (preferred && list.indexOf(preferred) >= 0) return preferred
+    var lists = pageListActions(list)
+    var count = Math.floor(Number(spec.listCount))
+    var listEmpty = isFinite(count) && count === 0
+    if (lists.length) {
+      if (lists[0] !== "list" || !listEmpty) return lists[0]
+    }
+    var chrome = []
+    for (var i = 0; i < list.length; i++) {
+      if (!isCursorListAction(list[i])) chrome.push(list[i])
+    }
+    if (chrome.length)
+      return spec.back === true ? chrome[chrome.length - 1] : chrome[0]
+    return ""
+  }
+  if (spec.back === true) return list[list.length - 1]
+  return list[0]
+}
+
+function tabCursorDestination(query) {
+  var spec = query && typeof query === "object" ? query : {}
+  var regions = cursorActionList(spec.regions)
+  if (!regions.length) return { region: "", action: "" }
+  var back = spec.back === true
+  var currentRegion = String(spec.currentRegion || "")
+  var currentAction = String(spec.currentAction || "")
+  var byRegion = spec.actionsByRegion && typeof spec.actionsByRegion === "object"
+    ? spec.actionsByRegion : {}
+  var pageActions = cursorActionList(spec.pageActions || byRegion.page)
+  var lists = pageListActions(pageActions)
+
+  if (spec.cursorActive === false) {
+    var footer = cursorActionList(byRegion.footer)
+    var play = ensureCursorAction(footer, "play", footer[0] || "")
+    if (play) return { region: "footer", action: play }
+    if (regions.length) {
+      var first = regions[0]
+      return {
+        region: first,
+        action: regionTabLanding(first, cursorActionList(byRegion[first]), spec)
+      }
+    }
+    return { region: "", action: "" }
+  }
+
+  if (regions.length === 1) {
+    var only = regions[0]
+    return {
+      region: only,
+      action: moveCursorAction(cursorActionList(byRegion[only]), currentAction,
+        back ? -1 : 1)
+    }
+  }
+
+  if (currentRegion === "page" && lists.length) {
+    var actionIndex = pageActions.indexOf(currentAction)
+    var currentList = lists.indexOf(currentAction)
+    var firstListAt = pageActions.indexOf(lists[0])
+    var lastListAt = pageActions.indexOf(lists[lists.length - 1])
+    if (!back) {
+      if (currentList >= 0 && currentList < lists.length - 1)
+        return { region: "page", action: lists[currentList + 1] }
+      if (currentList < 0 && (actionIndex < 0 || actionIndex < firstListAt))
+        return { region: "page", action: lists[0] }
+    } else if (currentList > 0) {
+      return { region: "page", action: lists[currentList - 1] }
+    } else if (currentList === 0) {
+      if (firstListAt > 0)
+        return { region: "page", action: pageActions[firstListAt - 1] }
+    } else if (actionIndex > lastListAt) {
+      return { region: "page", action: lists[lists.length - 1] }
+    }
+  }
+
+  var nextRegion = moveCursorAction(regions, currentRegion, back ? -1 : 1)
+  return {
+    region: nextRegion,
+    action: regionTabLanding(nextRegion, cursorActionList(byRegion[nextRegion]), {
+      back: back,
+      listCount: spec.listCount,
+      pageLanding: spec.pageLanding
+    })
+  }
+}
+
+function cursorListRowHint(query) {
+  var spec = query && typeof query === "object" ? query : {}
+  var row = Math.floor(Number(spec.rowIndex))
+  var count = Math.max(0, Math.floor(Number(spec.count) || 0))
+  var current = Math.floor(Number(spec.currentIndex))
+  if (count <= 0 || row < 0 || row >= count) return ""
+  if (!(current >= 0 && current < count)) current = 0
+  var tabRow = listHintRowIndex(count, spec.tabRowIndex)
+  if (spec.atList !== true) {
+    if (spec.tabIsList === true && row === tabRow) return "Tab"
+    if (spec.backtabIsList === true && row === tabRow) return "⇧Tab"
+  }
+  if (spec.modifiersHeld === true) return ""
+  if (spec.atList === true) {
+    if (row === current) return "↵"
+    if (row === current - 1) return "↑"
+    if (row === current + 1) return "↓"
+    return ""
+  }
+  if (spec.previousIsCurrent === true && row === 0) return "↓"
+  if (spec.nextIsCurrent === true && row === count - 1) return "↑"
+  return ""
+}
+
+function listIndexAfterMove(count, current, delta) {
+  var n = Math.max(0, Math.floor(Number(count) || 0))
+  if (n <= 0) return -1
+  var index = Math.floor(Number(current))
+  var step = delta < 0 ? -1 : 1
+  if (!(index >= 0 && index < n)) return step < 0 ? n - 1 : 0
+  var next = index + step
+  if (next < 0 || next >= n) return -1
+  return next
+}
+
+function searchEscapeAction(barVisible, searchFocused, queryText,
+    universalOverlay) {
+  if (barVisible !== true) return ""
+  if (String(queryText || "").trim() !== "" || universalOverlay === true)
+    return "dismiss"
+  if (searchFocused === true) return "blur"
+  return ""
+}
+
 function universalSearchVisible(tab, active) {
   var area = String(tab || "")
   return area === "search"
@@ -1107,6 +1467,23 @@ function playlistItemUris(items) {
   return uris
 }
 
+// Playlist objects are replaced when their snapshots refresh. Resolve the
+// backing collection by stable ID and never fall through to an unrelated
+// detail page.
+function playlistBackingItems(contextPlaylist, selectedPlaylist, selectedItems,
+    detailPlaylist, detailItems) {
+  var contextId = contextPlaylist
+    ? String(contextPlaylist.id || "") : ""
+  if (!contextId) return []
+  if (selectedPlaylist
+      && String(selectedPlaylist.id || "") === contextId)
+    return arrayValues(selectedItems)
+  if (detailPlaylist && String(detailPlaylist.type || "") === "playlist"
+      && String(detailPlaylist.id || "") === contextId)
+    return arrayValues(detailItems)
+  return []
+}
+
 // Spotify's insert_before index is measured against the playlist before the
 // selected range is removed. The UI works with the item's final index, so a
 // downward move needs to step over the source item once.
@@ -1357,6 +1734,18 @@ function normalizePage(page, mapper) {
   }
 }
 
+// Playlist rows are loaded explicitly a page at a time. Keep every requested
+// page, including duplicate tracks, and let Spotify's continuation URL decide
+// when the collection is complete instead of applying the shared UI cache cap.
+function playlistPageState(existing, incoming, append, next) {
+  var current = arrayValues(existing)
+  var page = arrayValues(incoming)
+  return {
+    items: append === true ? current.concat(page) : page,
+    next: safeApiUrl(next)
+  }
+}
+
 function searchTypeKey(type) {
   var value = String(type || "track")
   if (value === "artist") return "artists"
@@ -1458,11 +1847,14 @@ function filteredSorted(items, filterText, sortKey) {
       if (key === "duration") {
         left = Number(a.item.durationMs) || 0
         right = Number(b.item.durationMs) || 0
-      } else if (key === "date") {
+      } else if (key === "date" || key === "date-asc") {
         left = String(a.item.addedAt || a.item.playedAt || a.item.releaseDate || "")
         right = String(b.item.addedAt || b.item.playedAt || b.item.releaseDate || "")
-        if (left < right) return 1
-        if (left > right) return -1
+        // Keep unknown dates at the end in both directions.
+        if (!left && right) return 1
+        if (left && !right) return -1
+        if (left < right) return key === "date-asc" ? -1 : 1
+        if (left > right) return key === "date-asc" ? 1 : -1
         return a.index - b.index
       } else {
         left = String(key === "artist" ? a.item.subtitle

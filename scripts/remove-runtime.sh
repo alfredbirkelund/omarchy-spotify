@@ -13,10 +13,12 @@ fi
 
 config_root=${XDG_CONFIG_HOME:-"$HOME/.config"}
 cache_root=${XDG_CACHE_HOME:-"$HOME/.cache"}
+state_root=${XDG_STATE_HOME:-"$HOME/.local/state"}
 backend_unit_file="$config_root/systemd/user/omarchy-spotify.service"
 fallback_unit_file="$config_root/systemd/user/omarchy-spotifyd.service"
 config_dir="$config_root/omarchy-spotify"
 cache_dir="$cache_root/spotifyd"
+state_dir="$state_root/omarchy-spotify"
 runtime_dir=${OMARCHY_SPOTIFY_RUNTIME_DIR:-"$HOME/.local/lib/omarchy-spotify"}
 backend_binary="$runtime_dir/omarchy-spotify-backend"
 
@@ -38,10 +40,19 @@ if [[ -d $config_dir ]]; then
 fi
 
 if (( purge )); then
+  [[ $state_root == /* && $state_root != / ]] || {
+    echo "remove-runtime.sh: refusing an unsafe state path" >&2
+    exit 3
+  }
   if [[ -d $cache_dir ]]; then
     [[ $cache_dir == "$cache_root/spotifyd" ]] || exit 3
     rm -rf -- "$cache_dir"
     echo "Removed spotifyd cached credentials and audio."
+  fi
+  if [[ -d $state_dir ]]; then
+    [[ $state_dir == "$state_root/omarchy-spotify" ]] || exit 3
+    rm -rf -- "$state_dir"
+    echo "Removed durable playback authorization."
   fi
   if command -v secret-tool >/dev/null 2>&1; then
     for _ in {1..20}; do

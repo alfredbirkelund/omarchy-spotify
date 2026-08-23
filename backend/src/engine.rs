@@ -53,7 +53,7 @@ impl EngineRuntime {
 
 pub async fn start(config: BackendConfig, state: StateStore) -> Result<EngineRuntime> {
     let runtime_cache = open_runtime_cache(&config)?;
-    let credentials = load_credentials(&config.cache_root)?;
+    let credentials = load_credentials(&config.credentials_root, &config.cache_root)?;
 
     let mut session_config = SessionConfig {
         device_id: hex::encode(Sha1::digest(config.device_name.as_bytes())),
@@ -133,7 +133,7 @@ pub async fn start(config: BackendConfig, state: StateStore) -> Result<EngineRun
 }
 
 fn open_runtime_cache(config: &BackendConfig) -> Result<Cache> {
-    let credentials = config.cache_root.join("zeroconf");
+    let credentials = config.credentials_root.join("zeroconf");
     let audio_path = config.audio_cache.then_some(config.cache_root.as_path());
     Cache::new(
         Some(credentials.as_path()),
@@ -144,20 +144,37 @@ fn open_runtime_cache(config: &BackendConfig) -> Result<Cache> {
     .context("failed to open the playback cache")
 }
 
-fn load_credentials(cache_root: &Path) -> Result<Credentials> {
-    let oauth_path = cache_root.join("oauth");
+fn load_credentials(credentials_root: &Path, legacy_cache_root: &Path) -> Result<Credentials> {
+    let oauth_path = credentials_root.join("oauth");
     let oauth_cache = Cache::new(Some(oauth_path.as_path()), None, None, None)
-        .context("failed to open the OAuth credential cache")?;
+        .context("failed to open the OAuth credential store")?;
     if let Some(credentials) = oauth_cache.credentials() {
         return Ok(credentials);
     }
 
-    let connect_path = cache_root.join("zeroconf");
+    let connect_path = credentials_root.join("zeroconf");
     let connect_cache = Cache::new(Some(connect_path.as_path()), None, None, None)
-        .context("failed to open the Connect credential cache")?;
-    connect_cache.credentials().ok_or_else(|| {
-        anyhow!("no cached playback credentials; authenticate from the plugin settings first")
-    })
+        .context("failed to open the Connect credential store")?;
+    if let Some(credentials) = connect_cache.credentials() {
+        return Ok(credentials);
+    }
+
+    // Releases before 1.0.3 kept authorization below XDG_CACHE_HOME. Accept it
+    // once and copy it into durable XDG state so ordinary cache cleanup cannot
+    // silently remove this computer from Spotify Connect again.
+    for (name, durable_cache) in [("oauth", &oauth_cache), ("zeroconf", &connect_cache)] {
+        let legacy_path = legacy_cache_root.join(name);
+        let legacy_cache = Cache::new(Some(legacy_path.as_path()), None, None, None)
+            .context("failed to open the legacy playback credential cache")?;
+        if let Some(credentials) = legacy_cache.credentials() {
+            durable_cache.save_credentials(&credentials);
+            return Ok(credentials);
+        }
+    }
+
+    Err(anyhow!(
+        "no playback credentials; authenticate from the plugin settings first"
+    ))
 }
 
 async fn run_commands(
@@ -433,9 +450,9 @@ pub async fn authenticate(config: &BackendConfig, oauth_port: u16) -> Result<()>
         "user-top-read",
     ];
 
-    let oauth_path = config.cache_root.join("oauth");
+    let oauth_path = config.credentials_root.join("oauth");
     let cache = Cache::new(Some(oauth_path.as_path()), None, None, None)
-        .context("failed to open the OAuth cache")?;
+        .context("failed to open the OAuth credential store")?;
     let session_config = SessionConfig::default();
     let client = librespot_oauth::OAuthClientBuilder::new(
         &session_config.client_id,

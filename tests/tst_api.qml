@@ -128,6 +128,19 @@ TestCase {
     compare(Api.seekPosition(40, 10, 0), 50)
   }
 
+  function test_pendingSliderVolumeHoldsUntilPlayerAcknowledgesIt() {
+    var pending = { slider: 0.55, expiresAt: 9000 }
+    verify(Api.pendingSliderVolumeShouldHold(0.5, pending, 2000))
+    compare(Api.displayedSliderVolume(0.5, pending, 2000), 0.55)
+    verify(!Api.pendingSliderVolumeShouldHold(0.55, pending, 2000))
+    compare(Api.displayedSliderVolume(0.55, pending, 2000), 0.55)
+    verify(!Api.pendingSliderVolumeShouldHold(0.5, pending, 9000))
+    compare(Api.displayedSliderVolume(0.5, pending, 9000), 0.5)
+    verify(!Api.pendingSliderVolumeShouldHold(0.5, null, 2000))
+    compare(Api.SEARCH_DEBOUNCE_MS, 600)
+    compare(Api.VOLUME_FLUSH_MS, 80)
+  }
+
   function test_shallowCopyAndAssign_copyWithoutSharingIdentity() {
     var source = { name: "Work", volume: 12 }
     var copy = Api.shallowCopy(source)
@@ -136,17 +149,23 @@ TestCase {
     source.name = "Kitchen"
     compare(copy.name, "Work")
     compare(Api.assign({ a: 1 }, { b: 2, a: 3 }).a, 3)
-    compare(Api.rateLimitSuffix("4"), ". Try again in 4 seconds")
+    compare(Api.rateLimitSuffix("4"), ". Try again in 4 seconds.")
+    compare(Api.rateLimitSuffix("1"), ". Try again in 1 second.")
     compare(Api.rateLimitSuffix(""), "")
-    compare(Api.rateLimitRetryMs("4"), 4000)
-    compare(Api.rateLimitRetryMs("0"), 250)
+    compare(Api.rateLimitMessage("1"), "Spotify is busy. Try again in 1 second.")
+    compare(Api.rateLimitMessage(""), "Spotify is busy. Try again in a moment.")
+    compare(Api.rateLimitRetryMs("4"), 4400)
+    compare(Api.rateLimitRetryMs("0"), 1400)
+    compare(Api.rateLimitRetryMs("1"), 1400)
+    compare(Api.rateLimitRetryMs("1", 2), 4400)
     compare(Api.rateLimitRetryMs("120"), 30000)
     compare(Api.rateLimitRetryMs(""), 10000)
     compare(Api.rateLimitRetryMs("Wed, 21 Oct 2015 07:28:00 GMT"), 10000)
     compare(Api.apiCooldownMs(1000, 1500), 500)
     compare(Api.apiCooldownMs(1500, 1000), 0)
-    compare(Api.nextRateLimitedUntil(1000, "2", 0), 3000)
+    compare(Api.nextRateLimitedUntil(1000, "2", 0), 3400)
     compare(Api.nextRateLimitedUntil(1000, "1", 4000), 4000)
+    compare(Api.nextRateLimitedUntil(1000, "1", 0, 3), 9400)
     compare(Api.responseRetryAfter({
       getResponseHeader: function(name) {
         return name === "Retry-After" ? "10" : ""
@@ -157,6 +176,12 @@ TestCase {
 
   function test_apiRequestQueue_ordersMutationsAndSkipsAborted() {
     compare(Api.API_MAX_IN_FLIGHT, 2)
+    compare(Api.API_MAX_RATE_LIMIT_RETRIES, 4)
+    compare(Api.apiInFlightLimit(false), 2)
+    compare(Api.apiInFlightLimit(true), 1)
+    verify(Api.shouldRetryRateLimit(0))
+    verify(Api.shouldRetryRateLimit(3))
+    verify(!Api.shouldRetryRateLimit(4))
     verify(Api.apiRequestIsMutating("PUT"))
     verify(Api.apiRequestIsMutating("POST"))
     verify(!Api.apiRequestIsMutating("GET"))
@@ -626,6 +651,25 @@ TestCase {
     ]))
   }
 
+  function test_playlistBackingItems_matchesStableIdsOnly() {
+    var selectedItems = [{ name: "Selected song" }]
+    var detailItems = [{ name: "Detail song" }]
+    var refreshedContext = { id: "selected" }
+
+    verify(Api.playlistBackingItems(refreshedContext,
+      { id: "selected" }, selectedItems,
+      { id: "detail", type: "playlist" }, detailItems) === selectedItems)
+    verify(Api.playlistBackingItems({ id: "detail" },
+      { id: "selected" }, selectedItems,
+      { id: "detail", type: "playlist" }, detailItems) === detailItems)
+    compare(Api.playlistBackingItems({ id: "unrelated" },
+      { id: "selected" }, selectedItems,
+      { id: "detail", type: "playlist" }, detailItems).length, 0)
+    compare(Api.playlistBackingItems({ id: "detail" },
+      { id: "selected" }, selectedItems,
+      { id: "detail", type: "album" }, detailItems).length, 0)
+  }
+
   function test_playlistReorderBody_translatesFinalIndexesForSpotify() {
     compare(JSON.stringify(Api.playlistReorderBody(1, 3, 4, "snapshot")),
       JSON.stringify({
@@ -698,14 +742,22 @@ TestCase {
   function test_filteredSorted_filtersAndSortsWithoutMutatingSource() {
     var source = [
       { name: "Zulu", subtitle: "Someone", addedAt: "2026-01-01" },
-      { name: "Alpha", subtitle: "Target artist", addedAt: "2026-08-01" }
+      { name: "Alpha", subtitle: "Target artist", addedAt: "2026-08-01" },
+      { name: "Unknown", subtitle: "No date" }
     ]
     var filtered = Api.filteredSorted(source, "target", "name")
     compare(filtered.length, 1)
     compare(filtered[0].name, "Alpha")
 
-    var sorted = Api.filteredSorted(source, "", "date")
-    compare(sorted[0].name, "Alpha")
+    var newest = Api.filteredSorted(source, "", "date")
+    compare(newest[0].name, "Alpha")
+    compare(newest[1].name, "Zulu")
+    compare(newest[2].name, "Unknown")
+
+    var oldest = Api.filteredSorted(source, "", "date-asc")
+    compare(oldest[0].name, "Zulu")
+    compare(oldest[1].name, "Alpha")
+    compare(oldest[2].name, "Unknown")
     compare(source[0].name, "Zulu")
   }
 
@@ -732,6 +784,25 @@ TestCase {
     compare(page.next, Api.API_BASE + "/me/tracks?offset=1")
     compare(page.previous, "")
     compare(page.total, 2)
+  }
+
+  function test_playlistPageState_keepsLoadingPastSharedCacheLimit() {
+    var existing = []
+    var incoming = []
+    for (var i = 0; i < 200; i++) existing.push({ playlistPosition: i })
+    for (var j = 200; j < 250; j++) incoming.push({ playlistPosition: j })
+    var nextUrl = Api.API_BASE + "/playlists/list/items?offset=250"
+
+    var page = Api.playlistPageState(existing, incoming, true, nextUrl)
+    compare(page.items.length, 250)
+    compare(page.items[0].playlistPosition, 0)
+    compare(page.items[249].playlistPosition, 249)
+    compare(page.next, nextUrl)
+
+    var refreshed = Api.playlistPageState(existing, incoming, false, "")
+    verify(refreshed.items === incoming)
+    compare(refreshed.items.length, 50)
+    compare(refreshed.next, "")
   }
 
   function test_playbackBodies() {
@@ -826,12 +897,11 @@ TestCase {
   }
 
   function test_visibleUiStartsAndRefreshesLocalReceiver() {
-    compare(Api.visibleLocalReceiverAction(false, true, false, false, true), "idle")
-    compare(Api.visibleLocalReceiverAction(true, false, false, false, true), "idle")
-    compare(Api.visibleLocalReceiverAction(true, true, false, true, true), "wait")
-    compare(Api.visibleLocalReceiverAction(true, true, false, false, false), "idle")
-    compare(Api.visibleLocalReceiverAction(true, true, false, false, true), "start")
-    compare(Api.visibleLocalReceiverAction(true, true, true, false, false), "refresh")
+    compare(Api.visibleLocalReceiverAction(false, true, false, false), "idle")
+    compare(Api.visibleLocalReceiverAction(true, false, false, false), "idle")
+    compare(Api.visibleLocalReceiverAction(true, true, false, true), "wait")
+    compare(Api.visibleLocalReceiverAction(true, true, false, false), "start")
+    compare(Api.visibleLocalReceiverAction(true, true, true, false), "refresh")
   }
 
   function test_remotePlaybackPoll_skipsBackgroundLocalPlayback() {
@@ -1168,5 +1238,367 @@ TestCase {
     compare(Api.responseError(429, {
       error: { status: 429, message: "Too many requests", reason: "QUOTA_EXCEEDED" }
     }, ""), "Too many requests (QUOTA_EXCEEDED)")
+  }
+
+  function test_shortcutHints_matchRequiredModifiersAndKeycaps() {
+    compare(Api.normalizedShortcutHints(undefined), "On")
+    compare(Api.normalizedShortcutHints("On"), "On")
+    compare(Api.normalizedShortcutHints("Off"), "Off")
+    compare(Api.normalizedShortcutHints("off"), "On")
+
+    var none = { ctrl: false, shift: false, alt: false }
+    var ctrl = { ctrl: true, shift: false, alt: false }
+    var shift = { ctrl: false, shift: true, alt: false }
+    var ctrlShift = { ctrl: true, shift: true, alt: false }
+    var altShift = { ctrl: false, shift: true, alt: true }
+
+    compare(Api.shortcutHintCaption("Space", none, true), "Space")
+    compare(Api.shortcutHintCaption("Space", ctrl, true), "")
+    compare(Api.shortcutHintCaption("Ctrl+S", ctrl, true), "S")
+    compare(Api.shortcutHintCaption("Ctrl+S", none, true), "")
+    compare(Api.shortcutHintCaption("Ctrl+S", ctrlShift, true), "")
+    compare(Api.shortcutHintCaption("Ctrl+Shift+L", ctrl, true), "")
+    compare(Api.shortcutHintCaption("Ctrl+Shift+L", ctrlShift, true), "L")
+    compare(Api.shortcutHintCaption("Shift+F10", ctrlShift, true), "")
+    compare(Api.shortcutHintCaption("Ctrl+Shift+A", ctrlShift, true), "A")
+    compare(Api.shortcutHintCaption("Alt+Shift+H", altShift, true), "H")
+    compare(Api.shortcutHintCaption("Ctrl+Shift+A", altShift, true), "")
+    compare(Api.shortcutHintCaption("Ctrl+Shift+B", ctrlShift, true), "B")
+    compare(Api.shortcutHintCaption("Ctrl+Shift+A", ctrl, true), "")
+    compare(Api.shortcutHintCaption("Alt+Left", { ctrl: false, shift: false, alt: true }, true), "←")
+    compare(Api.shortcutHintCaption(["Ctrl+Up", "Ctrl+Down"], ctrl, true), "↑ ↓")
+    compare(Api.shortcutHintCaption(["/", "Ctrl+F"], none, true), "/")
+    compare(Api.shortcutHintCaption(["/", "Ctrl+F"], ctrl, true), "F")
+    compare(Api.shortcutHintCaption("Shift+Right", shift, true), "→")
+    compare(Api.shortcutHintCaption("Shift+F10", shift, true), "F10")
+    compare(Api.shortcutHintCaption("Shift+F10", none, true), "")
+    compare(Api.shortcutHintCaption("Menu", none, true), "Menu")
+    compare(Api.shortcutOverlayLabel("Shift+F10", shift, true, "↵"), "↵ F10")
+    compare(Api.shortcutOverlayLabel("Shift+F10", shift, true, ""), "F10")
+    compare(Api.shortcutHintCaption("C", none, true), "C")
+    compare(Api.shortcutOverlayLabel("C", none, true, "↵"), "↵ C")
+    compare(Api.shortcutHintCaption("Ctrl+,", ctrl, true), ",")
+    compare(Api.shortcutHintCaption("Ctrl+/", ctrl, true), "/")
+    compare(Api.shortcutHintCaption("Esc", none, true), "Esc")
+    compare(Api.shortcutHintCaption("Space", none, false), "")
+    compare(Api.shortcutOverlayLabel("Space", none, true, "Tab"), "Tab Space")
+    compare(Api.shortcutOverlayLabel(["/", "Ctrl+F"], none, true, "Tab"), "Tab /")
+    compare(Api.shortcutOverlayLabel("Space", none, true, ""), "Space")
+    compare(Api.shortcutOverlayLabel("Space", none, true, "↵"), "↵ Space")
+    compare(Api.shortcutOverlayLabel("Ctrl+S", none, true, ""), "")
+    compare(Api.shortcutOverlayLabel("Space", none, false, "Tab"), "")
+    compare(Api.shortcutModifierFlagsAfterEvent(0, false, 3, 0), 3)
+    compare(Api.shortcutModifierFlagsAfterEvent(3, true, 0, 1), 3)
+    compare(Api.shortcutModifierFlagsAfterEvent(3, false, 3, 1), 2)
+    compare(Api.shortcutModifierFlagsAfterEvent(1, false, 1, 1), 0)
+    compare(Api.shortcutModifierFlagsAfterEvent(3, true, 0, 0), 3)
+  }
+
+  function test_searchShortcutAction_focusesThenTogglesScope() {
+    compare(Api.searchShortcutAction(false, true, true), "focus")
+    compare(Api.searchShortcutAction(false, true, false), "enter-context")
+    compare(Api.searchShortcutAction(true, true, true), "toggle-scope")
+    compare(Api.searchShortcutAction(true, true, false), "toggle-scope")
+    compare(Api.searchShortcutAction(false, false, true), "focus")
+    compare(Api.searchShortcutAction(true, false, false), "focus")
+  }
+
+  function test_cursorNavigation_wrapsAndLeavesLists() {
+    compare(Api.ensureCursorAction(["play", "next"], "shuffle", "play"), "play")
+    compare(Api.ensureCursorAction(["play", "next"], "next", "play"), "next")
+    compare(Api.moveCursorAction(["shuffle", "play", "next"], "play", 1), "next")
+    compare(Api.moveCursorAction(["shuffle", "play", "next"], "next", 1), "shuffle")
+    compare(Api.moveCursorAction(["shuffle", "play", "next"], "shuffle", -1), "next")
+    compare(Api.listIndexAfterMove(3, 0, 1), 1)
+    compare(Api.listIndexAfterMove(3, 2, 1), -1)
+    compare(Api.listIndexAfterMove(3, 0, -1), -1)
+    compare(Api.listIndexAfterMove(3, -1, 1), 0)
+  }
+
+  function test_cursorNavHint_marksTabAndArrowDestinations() {
+    var query = {
+      currentRegion: "footer",
+      currentAction: "play",
+      regionActions: ["previous", "play", "next"],
+      tabRegion: "sidebar",
+      tabAction: "nav-home",
+      backtabRegion: "page",
+      backtabAction: "list",
+      modifiersHeld: false
+    }
+    compare(Api.cursorNavHint(Api.assign(Api.assign({}, query), {
+      region: "footer", action: "play"
+    })), "↵")
+    compare(Api.cursorNavHint(Api.assign(Api.assign({}, query), {
+      region: "footer", action: "next"
+    })), "↓")
+    compare(Api.cursorNavHint(Api.assign(Api.assign({}, query), {
+      region: "footer", action: "previous"
+    })), "↑")
+    compare(Api.cursorNavHint(Api.assign(Api.assign({}, query), {
+      region: "sidebar", action: "nav-home"
+    })), "Tab")
+    compare(Api.cursorNavHint(Api.assign(Api.assign({}, query), {
+      region: "page", action: "list"
+    })), "⇧Tab")
+    compare(Api.cursorNavHint(Api.assign(Api.assign({}, query), {
+      region: "footer", action: "next", modifiersHeld: true
+    })), "")
+    compare(Api.cursorNavHint(Api.assign(Api.assign({}, query), {
+      region: "sidebar", action: "nav-home", modifiersHeld: true
+    })), "Tab")
+    compare(Api.cursorNavHint({
+      region: "popup",
+      action: "sleep-30",
+      currentRegion: "popup",
+      currentAction: "sleep-15",
+      regionActions: ["sleep-15", "sleep-30", "sleep-cancel"],
+      tabRegion: "popup",
+      tabAction: "sleep-30"
+    }), "Tab")
+    compare(Api.cursorNavHint({
+      region: "footer",
+      action: "play",
+      currentRegion: "footer",
+      currentAction: "play",
+      tabRegion: "footer",
+      tabAction: "play",
+      cursorActive: false
+    }), "Tab")
+  }
+
+  function test_cursorListRowHint_marksTheRowsArrowsWouldPress() {
+    var list = {
+      count: 5,
+      currentIndex: 3,
+      atList: true,
+      modifiersHeld: false
+    }
+    compare(Api.cursorListRowHint(Api.assign({ rowIndex: 3 }, list)), "↵")
+    compare(Api.cursorListRowHint(Api.assign({ rowIndex: 2 }, list)), "↑")
+    compare(Api.cursorListRowHint(Api.assign({ rowIndex: 4 }, list)), "↓")
+    compare(Api.cursorListRowHint(Api.assign({ rowIndex: 0 }, list)), "")
+    compare(Api.cursorListRowHint({
+      rowIndex: 0, count: 5, currentIndex: 3, previousIsCurrent: true
+    }), "↓")
+    compare(Api.cursorListRowHint({
+      rowIndex: 4, count: 5, currentIndex: 3, nextIsCurrent: true
+    }), "↑")
+    compare(Api.cursorNavHint({
+      region: "sidebar",
+      action: "nav-settings",
+      currentRegion: "sidebar",
+      currentAction: "sidebar-playlists",
+      regionActions: ["nav-playlists", "sidebar-playlists", "nav-settings"],
+      listAction: "sidebar-playlists",
+      listIndex: 3,
+      listCount: 8
+    }), "")
+    compare(Api.cursorNavHint({
+      region: "sidebar",
+      action: "nav-settings",
+      currentRegion: "sidebar",
+      currentAction: "sidebar-playlists",
+      regionActions: ["nav-playlists", "sidebar-playlists", "nav-settings"],
+      listAction: "sidebar-playlists",
+      listIndex: 7,
+      listCount: 8
+    }), "↓")
+    compare(Api.cursorListRowHint({
+      rowIndex: 3, count: 8, currentIndex: 3, tabIsList: true, tabRowIndex: 1
+    }), "")
+    compare(Api.cursorListRowHint({
+      rowIndex: 1, count: 8, currentIndex: 3, tabIsList: true, tabRowIndex: 1
+    }), "Tab")
+    compare(Api.cursorListRowHint({
+      rowIndex: 1, count: 8, currentIndex: 3, tabIsList: true, tabRowIndex: 1,
+      modifiersHeld: true
+    }), "Tab")
+    compare(Api.cursorListRowHint({
+      rowIndex: 3, count: 5, currentIndex: 3, atList: true, tabIsList: true
+    }), "↵")
+    compare(Api.listHintRowIndex(8, 1), 1)
+    compare(Api.listHintRowIndex(8, -1), 0)
+    compare(Api.listHintRowIndex(0, 0), -1)
+  }
+
+  function test_tabCursorDestination_entersTheSongListThenLeaves() {
+    var regions = ["sidebar", "header", "page", "footer"]
+    var actionsByRegion = {
+      sidebar: ["nav-home", "nav-playlists", "sidebar-playlists", "nav-settings"],
+      header: ["search", "help", "close"],
+      page: ["playlist-play", "playlist-more", "sort", "list", "more"],
+      footer: ["shuffle", "play", "next"]
+    }
+    var base = {
+      regions: regions,
+      actionsByRegion: actionsByRegion,
+      pageActions: actionsByRegion.page,
+      listCount: 12
+    }
+    function dest(region, action, back) {
+      return Api.tabCursorDestination(Api.assign(Api.assign({}, base), {
+        currentRegion: region,
+        currentAction: action,
+        back: back === true
+      }))
+    }
+    var next = dest("header", "search")
+    compare(next.region, "page")
+    compare(next.action, "list")
+    next = dest("page", "playlist-play")
+    compare(next.region, "page")
+    compare(next.action, "list")
+    next = dest("page", "sort")
+    compare(next.region, "page")
+    compare(next.action, "list")
+    next = dest("page", "list")
+    compare(next.region, "footer")
+    compare(next.action, "play")
+    next = dest("page", "more")
+    compare(next.region, "footer")
+    compare(next.action, "play")
+    next = dest("footer", "play")
+    compare(next.region, "sidebar")
+    compare(next.action, "nav-home")
+    next = dest("footer", "play", true)
+    compare(next.region, "page")
+    compare(next.action, "list")
+    next = dest("page", "list", true)
+    compare(next.region, "page")
+    compare(next.action, "sort")
+    next = dest("page", "more", true)
+    compare(next.region, "page")
+    compare(next.action, "list")
+    next = dest("page", "playlist-play", true)
+    compare(next.region, "header")
+    compare(next.action, "search")
+    next = dest("header", "search", true)
+    compare(next.region, "sidebar")
+    compare(next.action, "nav-settings")
+    next = Api.tabCursorDestination(Api.assign(Api.assign({}, base), {
+      currentRegion: "footer",
+      currentAction: "play",
+      cursorActive: false
+    }))
+    compare(next.region, "footer")
+    compare(next.action, "play")
+    var searchPage = ["search-track", "search-artist", "search-album", "list"]
+    next = Api.tabCursorDestination({
+      regions: regions,
+      currentRegion: "header",
+      currentAction: "scope",
+      pageActions: searchPage,
+      actionsByRegion: {
+        sidebar: actionsByRegion.sidebar,
+        header: actionsByRegion.header,
+        page: searchPage,
+        footer: actionsByRegion.footer
+      },
+      listCount: 8,
+      pageLanding: "search-track"
+    })
+    compare(next.region, "page")
+    compare(next.action, "search-track")
+    next = Api.tabCursorDestination({
+      regions: regions,
+      currentRegion: "page",
+      currentAction: "search-track",
+      pageActions: searchPage,
+      actionsByRegion: {
+        sidebar: actionsByRegion.sidebar,
+        header: actionsByRegion.header,
+        page: searchPage,
+        footer: actionsByRegion.footer
+      },
+      listCount: 8,
+      pageLanding: "search-track"
+    })
+    compare(next.region, "page")
+    compare(next.action, "list")
+    var artistPage = ["detail-play", "list-albums", "list-songs", "detail-thisis"]
+    next = Api.tabCursorDestination({
+      regions: regions,
+      currentRegion: "header",
+      currentAction: "search",
+      pageActions: artistPage,
+      actionsByRegion: {
+        sidebar: actionsByRegion.sidebar,
+        header: actionsByRegion.header,
+        page: artistPage,
+        footer: actionsByRegion.footer
+      },
+      listCount: 6
+    })
+    compare(next.region, "page")
+    compare(next.action, "list-albums")
+    next = Api.tabCursorDestination({
+      regions: regions,
+      currentRegion: "page",
+      currentAction: "list-albums",
+      pageActions: artistPage,
+      actionsByRegion: {
+        sidebar: actionsByRegion.sidebar,
+        header: actionsByRegion.header,
+        page: artistPage,
+        footer: actionsByRegion.footer
+      },
+      listCount: 6
+    })
+    compare(next.region, "page")
+    compare(next.action, "list-songs")
+    next = Api.tabCursorDestination({
+      regions: regions,
+      currentRegion: "page",
+      currentAction: "list-songs",
+      pageActions: artistPage,
+      actionsByRegion: {
+        sidebar: actionsByRegion.sidebar,
+        header: actionsByRegion.header,
+        page: artistPage,
+        footer: actionsByRegion.footer
+      },
+      listCount: 6
+    })
+    compare(next.region, "footer")
+    compare(next.action, "play")
+    verify(Api.isCursorListAction("list"))
+    verify(Api.isCursorListAction("list-songs"))
+    verify(!Api.isCursorListAction("sort"))
+  }
+
+  function test_tabCursorDestination_skipsEmptyListsAndCyclesPopups() {
+    var empty = Api.tabCursorDestination({
+      regions: ["header", "page", "footer"],
+      currentRegion: "header",
+      currentAction: "search",
+      pageActions: ["sort", "list"],
+      actionsByRegion: {
+        header: ["search"],
+        page: ["sort", "list"],
+        footer: ["play"]
+      },
+      listCount: 0
+    })
+    compare(empty.region, "page")
+    compare(empty.action, "sort")
+    var popup = Api.tabCursorDestination({
+      regions: ["popup"],
+      currentRegion: "popup",
+      currentAction: "sleep-15",
+      actionsByRegion: { popup: ["sleep-15", "sleep-30", "sleep-cancel"] }
+    })
+    compare(popup.region, "popup")
+    compare(popup.action, "sleep-30")
+  }
+
+  function test_searchEscapeAction_clearsThenReleasesFocus() {
+    compare(Api.searchEscapeAction(true, true, "query", false), "dismiss")
+    compare(Api.searchEscapeAction(true, false, "query", false), "dismiss")
+    compare(Api.searchEscapeAction(true, false, "", true), "dismiss")
+    compare(Api.searchEscapeAction(true, true, "", false), "blur")
+    compare(Api.searchEscapeAction(true, true, "   ", false), "blur")
+    compare(Api.searchEscapeAction(true, false, "", false), "")
+    compare(Api.searchEscapeAction(false, true, "query", true), "")
   }
 }

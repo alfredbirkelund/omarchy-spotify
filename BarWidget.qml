@@ -15,6 +15,7 @@ BarWidget {
   readonly property var spotify: bar && bar.shell
     ? bar.shell.serviceFor("quickshell.spotify") : null
   readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color muted: Color.muted
   readonly property string surfaceKey: "spotify-popup-" + String(root)
   readonly property string lyricsRequestKey: surfaceKey + "-lyrics"
   readonly property string barText: spotify
@@ -31,6 +32,29 @@ BarWidget {
   property bool miniCursorActive: false
   property string miniCursor: "play"
   property real volumeBeforeMute: 0.5
+  property bool shortcutModeLatched: false
+  property int heldModifierFlags: 0
+  property bool pendingShortcutLatch: false
+  readonly property bool shortcutHintsEnabled: spotify
+    ? spotify.shortcutHintsEnabled
+    : String(root.setting("shortcutHints", "On")) !== "Off"
+  readonly property bool shortcutHintsActive: shortcutHintsEnabled
+    && shortcutModeLatched && !miniShortcutHelpVisible
+    && !lyricsInstallPromptVisible
+  readonly property bool shortcutHintsInPopup: shortcutHintsEnabled
+    && shortcutModeLatched
+  readonly property bool hintCtrlHeld: (heldModifierFlags & Qt.ControlModifier) !== 0
+  readonly property bool hintShiftHeld: (heldModifierFlags & Qt.ShiftModifier) !== 0
+  readonly property bool hintAltHeld: (heldModifierFlags & Qt.AltModifier) !== 0
+
+  component KeyHint: ShortcutHint {
+    ctrlHeld: root.hintCtrlHeld
+    shiftHeld: root.hintShiftHeld
+    altHeld: root.hintAltHeld
+    active: root.shortcutHintsActive
+    foreground: root.foreground
+    accent: Color.accent
+  }
   readonly property bool opened: popupOpen
   readonly property var miniShortcutRows: [
     { keys: "Tab / arrows / HJKL", action: "Select a control" },
@@ -43,7 +67,10 @@ BarWidget {
     { keys: "M", action: "Mute or restore volume" },
     { keys: "Ctrl+S / Ctrl+R", action: "Shuffle / repeat" },
     { keys: "Ctrl+Shift+L", action: "Open lyrics" },
+    { keys: "Ctrl+Shift+A", action: "Open the current artist" },
+    { keys: "Ctrl+Shift+B", action: "Open the current album" },
     { keys: "O", action: "Open full player" },
+    { keys: "Ctrl+H", action: "Hide visible shortcut hints" },
     { keys: "Ctrl+/", action: "Toggle this reference" },
     { keys: "Scroll the bar icon", action: "Previous or next track" },
     { keys: "Middle-click the bar icon", action: "Play or pause" },
@@ -60,6 +87,7 @@ BarWidget {
     }
     var actions = []
     if (spotify && spotify.currentArtistContextAvailable) actions.push("artist")
+    if (spotify && spotify.currentAlbumContextAvailable) actions.push("album")
     if (spotify && spotify.currentTrackSaveAvailable) actions.push("like")
     if (spotify && spotify.lengthSeconds > 0
         && spotify.playbackControllable) actions.push("seek")
@@ -78,7 +106,62 @@ BarWidget {
   }
   function close() {
     miniShortcutHelpVisible = false
+    clearShortcutMode()
     popupOpen = false
+  }
+
+  function applySequenceModifiers(sequence) {
+    var parsed = Api.parseShortcutSequence(sequence)
+    var flags = 0
+    if (parsed.ctrl) flags |= Qt.ControlModifier
+    if (parsed.shift) flags |= Qt.ShiftModifier
+    if (parsed.alt) flags |= Qt.AltModifier
+    heldModifierFlags = flags
+  }
+
+  function latchShortcutMode(sequence) {
+    if (!shortcutHintsEnabled) return
+    shortcutModeLatched = true
+    if (sequence) applySequenceModifiers(sequence)
+  }
+
+  function clearShortcutMode() {
+    shortcutModeLatched = false
+    heldModifierFlags = 0
+  }
+
+  function disableShortcutHints() {
+    clearShortcutMode()
+    if (spotify) spotify.persistSettings({ shortcutHints: "Off" })
+  }
+
+  function noteHeldModifiers(event, pressed) {
+    if (!event) return
+    heldModifierFlags = Api.shortcutModifierFlagsAfterEvent(event.modifiers,
+      pressed, heldModifierFlags, hintModifierFlag(event.key))
+  }
+
+  function isModifierKey(key) {
+    return key === Qt.Key_Control || key === Qt.Key_Shift
+      || key === Qt.Key_Alt || key === Qt.Key_AltGr || key === Qt.Key_Meta
+  }
+
+  function isHintModifierKey(key) {
+    return key === Qt.Key_Control || key === Qt.Key_Shift
+      || key === Qt.Key_Alt || key === Qt.Key_AltGr
+  }
+
+  function hintModifierFlag(key) {
+    if (key === Qt.Key_Control) return Qt.ControlModifier
+    if (key === Qt.Key_Shift) return Qt.ShiftModifier
+    if (key === Qt.Key_Alt || key === Qt.Key_AltGr) return Qt.AltModifier
+    return 0
+  }
+
+  function acceptMiniKey(event) {
+    latchShortcutMode()
+    if (event) heldModifierFlags = event.modifiers
+    event.accepted = true
   }
   function closeForPopoutSwitch() {
     popoutSwitchClosing = true
@@ -101,6 +184,7 @@ BarWidget {
         || typeof bar.summonBarWidget !== "function") return "unavailable"
     if (bar.isBarWidgetOpen(moduleName))
       return bar.hideBarWidget(moduleName) ? "closed" : "unavailable"
+    pendingShortcutLatch = true
     var host = bar.shell
     if (host && typeof host.isPluginOpen === "function"
         && host.isPluginOpen(moduleName) && typeof host.hide === "function") {
@@ -110,7 +194,9 @@ BarWidget {
       })
       return "opened"
     }
-    return bar.summonBarWidget(moduleName) ? "opened" : "unavailable"
+    var opened = bar.summonBarWidget(moduleName)
+    if (!opened) pendingShortcutLatch = false
+    return opened ? "opened" : "unavailable"
   }
 
   function toggleFullPlayerShortcut() {
@@ -128,11 +214,13 @@ BarWidget {
       bar.hideBarWidget(moduleName)
       Qt.callLater(function() {
         if (root.bar && root.bar.shell)
-          root.bar.shell.summon(root.moduleName, "{}")
+          root.bar.shell.summon(root.moduleName,
+            JSON.stringify({ shortcutLatch: true }))
       })
       return "opened"
     }
-    return host.summon(moduleName, "{}") ? "opened" : "unavailable"
+    return host.summon(moduleName, JSON.stringify({ shortcutLatch: true }))
+      ? "opened" : "unavailable"
   }
 
   function toggleConfiguredPlayerShortcut() {
@@ -145,9 +233,11 @@ BarWidget {
   }
 
   function openFullPanel(payload) {
+    var next = payload && typeof payload === "object" ? Api.shallowCopy(payload) : ({})
+    if (shortcutModeLatched) next.shortcutLatch = true
     close()
     if (!bar || !bar.shell) return
-    var encoded = JSON.stringify(payload || ({}))
+    var encoded = JSON.stringify(next)
     if (typeof bar.shell.hide === "function"
         && typeof bar.shell.summon === "function") {
       // Remap an existing full player onto the workspace containing this bar.
@@ -192,10 +282,18 @@ BarWidget {
   }
 
   function openCurrentArtist() {
-    if (!spotify || !bar || !bar.shell || spotify.artist === ""
+    if (!spotify || !bar || !bar.shell
         || !spotify.currentArtistContextAvailable) return
     spotify.currentContext("artist", function(item) {
       root.openArtist(item)
+    })
+  }
+
+  function openCurrentAlbum() {
+    if (!spotify || !bar || !bar.shell
+        || !spotify.currentAlbumContextAvailable) return
+    spotify.currentContext("album", function(item) {
+      if (item) root.openFullPanel({ tab: "detail", detailItem: item })
     })
   }
 
@@ -288,6 +386,7 @@ BarWidget {
       if (spotify && !spotify.lyricsPluginBusy)
         spotify.confirmLyricsPlugin(lyricsRequestKey)
     } else if (action === "artist") openCurrentArtist()
+    else if (action === "album") openCurrentAlbum()
     else if (action === "like") {
       if (spotify) spotify.toggleCurrentTrackSaved()
     } else if (action === "shuffle") {
@@ -310,6 +409,12 @@ BarWidget {
   }
 
   function handleMiniKey(event) {
+    root.noteHeldModifiers(event, true)
+    if (root.isModifierKey(event.key)) {
+      if (root.isHintModifierKey(event.key)) root.latchShortcutMode()
+      event.accepted = true
+      return
+    }
     var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
     var shift = (event.modifiers & Qt.ShiftModifier) !== 0
     var alt = (event.modifiers & Qt.AltModifier) !== 0
@@ -331,7 +436,7 @@ BarWidget {
           || event.key === Qt.Key_Space) {
         if (!event.isAutoRepeat) activateMiniAction(miniCursor)
       } else return
-      event.accepted = true
+      root.acceptMiniKey(event)
       return
     }
 
@@ -340,7 +445,7 @@ BarWidget {
           || event.key === Qt.Key_Return || event.key === Qt.Key_Enter
           || event.key === Qt.Key_Space) {
         if (!event.isAutoRepeat) toggleMiniShortcutHelp()
-        event.accepted = true
+        root.acceptMiniKey(event)
       }
       return
     }
@@ -365,6 +470,10 @@ BarWidget {
       if (spotify && !event.isAutoRepeat) spotify.cycleRepeat()
     } else if (ctrl && shift && event.key === Qt.Key_L) {
       if (!event.isAutoRepeat) openLyrics()
+    } else if (ctrl && shift && !alt && event.key === Qt.Key_A) {
+      if (!event.isAutoRepeat) openCurrentArtist()
+    } else if (ctrl && shift && !alt && event.key === Qt.Key_B) {
+      if (!event.isAutoRepeat) openCurrentAlbum()
     } else if (plain && event.key === Qt.Key_Space) {
       if (spotify && !event.isAutoRepeat) spotify.togglePlayback()
     } else if (plain && event.key === Qt.Key_M) {
@@ -392,7 +501,7 @@ BarWidget {
     } else if (plain && event.key === Qt.Key_End) {
       setMiniCursor(miniKeyboardActions[miniKeyboardActions.length - 1])
     } else return
-    event.accepted = true
+    root.acceptMiniKey(event)
   }
 
   function syncSettings() {
@@ -405,6 +514,7 @@ BarWidget {
   onSettingsChanged: syncSettings()
   onSpotifyChanged: syncSettings()
   onMiniPlayerEnabledChanged: if (!miniPlayerEnabled) close()
+  onShortcutHintsEnabledChanged: if (!shortcutHintsEnabled) clearShortcutMode()
   onMiniKeyboardActionsChanged: ensureMiniCursor()
   onLyricsInstallPromptVisibleChanged: {
     if (lyricsInstallPromptVisible) {
@@ -417,7 +527,13 @@ BarWidget {
       miniCursor = miniKeyboardActions.indexOf("play") >= 0
         ? "play" : miniKeyboardActions[0]
       miniCursorActive = miniKeyboardActions.length > 0
-    } else miniCursorActive = false
+      if (pendingShortcutLatch) latchShortcutMode()
+      pendingShortcutLatch = false
+    } else {
+      miniCursorActive = false
+      clearShortcutMode()
+      pendingShortcutLatch = false
+    }
     if (spotify) spotify.setUiVisible(surfaceKey, popupOpen)
     if (!popupOpen && lyricsInstallPromptVisible
         && (!spotify || !spotify.lyricsPluginBusy)) {
@@ -428,20 +544,6 @@ BarWidget {
   Component.onCompleted: syncSettings()
   Component.onDestruction: if (spotify) spotify.setUiVisible(surfaceKey, false)
 
-  TextMetrics {
-    id: labelMetrics
-    text: root.barText
-    font.family: root.bar ? root.bar.fontFamily : Style.font.family
-    font.pixelSize: Style.font.body
-  }
-
-  TextMetrics {
-    id: glyphMetrics
-    text: ""
-    font.family: root.bar ? root.bar.fontFamily : Style.font.family
-    font.pixelSize: Style.font.body
-  }
-
   WidgetButton {
     id: button
     anchors.fill: parent
@@ -451,18 +553,20 @@ BarWidget {
     hasVisualContent: true
     fontSize: root.iconOnly ? Style.font.bodySmall : Style.font.body
     active: root.spotify && root.spotify.playing
-    // Keep the playing state legible on transparent bars. WidgetButton's
-    // foreground follows bar.barForeground, which the shell derives from the
-    // wallpaper underneath the bar.
-    activeColor: button.foreground
+    foreground: root.foreground
+    activeColor: root.foreground
     tooltipText: root.spotify && root.spotify.hasMedia
       ? root.spotify.title + (root.spotify.artist ? " — " + root.spotify.artist : "")
       : (root.spotify && !root.spotify.accountConnected
         ? "Set up Omarchy Spotify" : "Omarchy Spotify")
+    // Size from the painted glyph and label plus the real inner chrome. TextMetrics
+    // advanceWidth is often a few pixels short of NativeRendering, which clipped
+    // the last letter on titles that should have fit.
+    readonly property real fittedWidth: Math.ceil(barGlyph.implicitWidth
+      + barContent.spacing + barLabel.implicitWidth + scaledHorizontalMargin * 2)
     fixedWidth: root.vertical ? root.barSize
       : (root.iconOnly ? Style.bar.statusSlot
-        : Math.min(Style.space(240), Math.max(root.barSize,
-          glyphMetrics.advanceWidth + labelMetrics.advanceWidth + Style.space(24))))
+        : Math.min(Style.space(240), Math.max(root.barSize, fittedWidth)))
     fixedHeight: root.vertical && root.iconOnly ? Style.bar.statusSlot : -1
     clip: true
 
@@ -489,8 +593,10 @@ BarWidget {
           - barContent.spacing - button.scaledHorizontalMargin * 2)
         height: barGlyph.implicitHeight
         anchors.verticalCenter: parent.verticalCenter
-        clip: true
+        clip: barLabel.needsScroll
 
+        readonly property bool scrolling: root.spotify && root.spotify.scrollBarText
+          && barLabel.needsScroll && !root.popupOpen && !root.vertical
         // Use a wide enough ramp to read as a deliberate fade at bar scale.
         readonly property real fadeStop: width > 0
           ? Math.min(0.2, Style.space(28) / width) : 0
@@ -498,7 +604,7 @@ BarWidget {
         Item {
           id: labelLayer
           anchors.fill: parent
-          layer.enabled: barLabel.needsScroll
+          layer.enabled: scrollClip.scrolling
           layer.smooth: true
           layer.effect: MultiEffect {
             autoPaddingEnabled: false
@@ -512,25 +618,24 @@ BarWidget {
             id: barLabel
             anchors.verticalCenter: parent.verticalCenter
             text: root.barText
-            color: button.foreground
+            color: root.foreground
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
             renderType: Text.NativeRendering
 
-            readonly property bool needsScroll: labelMetrics.advanceWidth > scrollClip.width
+            readonly property bool needsScroll: implicitWidth > scrollClip.width
 
             // Keep the marquee on the render thread so it remains smooth
             // without dispatching JavaScript timer callbacks through the
             // shared shell's main thread.
             XAnimator on x {
               id: barScrollAnimation
-              running: root.spotify && root.spotify.scrollBarText
-                && barLabel.needsScroll && !root.popupOpen && !root.vertical
+              running: scrollClip.scrolling
               loops: Animation.Infinite
-              duration: Math.round(Math.max(6000, labelMetrics.advanceWidth * 25)
+              duration: Math.round(Math.max(6000, implicitWidth * 25)
                 / Math.max(0.25, root.spotify ? root.spotify.scrollSpeed : 1))
               from: scrollClip.width
-              to: -labelMetrics.advanceWidth
+              to: -implicitWidth
               easing.type: Easing.Linear
               onStopped: barLabel.x = 0
             }
@@ -541,12 +646,12 @@ BarWidget {
           id: scrollFadeMask
           anchors.fill: parent
           visible: false
-          layer.enabled: labelLayer.layer.enabled
+          layer.enabled: scrollClip.scrolling
           gradient: Gradient {
             orientation: Gradient.Horizontal
             GradientStop {
               position: 0
-              color: barScrollAnimation.running ? "transparent" : "white"
+              color: "transparent"
             }
             GradientStop {
               position: scrollClip.fadeStop
@@ -595,12 +700,35 @@ BarWidget {
       anchors.fill: parent
       focus: true
       Keys.priority: Keys.BeforeItem
+      onActiveFocusChanged: if (!activeFocus) {
+        root.heldModifierFlags = 0
+        root.shortcutModeLatched = false
+      }
+      Keys.onShortcutOverride: function(event) {
+        if (root.isHintModifierKey(event.key)) {
+          root.noteHeldModifiers(event, true)
+          root.latchShortcutMode()
+          event.accepted = true
+        }
+      }
       Keys.onPressed: function(event) { root.handleMiniKey(event) }
+      Keys.onReleased: function(event) {
+        root.noteHeldModifiers(event, false)
+        if (root.isHintModifierKey(event.key)) event.accepted = true
+      }
 
       Shortcut {
         sequence: "Ctrl+/"
         enabled: root.popupOpen && !root.lyricsInstallPromptVisible
-        onActivated: root.toggleMiniShortcutHelp()
+        onActivated: {
+          root.latchShortcutMode("Ctrl+/")
+          root.toggleMiniShortcutHelp()
+        }
+      }
+      Shortcut {
+        sequence: "Ctrl+H"
+        enabled: root.shortcutHintsActive
+        onActivated: root.disableShortcutHints()
       }
 
       Column {
@@ -608,6 +736,26 @@ BarWidget {
         anchors.fill: parent
         visible: !root.miniShortcutHelpVisible
         spacing: Style.space(10)
+
+      Row {
+        width: parent.width
+        visible: root.shortcutHintsActive
+
+        Item {
+          width: Math.max(0, parent.width - miniHideHintsButton.width)
+          height: 1
+        }
+
+        Button {
+          id: miniHideHintsButton
+          text: "Ctrl+H · Hide hints"
+          foreground: root.foreground
+          fontSize: Style.font.caption
+          focusable: false
+          tooltipText: "Hide shortcut hints until re-enabled in Settings · Ctrl+H"
+          onClicked: root.disableShortcutHints()
+        }
+      }
 
       Column {
         width: parent.width
@@ -628,7 +776,7 @@ BarWidget {
         Text {
           width: parent.width
           text: "Connect your Spotify account from here. Playback on this computer can finish in the background."
-          color: Qt.darker(root.foreground, 1.4)
+          color: root.muted
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
@@ -674,15 +822,22 @@ BarWidget {
         }
       }
 
-      Row {
+      Item {
+        id: miniNowPlaying
         width: parent.width
-        spacing: Style.space(12)
+        implicitHeight: Math.max(miniArtworkSurface.height,
+          miniNowPlayingMetadata.implicitHeight)
+        height: implicitHeight
+        readonly property real metadataSpacing: Style.space(12)
         visible: !root.lyricsInstallPromptVisible
           && (!root.spotify || root.spotify.accountConnected)
 
         BorderSurface {
+          id: miniArtworkSurface
           width: Style.space(78)
           height: width
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
           radius: Style.cornerRadius
           color: Style.normalFillFor(root.foreground, Color.accent)
           borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
@@ -712,7 +867,10 @@ BarWidget {
         }
 
         Column {
-          width: parent.width - Style.space(90)
+          id: miniNowPlayingMetadata
+          anchors.left: miniArtworkSurface.right
+          anchors.leftMargin: miniNowPlaying.metadataSpacing
+          anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
           spacing: Style.space(4)
 
@@ -742,8 +900,8 @@ BarWidget {
               iconText: root.spotify && root.spotify.currentTrackSaved
                 ? "󰋑" : "󰋕"
               iconSize: Style.font.body
-              foreground: root.foreground
-              selected: root.spotify && root.spotify.currentTrackSaved
+              foreground: Color.urgent
+              accent: Color.urgent
               hasCursor: root.miniCursorActive && root.miniCursor === "like"
               enabled: root.spotify && root.spotify.currentTrackSaveAvailable
               horizontalPadding: Style.space(4)
@@ -764,10 +922,13 @@ BarWidget {
 
           CursorSurface {
             id: miniArtistCursor
+            z: 2
+            clip: false
             width: parent.width
             height: miniArtistLinks.implicitHeight + Style.space(4)
             visible: miniArtistLinks.fallbackText !== ""
               || miniArtistLinks.artists.length > 0
+            enabled: root.spotify && root.spotify.currentArtistContextAvailable
             hasCursor: root.miniCursorActive && root.miniCursor === "artist"
             foreground: root.foreground
 
@@ -775,12 +936,14 @@ BarWidget {
               id: miniArtistLinks
               anchors.fill: parent
               anchors.leftMargin: Style.space(3)
-              anchors.rightMargin: Style.space(3)
+              anchors.rightMargin: Style.space(3) + miniArtistHint.reservedRight
               artists: root.spotify ? root.spotify.currentArtists : []
               fallbackText: root.spotify ? root.spotify.artist : ""
               fallbackClickable: fallbackText !== "" && artists.length === 0
                 && root.spotify && root.spotify.currentArtistContextAvailable
-              color: Qt.darker(root.foreground, 1.35)
+              color: root.spotify && root.spotify.artist !== ""
+                && root.spotify.currentArtistContextAvailable
+                ? Color.accent : root.muted
               accent: Color.accent
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.bodySmall
@@ -789,18 +952,59 @@ BarWidget {
             }
 
             HoverHandler {
+              id: miniArtistHover
               onHoveredChanged: if (hovered) root.setMiniCursor("artist")
+            }
+            PanelToolTip {
+              visible: miniArtistHover.hovered
+              text: "Open artist · Ctrl+Shift+A"
+            }
+            KeyHint {
+              id: miniArtistHint
+              sequences: ["Ctrl+Shift+A"]
             }
           }
 
-          Text {
+          CursorSurface {
+            id: miniAlbumCursor
+            z: 1
+            clip: false
             width: parent.width
-            text: root.spotify ? root.spotify.album : ""
-            color: Qt.darker(root.foreground, 1.55)
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-            visible: text !== ""
+            height: miniAlbumLinks.implicitHeight
+            visible: miniAlbumLinks.fallbackText !== ""
+            enabled: root.spotify && root.spotify.currentAlbumContextAvailable
+            hasCursor: root.miniCursorActive && root.miniCursor === "album"
+            foreground: root.foreground
+
+            ArtistLinks {
+              id: miniAlbumLinks
+              anchors.fill: parent
+              anchors.leftMargin: Style.space(3)
+              anchors.rightMargin: Style.space(3) + miniAlbumHint.reservedRight
+              artists: []
+              fallbackText: root.spotify ? root.spotify.album : ""
+              fallbackClickable: root.spotify
+                && root.spotify.currentAlbumContextAvailable
+              color: root.spotify && root.spotify.currentAlbumContextAvailable
+                ? Color.accent : root.muted
+              accent: Color.accent
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              onFallbackRequested: root.openCurrentAlbum()
+            }
+
+            HoverHandler {
+              id: miniAlbumHover
+              onHoveredChanged: if (hovered) root.setMiniCursor("album")
+            }
+            PanelToolTip {
+              visible: miniAlbumHover.hovered
+              text: "Open album · Ctrl+Shift+B"
+            }
+            KeyHint {
+              id: miniAlbumHint
+              sequences: ["Ctrl+Shift+B"]
+            }
           }
         }
       }
@@ -841,6 +1045,11 @@ BarWidget {
           HoverHandler {
             onHoveredChanged: if (hovered) root.setMiniCursor("seek")
           }
+          KeyHint {
+            sequences: ["Shift+Left", "Shift+Right"]
+            active: root.shortcutHintsActive && root.spotify
+              && root.spotify.playbackControllable
+          }
         }
 
         Row {
@@ -849,7 +1058,7 @@ BarWidget {
           Text {
             id: positionTime
             text: Api.millisecondsToClock((root.spotify ? root.spotify.positionSeconds : 0) * 1000)
-            color: Qt.darker(root.foreground, 1.45)
+            color: root.muted
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
           }
@@ -859,7 +1068,7 @@ BarWidget {
           Text {
             id: endTime
             text: Api.millisecondsToClock((root.spotify ? root.spotify.lengthSeconds : 0) * 1000)
-            color: Qt.darker(root.foreground, 1.45)
+            color: root.muted
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
           }
@@ -881,6 +1090,7 @@ BarWidget {
           enabled: root.spotify && root.spotify.playbackControllable
           onClicked: if (root.spotify) root.spotify.setShuffle(!root.spotify.shuffle)
           onHovered: function(on) { if (on) root.setMiniCursor("shuffle") }
+          KeyHint { sequences: ["Ctrl+S"] }
         }
 
         Button {
@@ -891,18 +1101,21 @@ BarWidget {
           enabled: root.spotify && root.spotify.playbackControllable
           onClicked: if (root.spotify) root.spotify.previous()
           onHovered: function(on) { if (on) root.setMiniCursor("previous") }
+          KeyHint { sequences: ["Ctrl+Left"] }
         }
 
         Button {
           iconText: root.spotify && root.spotify.playing ? "󰏤" : "󰐊"
           iconSize: Style.font.iconLarge
           foreground: root.foreground
+          selected: root.spotify && root.spotify.playing
           hasCursor: root.miniCursorActive && root.miniCursor === "play"
           tooltipText: (root.spotify && root.spotify.playing ? "Pause" : "Play")
             + " · Space"
           enabled: root.spotify && root.spotify.playbackControllable
           onClicked: if (root.spotify) root.spotify.togglePlayback()
           onHovered: function(on) { if (on) root.setMiniCursor("play") }
+          KeyHint { sequences: ["Space"] }
         }
 
         Button {
@@ -913,6 +1126,7 @@ BarWidget {
           enabled: root.spotify && root.spotify.playbackControllable
           onClicked: if (root.spotify) root.spotify.next()
           onHovered: function(on) { if (on) root.setMiniCursor("next") }
+          KeyHint { sequences: ["Ctrl+Right"] }
         }
 
         Button {
@@ -925,6 +1139,7 @@ BarWidget {
           enabled: root.spotify && root.spotify.playbackControllable
           onClicked: if (root.spotify) root.spotify.cycleRepeat()
           onHovered: function(on) { if (on) root.setMiniCursor("repeat") }
+          KeyHint { sequences: ["Ctrl+R"] }
         }
 
         Button {
@@ -935,6 +1150,7 @@ BarWidget {
           enabled: root.spotify && root.spotify.lyricsAvailable
           onClicked: root.openLyrics()
           onHovered: function(on) { if (on) root.setMiniCursor("lyrics") }
+          KeyHint { sequences: ["Ctrl+Shift+L"] }
         }
       }
 
@@ -958,7 +1174,8 @@ BarWidget {
           Text {
             anchors.verticalCenter: parent.verticalCenter
             text: root.spotify && root.spotify.volume <= 0.001 ? "󰝟" : "󰕾"
-            color: root.foreground
+            color: root.spotify && root.spotify.volume <= 0.001
+              ? root.muted : root.foreground
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.icon
           }
@@ -971,7 +1188,7 @@ BarWidget {
             maximum: 1
             step: 0.05
             sourceValue: root.spotify ? root.spotify.volume : 0
-            sourcePending: root.spotify && root.spotify.pendingRemoteVolume !== null
+            sourcePending: root.spotify && root.spotify.volumePending
             contextKey: root.spotify ? root.spotify.playbackDeviceName : ""
             enabled: root.spotify && root.spotify.volumeSupported
             onCommitted: function(value) {
@@ -982,6 +1199,11 @@ BarWidget {
 
         HoverHandler {
           onHoveredChanged: if (hovered) root.setMiniCursor("volume")
+        }
+        KeyHint {
+          sequences: ["M", "Ctrl+Up", "Ctrl+Down"]
+          active: root.shortcutHintsActive && root.spotify
+            && root.spotify.volumeSupported
         }
       }
 
@@ -1010,7 +1232,7 @@ BarWidget {
                 + root.spotify.playbackDeviceName
               : (root.spotify.daemon.running ? "Playing on this computer"
                 : "Ready when you press play"))))))
-          color: Qt.darker(root.foreground, 1.35)
+          color: root.muted
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.caption
           elide: Text.ElideRight
@@ -1025,6 +1247,7 @@ BarWidget {
           tooltipText: "Open full player · O"
           onClicked: root.openFullPanel()
           onHovered: function(on) { if (on) root.setMiniCursor("open") }
+          KeyHint { sequences: ["O"] }
         }
       }
 
@@ -1033,6 +1256,7 @@ BarWidget {
           visible: root.lyricsInstallPromptVisible
           service: root.spotify
           foreground: root.foreground
+          muted: root.muted
           surfaceKey: root.lyricsRequestKey
           cancelHasCursor: root.miniCursorActive
             && root.miniCursor === "prompt-cancel"
@@ -1071,6 +1295,10 @@ BarWidget {
             tooltipText: "Close shortcut reference · Ctrl+/ or Esc"
             onClicked: root.toggleMiniShortcutHelp()
             onHovered: function(on) { if (on) root.setMiniCursor("help-close") }
+            KeyHint {
+              sequences: ["Esc", "Ctrl+/"]
+              active: root.shortcutHintsInPopup
+            }
           }
         }
 
@@ -1096,7 +1324,7 @@ BarWidget {
             Text {
               width: parent.width - Style.space(128) - parent.spacing
               text: modelData.action
-              color: Qt.darker(root.foreground, 1.35)
+              color: root.muted
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap

@@ -32,6 +32,7 @@ pub struct BackendConfig {
     pub audio_cache: bool,
     pub max_cache_size: Option<u64>,
     pub cache_root: PathBuf,
+    pub credentials_root: PathBuf,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -42,6 +43,7 @@ pub struct ConfigSummary<'a> {
     pub audio_cache: bool,
     pub max_cache_size: Option<u64>,
     pub cache_root: &'a std::path::Path,
+    pub credentials_root: &'a std::path::Path,
 }
 
 impl BackendConfig {
@@ -77,6 +79,7 @@ impl BackendConfig {
         }
 
         let cache_root = global.cache_path.unwrap_or_else(default_cache_root);
+        let credentials_root = default_credentials_root();
 
         Ok(Self {
             device_name,
@@ -87,6 +90,7 @@ impl BackendConfig {
             audio_cache: !global.no_audio_cache.unwrap_or(false),
             max_cache_size: global.max_cache_size.or(Some(1_000_000_000)),
             cache_root,
+            credentials_root,
         })
     }
 
@@ -98,6 +102,7 @@ impl BackendConfig {
             audio_cache: self.audio_cache,
             max_cache_size: self.max_cache_size,
             cache_root: &self.cache_root,
+            credentials_root: &self.credentials_root,
         }
     }
 }
@@ -126,6 +131,14 @@ fn default_cache_root() -> PathBuf {
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
         .unwrap_or_else(|| PathBuf::from(".cache"))
         .join("spotifyd")
+}
+
+fn default_credentials_root() -> PathBuf {
+    env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+        .unwrap_or_else(|| PathBuf::from(".local/state"))
+        .join("omarchy-spotify")
 }
 
 #[cfg(unix)]

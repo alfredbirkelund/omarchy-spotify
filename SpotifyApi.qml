@@ -5,7 +5,8 @@ import "Api.js" as Api
 // Thin authenticated transport. It performs no polling and owns only one
 // special request: search, which is cancelled whenever a newer query arrives.
 // Requests share a small in-flight cap and a Retry-After cooldown so a
-// development-mode app does not burst into Spotify's 429 window.
+// development-mode app does not burst into Spotify's 429 window. After a
+// 429, only one request goes out until a later call succeeds.
 Item {
   id: root
 
@@ -20,6 +21,7 @@ Item {
   property var requestQueue: []
   property int requestsInFlight: 0
   property double rateLimitedUntil: 0
+  property bool restrictInFlight: false
   property bool pumpingRequests: false
   property bool pumpAgain: false
 
@@ -33,10 +35,9 @@ Item {
   }
 
   function requestError(status, payload, xhr, fallback) {
-    var error = Api.responseError(status, payload, fallback)
     if (status === 429)
-      error += Api.rateLimitSuffix(Api.responseRetryAfter(xhr))
-    return error
+      return Api.rateLimitMessage(Api.responseRetryAfter(xhr))
+    return Api.responseError(status, payload, fallback)
   }
 
   function enqueueJob(job, preferFront) {
@@ -59,7 +60,7 @@ Item {
     }
     pumpingRequests = true
     pumpAgain = false
-    while (requestsInFlight < Api.API_MAX_IN_FLIGHT) {
+    while (requestsInFlight < Api.apiInFlightLimit(restrictInFlight)) {
       var wait = Api.apiCooldownMs(Date.now(), rateLimitedUntil)
       if (wait > 0) {
         rateLimitTimer.interval = Math.max(50, wait)
@@ -115,13 +116,18 @@ Item {
           releaseRequestSlot(handle)
           return
         }
-        if (xhr.status === 429 && job.rateLimitRetried !== true) {
+        if (xhr.status === 429) {
+          restrictInFlight = true
           rateLimitedUntil = Api.nextRateLimitedUntil(Date.now(),
-            Api.responseRetryAfter(xhr), rateLimitedUntil)
-          job.rateLimitRetried = true
-          requestQueue = Api.enqueueApiJob(requestQueue, job, true)
-          releaseRequestSlot(handle)
-          return
+            Api.responseRetryAfter(xhr), rateLimitedUntil, job.rateLimitRetries)
+          if (Api.shouldRetryRateLimit(job.rateLimitRetries)) {
+            job.rateLimitRetries += 1
+            requestQueue = Api.enqueueApiJob(requestQueue, job, true)
+            releaseRequestSlot(handle)
+            return
+          }
+        } else {
+          restrictInFlight = false
         }
         var ok = xhr.status >= 200 && xhr.status < 300
         var error = ok ? "" : root.requestError(xhr.status, payload, xhr,
@@ -154,7 +160,7 @@ Item {
       body: body,
       callback: callback,
       retried: retried === true,
-      rateLimitRetried: false,
+      rateLimitRetries: 0,
       handle: handle
     }, retried === true)
   }

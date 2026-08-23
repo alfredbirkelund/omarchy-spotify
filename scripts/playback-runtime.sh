@@ -3,13 +3,15 @@ set -euo pipefail
 
 action=${1:-}
 if (( $# != 1 )); then
-  echo "Usage: scripts/playback-runtime.sh check|start|stop|status|unit" >&2
+  echo "Usage: scripts/playback-runtime.sh check|credentials|start|stop|status|unit" >&2
   exit 2
 fi
 
 backend_binary="$HOME/.local/lib/omarchy-spotify/omarchy-spotify-backend"
 backend_unit=omarchy-spotify.service
 fallback_unit=omarchy-spotifyd.service
+state_root=${XDG_STATE_HOME:-"$HOME/.local/state"}
+cache_root=${XDG_CACHE_HOME:-"$HOME/.cache"}
 
 unit_exists() {
   systemctl --user cat "$1" >/dev/null 2>&1
@@ -28,6 +30,18 @@ preferred_unit() {
 case $action in
   check)
     preferred_unit >/dev/null
+    ;;
+  credentials)
+    credential_paths=(
+      "$state_root/omarchy-spotify/oauth/credentials.json"
+      "$state_root/omarchy-spotify/zeroconf/credentials.json"
+      "$cache_root/spotifyd/oauth/credentials.json"
+      "$cache_root/spotifyd/zeroconf/credentials.json"
+    )
+    for path in "${credential_paths[@]}"; do
+      [[ -s $path ]] && exit 0
+    done
+    exit 1
     ;;
   start)
     unit=$(preferred_unit) || {
