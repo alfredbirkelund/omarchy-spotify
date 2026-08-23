@@ -361,6 +361,42 @@ TestCase {
     }).pendingLyricsInstall, undefined)
   }
 
+  function test_sessionRecord_roundTripsAndMigratesPluginSettings() {
+    compare(Api.sessionRecordIsEmpty(Api.emptySessionRecord()), true)
+    compare(Api.sessionRecordIsEmpty(Api.parseSessionRecord("")), true)
+    compare(Api.sessionRecordIsEmpty(Api.parseSessionRecord("{")), true)
+    compare(Api.sessionRecordIsEmpty(Api.parseSessionRecord("[]")), true)
+    compare(Api.pluginSettingsHaveSessionKeys(null), false)
+    compare(Api.pluginSettingsHaveSessionKeys({ deviceName: "Omarchy Spotify" }), false)
+    compare(Api.pluginSettingsHaveSessionKeys({ sessionState: "{}" }), true)
+    compare(Api.pluginSettingsHaveSessionKeys({ searchHistory: "[]" }), true)
+
+    var encoded = Api.encodeSessionRecord({
+      tab: "playlists",
+      searchText: "radiohead"
+    }, ["radiohead", "bjork"])
+    compare(JSON.parse(encoded).version, 1)
+    var restored = Api.parseSessionRecord(encoded)
+    compare(restored.sessionState.tab, "playlists")
+    compare(restored.sessionState.searchText, "radiohead")
+    compare(JSON.stringify(restored.searchHistory),
+      JSON.stringify(["radiohead", "bjork"]))
+    compare(Api.sessionRecordIsEmpty(restored), false)
+
+    var fromPlugin = Api.sessionRecordFromPluginSettings({
+      deviceName: "Office",
+      sessionState: "{\"tab\":\"library\",\"libraryType\":\"albums\"}",
+      searchHistory: "[\"kid a\", \"kid a\", \"\"]"
+    })
+    compare(fromPlugin.sessionState.tab, "library")
+    compare(fromPlugin.sessionState.libraryType, "albums")
+    compare(JSON.stringify(fromPlugin.searchHistory), JSON.stringify(["kid a"]))
+
+    var oversized = { tab: "detail", blob: Array(16001).join("x") }
+    compare(JSON.stringify(Api.normalizedSessionState(oversized)), "{}")
+    compare(Api.sessionRecordIsEmpty(Api.sessionRecord(oversized, [])), true)
+  }
+
   function test_spotifyTrackId_acceptsUrisUrlsAndSpotifydObjectPaths() {
     compare(Api.spotifyTrackId("spotify:track:14XWXWv5FoCbFzLksawpEe"),
       "14XWXWv5FoCbFzLksawpEe")

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Store player restore state and search history in `$XDG_STATE_HOME`
+  instead of Omarchy's `shell.json`, migrating leftover plugin settings once
+  so a dotfiles repo can keep config without session leftovers.
+
 - Change Spotify volume from a keybinding with `volumeUp` and `volumeDown` on
   `quickshell.spotify.player`, 5% per call, without opening the player. The
   commands return `unavailable` when volume cannot be changed.

@@ -52,7 +52,7 @@ if (( purge )); then
   if [[ -d $state_dir ]]; then
     [[ $state_dir == "$state_root/omarchy-spotify" ]] || exit 3
     rm -rf -- "$state_dir"
-    echo "Removed durable playback authorization."
+    echo "Removed durable playback authorization and session state."
   fi
   if command -v secret-tool >/dev/null 2>&1; then
     for _ in {1..20}; do

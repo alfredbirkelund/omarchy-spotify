@@ -941,6 +941,59 @@ function sessionWithoutLyricsInstall(session) {
   return next
 }
 
+var SESSION_STATE_LIMIT = 16000
+
+function normalizedSessionState(value) {
+  var session = value
+  if (typeof session === "string") session = parseJson(session, ({}))
+  if (!session || typeof session !== "object" || Array.isArray(session)) session = ({})
+  return JSON.stringify(session).length <= SESSION_STATE_LIMIT ? session : ({})
+}
+
+function sessionRecord(sessionState, searchHistory) {
+  return {
+    sessionState: normalizedSessionState(sessionState),
+    searchHistory: parseStringList(searchHistory, 12)
+  }
+}
+
+function emptySessionRecord() {
+  return sessionRecord(({}), [])
+}
+
+function parseSessionRecord(raw) {
+  var parsed = parseJson(String(raw || ""), null)
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    return emptySessionRecord()
+  return sessionRecord(parsed.sessionState, parsed.searchHistory)
+}
+
+function encodeSessionRecord(sessionState, searchHistory) {
+  var record = sessionRecord(sessionState, searchHistory)
+  record.version = 1
+  return JSON.stringify(record, null, 2) + "\n"
+}
+
+function sessionRecordIsEmpty(record) {
+  var value = record && typeof record === "object" ? record : emptySessionRecord()
+  var session = value.sessionState
+  var history = value.searchHistory
+  var hasSession = !!session && typeof session === "object" && !Array.isArray(session)
+    && Object.keys(session).length > 0
+  var hasHistory = Array.isArray(history) && history.length > 0
+  return !hasSession && !hasHistory
+}
+
+function pluginSettingsHaveSessionKeys(source) {
+  if (!source || typeof source !== "object") return false
+  return source.sessionState !== undefined || source.searchHistory !== undefined
+}
+
+function sessionRecordFromPluginSettings(source) {
+  var values = source && typeof source === "object" ? source : ({})
+  return sessionRecord(values.sessionState, values.searchHistory)
+}
+
 function searchShortcutAction(searchFocused, scopeAvailable, searchInContext) {
   if (searchFocused === true)
     return scopeAvailable === true ? "toggle-scope" : "focus"

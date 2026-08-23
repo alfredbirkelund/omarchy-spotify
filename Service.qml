@@ -23,6 +23,14 @@ Item {
     ? String(manifest.id) : "quickshell.spotify"
   readonly property string pluginDir: manifest && manifest.__sourceDir
     ? String(manifest.__sourceDir) : ""
+  readonly property string homeDirectory: Quickshell.env("HOME") || ""
+  readonly property string stateHome: {
+    var explicit = String(Quickshell.env("XDG_STATE_HOME") || "").trim()
+    if (explicit) return explicit
+    return homeDirectory ? homeDirectory + "/.local/state" : ".local/state"
+  }
+  readonly property string stateDir: stateHome + "/omarchy-spotify"
+  readonly property string sessionPath: stateDir + "/session.json"
 
   readonly property var defaultSettingValues: ({
     deviceName: "Omarchy Spotify",
@@ -35,9 +43,7 @@ Item {
     scrollBarText: "Off",
     scrollSpeed: "1",
     maxBarTextWidth: "240",
-    audioQuality: "320 kbps",
-    searchHistory: "[]",
-    sessionState: "{}"
+    audioQuality: "320 kbps"
   })
   property var settings: Api.shallowCopy(defaultSettingValues)
 
@@ -61,11 +67,12 @@ Item {
       : (quality.indexOf("160") === 0 ? 160 : 320)
   }
   readonly property string audioQuality: bitrateKbps + " kbps"
-  readonly property var searchHistory: Api.parseStringList(settings.searchHistory, 12)
-  readonly property var sessionState: {
-    var parsed = Api.parseJson(String(settings.sessionState || "{}"), ({}))
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : ({})
-  }
+  property var searchHistory: []
+  property var sessionState: ({})
+  property bool sessionFileReady: false
+  property bool sessionFileHadData: false
+  property bool sessionFileDirty: false
+  property bool pluginSessionKeysPendingStrip: false
 
   readonly property alias auth: authManager
   readonly property alias api: spotifyApi
@@ -439,15 +446,6 @@ Item {
       var key = keys[i]
       if (source[key] !== undefined) next[key] = source[key]
     }
-    if (source.searchHistory !== undefined)
-      next.searchHistory = JSON.stringify(Api.parseStringList(source.searchHistory, 12))
-    if (source.sessionState !== undefined) {
-      var session = source.sessionState
-      if (typeof session === "string") session = Api.parseJson(session, ({}))
-      if (!session || typeof session !== "object" || Array.isArray(session)) session = ({})
-      var encodedSession = JSON.stringify(session)
-      next.sessionState = encodedSession.length <= 16000 ? encodedSession : "{}"
-    }
     next.deviceName = String(next.deviceName || "Omarchy Spotify").trim() || "Omarchy Spotify"
     next.idleShutdownMinutes = Math.max(0, Math.min(1440,
       Math.floor(Number(next.idleShutdownMinutes) || 0)))
@@ -509,17 +507,78 @@ Item {
   }
 
   function persistSession(values) {
-    persistSettings({ sessionState: values || ({}) })
+    var next = Api.normalizedSessionState(values || ({}))
+    if (JSON.stringify(next) === JSON.stringify(sessionState)) return
+    sessionState = next
+    scheduleSessionSave()
   }
 
   function rememberSearch(term) {
     var next = Api.touchHistory(searchHistory, term, 12)
-    if (JSON.stringify(next) !== JSON.stringify(searchHistory))
-      persistSettings({ searchHistory: next })
+    if (JSON.stringify(next) === JSON.stringify(searchHistory)) return
+    searchHistory = next
+    scheduleSessionSave()
   }
 
   function clearSearchHistory() {
-    persistSettings({ searchHistory: [] })
+    if (searchHistory.length === 0) return
+    searchHistory = []
+    scheduleSessionSave()
+  }
+
+  function currentSessionRecord() {
+    return Api.sessionRecord(sessionState, searchHistory)
+  }
+
+  function applySessionFile(raw) {
+    if (sessionFileReady) return
+    var fromFile = Api.parseSessionRecord(raw)
+    sessionFileHadData = !Api.sessionRecordIsEmpty(fromFile)
+    if (!sessionFileDirty && sessionFileHadData) {
+      sessionState = fromFile.sessionState
+      searchHistory = fromFile.searchHistory
+    }
+    sessionFileReady = true
+    reconcileSessionPersistence()
+    resumeLyricsInstallIntent()
+  }
+
+  function scheduleSessionSave() {
+    sessionFileDirty = true
+    if (sessionFileReady) sessionSaveTimer.restart()
+  }
+
+  function flushSessionFile() {
+    if (!sessionFileReady) return
+    sessionSaveTimer.stop()
+    sessionFile.setText(Api.encodeSessionRecord(sessionState, searchHistory))
+  }
+
+  function stripPluginSessionKeys() {
+    if (!pluginSessionKeysPendingStrip) return
+    var entry = configuredEntry()
+    if (!entry || !shell || typeof shell.updateEntryInline !== "function") return
+    pluginSessionKeysPendingStrip = false
+    persistSettings(entry)
+  }
+
+  function reconcileSessionPersistence() {
+    if (!sessionFileReady) return
+    var entry = configuredEntry() || {}
+    var pluginHasKeys = Api.pluginSettingsHaveSessionKeys(entry)
+    if (pluginHasKeys) {
+      if (Api.sessionRecordIsEmpty(currentSessionRecord()) && !sessionFileDirty) {
+        var fromPlugin = Api.sessionRecordFromPluginSettings(entry)
+        sessionState = fromPlugin.sessionState
+        searchHistory = fromPlugin.searchHistory
+      }
+      pluginSessionKeysPendingStrip = true
+    }
+    var shouldWrite = sessionFileDirty
+      || (pluginHasKeys && !sessionFileHadData
+        && !Api.sessionRecordIsEmpty(currentSessionRecord()))
+    if (shouldWrite) flushSessionFile()
+    else if (pluginHasKeys) stripPluginSessionKeys()
   }
 
   function configuredEntry() {
@@ -542,6 +601,7 @@ Item {
 
   function syncSettings() {
     applySettings(configuredEntry() || {})
+    reconcileSessionPersistence()
     resumeLyricsInstallIntent()
   }
 
@@ -3503,6 +3563,7 @@ Item {
   }
 
   Component.onCompleted: {
+    ensureStateDir.running = true
     settingsSync.start()
     daemonManager.refreshStatus()
   }
@@ -3659,6 +3720,41 @@ Item {
     id: settingsSync
     interval: 0
     onTriggered: root.syncSettings()
+  }
+
+  Timer {
+    id: sessionSaveTimer
+    interval: 200
+    repeat: false
+    onTriggered: root.flushSessionFile()
+  }
+
+  FileView {
+    id: sessionFile
+    path: root.sessionPath
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.applySessionFile(text())
+    onLoadFailed: root.applySessionFile("")
+    onSaved: {
+      root.sessionFileHadData = !Api.sessionRecordIsEmpty(root.currentSessionRecord())
+      root.sessionFileDirty = false
+      root.stripPluginSessionKeys()
+    }
+    onSaveFailed: {
+      if (!ensureStateDir.running) ensureStateDir.running = true
+    }
+  }
+
+  Process {
+    id: ensureStateDir
+    running: false
+    command: ["/usr/bin/mkdir", "-p", root.stateDir]
+    onExited: {
+      if (!root.sessionFileReady) sessionFile.reload()
+      else if (root.sessionFileDirty) root.flushSessionFile()
+    }
   }
 
   Timer {

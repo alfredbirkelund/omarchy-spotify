@@ -84,7 +84,10 @@ are written to GNOME Keyring over stdin and separated by client identity.
 Reusable local-playback authorization is stored with owner-only permissions in
 `$XDG_STATE_HOME/omarchy-spotify`; older credentials under `$XDG_CACHE_HOME`
 are accepted once and migrated so clearing disposable caches cannot deauthorize
-this computer.
+this computer. Player restore state (last tab, filters, search history, and
+similar) is written to `$XDG_STATE_HOME/omarchy-spotify/session.json` so it
+does not pollute Omarchy's `shell.json`. Older copies kept as plugin settings
+are read once and removed from `shell.json` after that file is written.
 Short-lived access tokens and PKCE values remain in the shell process. OAuth
 state is checked, callback listeners bind explicitly to IPv4 loopback, API URLs
 are restricted to
@@ -194,8 +197,8 @@ omarchy plugin remove quickshell.spotify --yes
 ```
 
 This stops and removes both static user units and the installed backend binary,
-deletes the app's private playback config, durable playback authorization and
-cached audio,
+deletes the app's private playback config, durable playback authorization,
+player session state, and cached audio,
 and clears matching Omarchy Spotify keyring entries. The `spotifyd` package
 remains installed because another client may use it.
 
