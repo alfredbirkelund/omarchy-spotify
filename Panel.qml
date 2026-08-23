@@ -50,6 +50,10 @@ Item {
   property bool draftShowArtist: false
   property bool draftScrollBarText: false
   property real draftScrollSpeed: 1
+  // 0 means no cap — the slot grows with the track text.
+  property real draftMaxBarTextWidth: 240
+  // Disclosure state for the width slider; deliberately not persisted.
+  property bool barTextWidthExpanded: false
   property string draftAudioQuality: "320 kbps"
   property var contextItem: null
   property var contextSourceItems: []
@@ -107,6 +111,7 @@ Item {
     draftShowArtist = service.showArtistName
     draftScrollBarText = service.scrollBarText
     draftScrollSpeed = service.scrollSpeed
+    draftMaxBarTextWidth = service.maxBarTextWidth
     draftAudioQuality = service.audioQuality
   }
 
@@ -122,6 +127,7 @@ Item {
       showArtistName: draftShowArtist ? "On" : "Off",
       scrollBarText: draftScrollBarText ? "On" : "Off",
       scrollSpeed: Api.normalizedScrollSpeed(draftScrollSpeed),
+      maxBarTextWidth: Api.normalizedMaxBarTextWidth(draftMaxBarTextWidth),
       audioQuality: draftAudioQuality
     }
     service.persistSettings(values)
@@ -158,7 +164,26 @@ Item {
     return value.toFixed(2).replace(/\.00$/, "").replace(/0$/, "") + "×"
   }
 
+  readonly property var barTextWidthSlider: Api.barTextWidthSlider()
+  readonly property bool barTextWidthUnlimited:
+    Api.normalizedMaxBarTextWidth(draftMaxBarTextWidth) === 0
+
+  function maxBarTextWidthLabel() {
+    var value = Api.normalizedMaxBarTextWidth(draftMaxBarTextWidth)
+    return value === 0 ? "Unlimited" : Math.round(value) + " px"
+  }
+  function maxBarTextWidthSliderValue() {
+    var value = Api.normalizedMaxBarTextWidth(draftMaxBarTextWidth)
+    return value === 0 ? barTextWidthSlider.unlimited : value
+  }
+  function setMaxBarTextWidthFromSlider(value) {
+    draftMaxBarTextWidth = value >= barTextWidthSlider.unlimited
+      ? 0 : Api.normalizedMaxBarTextWidth(value)
+    enforceScrollAvailability()
+  }
+
   function enforceScrollAvailability() {
+    if (barTextWidthUnlimited) draftScrollBarText = false
     if (!Api.canScrollBarText(draftShowTitle, draftShowArtist))
       draftScrollBarText = false
   }
@@ -4601,11 +4626,24 @@ Item {
                   foreground: root.foreground
                   selected: root.draftScrollBarText
                   enabled: Api.canScrollBarText(root.draftShowTitle, root.draftShowArtist)
-                  tooltipText: "Scroll bar text only when it is too wide to fit"
+                    && !root.barTextWidthUnlimited
+                  tooltipText: root.barTextWidthUnlimited
+                    ? "Unavailable while the bar width is unlimited — the label always fits"
+                    : "Scroll bar text only when it is too wide to fit"
                   onClicked: {
                     root.draftScrollBarText = !root.draftScrollBarText
                     root.persistDraftSettings()
                   }
+                }
+                // Discloses the width slider rather than changing a setting;
+                // the selected highlight marks the open state.
+                Button {
+                  text: "Width · " + root.maxBarTextWidthLabel()
+                  foreground: root.foreground
+                  selected: root.barTextWidthExpanded
+                  enabled: Api.canScrollBarText(root.draftShowTitle, root.draftShowArtist)
+                  tooltipText: "How wide the bar label may grow"
+                  onClicked: root.barTextWidthExpanded = !root.barTextWidthExpanded
                 }
               }
 
@@ -4656,6 +4694,66 @@ Item {
                     root.draftScrollSpeed = Api.normalizedScrollSpeed(value)
                     root.persistDraftSettings()
                   }
+                }
+              }
+
+              Column {
+                width: parent.width
+                spacing: Style.space(4)
+                visible: Api.canScrollBarText(root.draftShowTitle, root.draftShowArtist)
+                  && root.barTextWidthExpanded
+
+                Row {
+                  width: parent.width
+
+                  Text {
+                    id: maxBarWidthTitle
+                    text: "MAX WIDTH"
+                    color: Qt.darker(root.foreground, 1.4)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+                  Item {
+                    width: Math.max(0, parent.width - maxBarWidthTitle.implicitWidth
+                      - maxBarWidthValue.implicitWidth)
+                    height: 1
+                  }
+                  Text {
+                    id: maxBarWidthValue
+                    text: root.maxBarTextWidthLabel()
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                  }
+                }
+
+                PanelSlider {
+                  width: parent.width
+                  bar: root.panelBar
+                  minimum: root.barTextWidthSlider.min
+                  maximum: root.barTextWidthSlider.unlimited
+                  step: root.barTextWidthSlider.step
+                  tickCount: root.barTextWidthSlider.ticks
+                  value: root.maxBarTextWidthSliderValue()
+                  onMoved: function(value) {
+                    root.setMaxBarTextWidthFromSlider(value)
+                  }
+                  onReleased: function(value) {
+                    root.setMaxBarTextWidthFromSlider(value)
+                    root.persistDraftSettings()
+                  }
+                }
+
+                Text {
+                  width: parent.width
+                  visible: root.barTextWidthUnlimited
+                  text: "Very long titles will take space from other bar widgets."
+                  color: Qt.darker(root.foreground, 1.45)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  wrapMode: Text.WordWrap
                 }
               }
 

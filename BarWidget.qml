@@ -459,10 +459,20 @@ BarWidget {
       ? root.spotify.title + (root.spotify.artist ? " — " + root.spotify.artist : "")
       : (root.spotify && !root.spotify.accountConnected
         ? "Set up Omarchy Spotify" : "Omarchy Spotify")
+    // Reserve everything scrollClip subtracts back out — glyph, Row spacing and
+    // both button margins. Style.space(24) covered about a pixel of that, so the
+    // label sat ~23px short of its own advanceWidth: needsScroll stayed true and
+    // the fade mask clipped titles that had room to render.
+    readonly property real barTextSlot: glyphMetrics.advanceWidth
+      + labelMetrics.advanceWidth + barContent.spacing
+      + button.scaledHorizontalMargin * 2 + Style.space(10)
+    readonly property real barTextCap: root.spotify ? root.spotify.maxBarTextWidth : 240
+
     fixedWidth: root.vertical ? root.barSize
       : (root.iconOnly ? Style.bar.statusSlot
-        : Math.min(Style.space(240), Math.max(root.barSize,
-          glyphMetrics.advanceWidth + labelMetrics.advanceWidth + Style.space(24))))
+        : Math.max(root.barSize, barTextCap > 0
+          ? Math.min(Style.space(barTextCap), barTextSlot)
+          : barTextSlot))
     fixedHeight: root.vertical && root.iconOnly ? Style.bar.statusSlot : -1
     clip: true
 
