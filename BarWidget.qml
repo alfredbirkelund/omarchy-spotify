@@ -553,8 +553,10 @@ BarWidget {
     hasVisualContent: true
     fontSize: root.iconOnly ? Style.font.bodySmall : Style.font.body
     active: root.spotify && root.spotify.playing
-    foreground: root.foreground
-    activeColor: root.foreground
+    // Follow the bar's contrast-aware color when transparency changes.
+    // Keep root.foreground theme-based for the popup/player surfaces.
+    foreground: root.bar ? root.bar.barForeground : root.foreground
+    activeColor: foreground
     tooltipText: root.spotify && root.spotify.hasMedia
       ? root.spotify.title + (root.spotify.artist ? " — " + root.spotify.artist : "")
       : (root.spotify && !root.spotify.accountConnected
@@ -620,7 +622,7 @@ BarWidget {
             id: barLabel
             anchors.verticalCenter: parent.verticalCenter
             text: root.barText
-            color: root.foreground
+            color: button.foreground
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
             renderType: Text.NativeRendering
