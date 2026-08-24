@@ -12,11 +12,12 @@ The process provides:
 - an MPRIS player for Quickshell and other desktop media controls; and
 - a versioned newline-delimited JSON protocol on an owner-only Unix socket.
 
-The librespot revision is pinned in both `Cargo.toml` and `Cargo.lock`. That
-revision contains the manual-track-switch smoothing submitted as
-[librespot PR #1740](https://github.com/librespot-org/librespot/pull/1740).
-Updating the revision requires the full test suite and a live switch test; a
-floating branch is intentionally never used.
+The project fork's librespot revision is pinned in both `Cargo.toml` and
+`Cargo.lock`. It contains the manual-track-switch smoothing submitted as
+[librespot PR #1740](https://github.com/librespot-org/librespot/pull/1740) and
+stops cleanly when Spotify refuses an audio key instead of skipping through the
+queue. Updating the revision requires the full test suite and a live switch
+test; a floating branch is intentionally never used.
 
 The production process uses a current-thread Tokio control runtime. Librespot's
 separate blocking player runtime is capped at two workers by the systemd unit;
@@ -27,6 +28,11 @@ state is held in one watch channel, unchanged events are discarded, commands
 are bounded, and MPRIS emits `Seeked` only for an actual seek event. MPRIS uses
 the library-recommended PID-qualified instance name so a stray second backend
 cannot take the supervised process's bus ownership.
+
+If librespot's session task ends, the backend replaces only its Session and
+Spirc pair. The socket, MPRIS name, player, and command queue remain alive.
+Five reconnects are allowed in ten minutes; exceeding that limit exits so
+systemd can perform the existing clean restart.
 
 ## Future work
 

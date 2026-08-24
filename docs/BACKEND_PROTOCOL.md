@@ -32,7 +32,9 @@ The abbreviated example omits the remaining state fields. A real snapshot also
 contains backend and protocol versions, session status, current client,
 playback status, track metadata, position in milliseconds, native 16-bit
 Connect volume, shuffle/repeat state, a monotonically increasing generation,
-and a redacted error string.
+and a redacted error string. When the error needs dedicated UI, the snapshot
+also includes an optional stable `error_code`; `audio_key_unavailable` means
+Spotify refused the key required for local playback.
 
 Version 1 commands are:
 

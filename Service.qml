@@ -3961,5 +3961,7 @@ Item {
   BackendClient {
     id: backendClient
     wanted: daemonManager.running && !daemonManager.usingFallbackRuntime
+    onErrorCodeChanged: if (errorCode === "audio_key_unavailable")
+      root.fail(errorMessage || "Spotify could not play this track on this computer")
   }
 }

@@ -1,4 +1,9 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::VecDeque,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result, anyhow, bail};
 use librespot_connect::{ConnectConfig, LoadRequest, LoadRequestOptions, PlayingTrack, Spirc};
@@ -17,7 +22,7 @@ use librespot_playback::{
     player::{Player, PlayerEvent},
 };
 use sha1::{Digest, Sha1};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::{
     config::BackendConfig,
@@ -27,6 +32,10 @@ use crate::{
 
 const INITIAL_VOLUME: u16 = ((u16::MAX as u32 * 90) / 100) as u16;
 const ENGINE_QUEUE_CAPACITY: usize = 64;
+const RECONNECT_LIMIT: usize = 5;
+const RECONNECT_WINDOW: Duration = Duration::from_secs(10 * 60);
+const AUDIO_KEY_UNAVAILABLE_CODE: &str = "audio_key_unavailable";
+const AUDIO_KEY_UNAVAILABLE_MESSAGE: &str = "Spotify did not provide the audio key required to play this track on this computer. Try another Spotify Connect device.";
 
 pub struct EngineRequest {
     pub command: Command,
@@ -37,17 +46,19 @@ pub type EngineSender = mpsc::Sender<EngineRequest>;
 
 pub struct EngineRuntime {
     pub commands: EngineSender,
-    spirc: Arc<Spirc>,
-    done: oneshot::Receiver<()>,
+    shutdown: watch::Sender<bool>,
+    done: oneshot::Receiver<Result<()>>,
 }
 
 impl EngineRuntime {
-    pub async fn wait_done(&mut self) {
-        let _ = (&mut self.done).await;
+    pub async fn wait_done(&mut self) -> Result<()> {
+        (&mut self.done)
+            .await
+            .context("playback engine supervisor stopped")?
     }
 
     pub fn shutdown(&self) {
-        let _ = self.spirc.shutdown();
+        let _ = self.shutdown.send(true);
     }
 }
 
@@ -75,7 +86,7 @@ pub async fn start(config: BackendConfig, state: StateStore) -> Result<EngineRun
     let mixer_builder = mixer::find(Some("softvol"))
         .ok_or_else(|| anyhow!("soft volume mixer was not compiled in"))?;
     let mixer = mixer_builder(MixerConfig::default()).context("failed to create soft mixer")?;
-    let session = Session::new(session_config, Some(runtime_cache));
+    let session = Session::new(session_config.clone(), Some(runtime_cache.clone()));
     let audio_device = config.audio_device.clone();
     let player = Player::new(
         player_config,
@@ -94,11 +105,11 @@ pub async fn start(config: BackendConfig, state: StateStore) -> Result<EngineRun
         ..ConnectConfig::default()
     };
     let (spirc, spirc_task) = Spirc::new(
-        connect_config,
-        session,
-        credentials,
+        connect_config.clone(),
+        session.clone(),
+        credentials.clone(),
         Arc::clone(&player),
-        mixer,
+        Arc::clone(&mixer),
     )
     .await
     .context("failed to connect the librespot session")?;
@@ -107,29 +118,144 @@ pub async fn start(config: BackendConfig, state: StateStore) -> Result<EngineRun
     state.update(|current| {
         current.lifecycle = Lifecycle::Ready;
         current.volume = INITIAL_VOLUME;
+        current.error_code.clear();
         current.error.clear();
         true
     });
 
     let (commands, command_rx) = mpsc::channel(ENGINE_QUEUE_CAPACITY);
+    let (current_spirc_tx, current_spirc_rx) = watch::channel(Some(Arc::clone(&spirc)));
     tokio::spawn(run_commands(
         command_rx,
-        Arc::clone(&spirc),
+        current_spirc_rx,
         Arc::clone(&player),
     ));
     tokio::spawn(run_events(events, state.clone()));
 
+    let (shutdown, shutdown_rx) = watch::channel(false);
     let (done_tx, done) = oneshot::channel();
+    let spirc_task = tokio::spawn(spirc_task);
     tokio::spawn(async move {
-        spirc_task.await;
-        let _ = done_tx.send(());
+        let result = supervise_sessions(
+            session_config,
+            runtime_cache,
+            connect_config,
+            credentials,
+            player,
+            mixer,
+            session,
+            spirc,
+            spirc_task,
+            current_spirc_tx,
+            state,
+            shutdown_rx,
+        )
+        .await;
+        let _ = done_tx.send(result);
     });
 
     Ok(EngineRuntime {
         commands,
-        spirc,
+        shutdown,
         done,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn supervise_sessions(
+    session_config: SessionConfig,
+    runtime_cache: Cache,
+    connect_config: ConnectConfig,
+    credentials: Credentials,
+    player: Arc<Player>,
+    mixer: Arc<dyn mixer::Mixer>,
+    mut session: Session,
+    mut spirc: Arc<Spirc>,
+    mut spirc_task: tokio::task::JoinHandle<()>,
+    current_spirc: watch::Sender<Option<Arc<Spirc>>>,
+    state: StateStore,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<()> {
+    let mut reconnects = VecDeque::new();
+
+    loop {
+        tokio::select! {
+            result = &mut spirc_task => {
+                result.context("librespot session task failed")?;
+            }
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    let _ = spirc.shutdown();
+                    return Ok(());
+                }
+                continue;
+            }
+        }
+
+        current_spirc.send_replace(None);
+        state.update(|current| {
+            current.lifecycle = Lifecycle::Starting;
+            current.session_connected = false;
+            current.active_client.clear();
+            true
+        });
+
+        let now = Instant::now();
+        if !record_reconnect(&mut reconnects, now) {
+            bail!("librespot session ended too often; reconnect limit reached");
+        }
+        log::warn!("librespot session ended; reconnecting");
+
+        if !session.is_invalid() {
+            session.shutdown();
+        }
+        session = Session::new(session_config.clone(), Some(runtime_cache.clone()));
+        player.set_session(session.clone());
+        let reconnect = Spirc::new(
+            connect_config.clone(),
+            session.clone(),
+            credentials.clone(),
+            Arc::clone(&player),
+            Arc::clone(&mixer),
+        );
+        tokio::pin!(reconnect);
+        let (next_spirc, next_task) = tokio::select! {
+            result = &mut reconnect => {
+                result.context("failed to reconnect the librespot session")?
+            }
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return Ok(());
+                }
+                continue;
+            }
+        };
+
+        spirc = Arc::new(next_spirc);
+        spirc_task = tokio::spawn(next_task);
+        current_spirc.send_replace(Some(Arc::clone(&spirc)));
+        state.update(|current| {
+            current.lifecycle = Lifecycle::Ready;
+            current.error_code.clear();
+            current.error.clear();
+            true
+        });
+        log::info!("reconnected the librespot session");
+    }
+}
+
+fn record_reconnect(attempts: &mut VecDeque<Instant>, now: Instant) -> bool {
+    while attempts
+        .front()
+        .is_some_and(|attempt| now.saturating_duration_since(*attempt) >= RECONNECT_WINDOW)
+    {
+        attempts.pop_front();
+    }
+    if attempts.len() >= RECONNECT_LIMIT {
+        return false;
+    }
+    attempts.push_back(now);
+    true
 }
 
 fn open_runtime_cache(config: &BackendConfig) -> Result<Cache> {
@@ -179,13 +305,19 @@ fn load_credentials(credentials_root: &Path, legacy_cache_root: &Path) -> Result
 
 async fn run_commands(
     mut receiver: mpsc::Receiver<EngineRequest>,
-    spirc: Arc<Spirc>,
+    current_spirc: watch::Receiver<Option<Arc<Spirc>>>,
     player: Arc<Player>,
 ) {
     while let Some(request) = receiver.recv().await {
-        let result = execute(&spirc, &player, request.command)
-            .map(|()| serde_json::json!({}))
-            .map_err(|error| ProtocolError::new("engine_error", error.to_string()));
+        let result = match current_spirc.borrow().clone() {
+            Some(spirc) => execute(&spirc, &player, request.command)
+                .map(|()| serde_json::json!({}))
+                .map_err(|error| ProtocolError::new("engine_error", error.to_string())),
+            None => Err(ProtocolError::new(
+                "engine_reconnecting",
+                "playback is reconnecting to Spotify",
+            )),
+        };
         if let Some(reply) = request.reply {
             let _ = reply.send(result);
         }
@@ -313,6 +445,16 @@ fn replace_if_changed<T: PartialEq>(target: &mut T, value: T) -> bool {
     }
 }
 
+fn replace_error(
+    state: &mut crate::protocol::BackendState,
+    code: &str,
+    message: impl Into<String>,
+) -> bool {
+    let mut changed = replace_if_changed(&mut state.error_code, code.to_string());
+    changed |= replace_if_changed(&mut state.error, message.into());
+    changed
+}
+
 fn apply_event(state: &mut crate::protocol::BackendState, event: PlayerEvent) -> bool {
     match event {
         PlayerEvent::Stopped { .. } => {
@@ -326,7 +468,10 @@ fn apply_event(state: &mut crate::protocol::BackendState, event: PlayerEvent) ->
             // Initial loads still expose Loading until audio actually starts.
             let playback_changed = state.playback == PlaybackStatus::Stopped
                 && replace_if_changed(&mut state.playback, PlaybackStatus::Loading);
-            replace_if_changed(&mut state.position_ms, position_ms) || playback_changed
+            let mut changed =
+                replace_if_changed(&mut state.position_ms, position_ms) || playback_changed;
+            changed |= replace_error(state, "", "");
+            changed
         }
         PlayerEvent::Playing { position_ms, .. } => {
             let playback_changed = replace_if_changed(&mut state.playback, PlaybackStatus::Playing);
@@ -336,9 +481,15 @@ fn apply_event(state: &mut crate::protocol::BackendState, event: PlayerEvent) ->
             let playback_changed = replace_if_changed(&mut state.playback, PlaybackStatus::Paused);
             replace_if_changed(&mut state.position_ms, position_ms) || playback_changed
         }
-        PlayerEvent::Unavailable { track_id, .. } => replace_if_changed(
-            &mut state.error,
+        PlayerEvent::Unavailable { track_id, .. } => replace_error(
+            state,
+            "",
             format!("track unavailable: {}", track_id.to_uri()),
+        ),
+        PlayerEvent::AudioKeyUnavailable { .. } => replace_error(
+            state,
+            AUDIO_KEY_UNAVAILABLE_CODE,
+            AUDIO_KEY_UNAVAILABLE_MESSAGE,
         ),
         PlayerEvent::VolumeChanged { volume } => replace_if_changed(&mut state.volume, volume),
         PlayerEvent::PositionCorrection { position_ms, .. }
@@ -353,7 +504,7 @@ fn apply_event(state: &mut crate::protocol::BackendState, event: PlayerEvent) ->
         PlayerEvent::TrackChanged { audio_item } => {
             let mut changed =
                 replace_if_changed(&mut state.track, Some(track_from_audio_item(&audio_item)));
-            changed |= replace_if_changed(&mut state.error, String::new());
+            changed |= replace_error(state, "", "");
             changed
         }
         PlayerEvent::SessionConnected { user_name, .. } => {
@@ -598,5 +749,48 @@ mod tests {
         assert!(send_without_reply(&commands, Command::Play).is_ok());
         let error = send_without_reply(&commands, Command::Pause).unwrap_err();
         assert_eq!(error.code, "engine_busy");
+    }
+
+    #[test]
+    fn audio_key_rejection_is_distinct_and_clears_on_the_next_load() {
+        let mut state = BackendState::default();
+        assert!(apply_event(
+            &mut state,
+            PlayerEvent::AudioKeyUnavailable {
+                play_request_id: 1,
+                track_id: test_uri(),
+            },
+        ));
+        assert_eq!(state.error_code, AUDIO_KEY_UNAVAILABLE_CODE);
+        assert_eq!(state.error, AUDIO_KEY_UNAVAILABLE_MESSAGE);
+
+        assert!(apply_event(
+            &mut state,
+            PlayerEvent::Loading {
+                play_request_id: 2,
+                track_id: test_uri(),
+                position_ms: 0,
+            },
+        ));
+        assert!(state.error_code.is_empty());
+        assert!(state.error.is_empty());
+    }
+
+    #[test]
+    fn reconnect_budget_expires_old_attempts_and_rejects_bursts() {
+        let start = Instant::now();
+        let mut attempts = VecDeque::new();
+
+        for offset in 0..RECONNECT_LIMIT {
+            assert!(record_reconnect(
+                &mut attempts,
+                start + Duration::from_secs(offset as u64)
+            ));
+        }
+        assert!(!record_reconnect(
+            &mut attempts,
+            start + Duration::from_secs(RECONNECT_LIMIT as u64)
+        ));
+        assert!(record_reconnect(&mut attempts, start + RECONNECT_WINDOW));
     }
 }

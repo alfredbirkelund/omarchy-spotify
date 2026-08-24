@@ -1386,7 +1386,7 @@ dependencies = [
 [[package]]
 name = "librespot-audio"
 version = "0.8.0"
-source = "git+https://github.com/stappmus/librespot?rev=9d9bf78c5a4b5e67348a7521145682ce13269dee#9d9bf78c5a4b5e67348a7521145682ce13269dee"
+source = "git+https://github.com/stappmus/librespot?rev=6d3ecd76115c08a5e606d6f6d2181932314afed2#6d3ecd76115c08a5e606d6f6d2181932314afed2"
 dependencies = [
  "aes",
  "bytes",
@@ -1405,7 +1405,7 @@ dependencies = [
 [[package]]
 name = "librespot-connect"
 version = "0.8.0"
-source = "git+https://github.com/stappmus/librespot?rev=9d9bf78c5a4b5e67348a7521145682ce13269dee#9d9bf78c5a4b5e67348a7521145682ce13269dee"
+source = "git+https://github.com/stappmus/librespot?rev=6d3ecd76115c08a5e606d6f6d2181932314afed2#6d3ecd76115c08a5e606d6f6d2181932314afed2"
 dependencies = [
  "futures-util",
  "librespot-core",
@@ -1424,7 +1424,7 @@ dependencies = [
 [[package]]
 name = "librespot-core"
 version = "0.8.0"
-source = "git+https://github.com/stappmus/librespot?rev=9d9bf78c5a4b5e67348a7521145682ce13269dee#9d9bf78c5a4b5e67348a7521145682ce13269dee"
+source = "git+https://github.com/stappmus/librespot?rev=6d3ecd76115c08a5e606d6f6d2181932314afed2#6d3ecd76115c08a5e606d6f6d2181932314afed2"
 dependencies = [
  "aes",
  "base64",
@@ -1481,7 +1481,7 @@ dependencies = [
 [[package]]
 name = "librespot-metadata"
 version = "0.8.0"
-source = "git+https://github.com/stappmus/librespot?rev=9d9bf78c5a4b5e67348a7521145682ce13269dee#9d9bf78c5a4b5e67348a7521145682ce13269dee"
+source = "git+https://github.com/stappmus/librespot?rev=6d3ecd76115c08a5e606d6f6d2181932314afed2#6d3ecd76115c08a5e606d6f6d2181932314afed2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1498,7 +1498,7 @@ dependencies = [
 [[package]]
 name = "librespot-oauth"
 version = "0.8.0"
-source = "git+https://github.com/stappmus/librespot?rev=9d9bf78c5a4b5e67348a7521145682ce13269dee#9d9bf78c5a4b5e67348a7521145682ce13269dee"
+source = "git+https://github.com/stappmus/librespot?rev=6d3ecd76115c08a5e606d6f6d2181932314afed2#6d3ecd76115c08a5e606d6f6d2181932314afed2"
 dependencies = [
  "log",
  "oauth2",
@@ -1511,7 +1511,7 @@ dependencies = [
 [[package]]
 name = "librespot-playback"
 version = "0.8.0"
-source = "git+https://github.com/stappmus/librespot?rev=9d9bf78c5a4b5e67348a7521145682ce13269dee#9d9bf78c5a4b5e67348a7521145682ce13269dee"
+source = "git+https://github.com/stappmus/librespot?rev=6d3ecd76115c08a5e606d6f6d2181932314afed2#6d3ecd76115c08a5e606d6f6d2181932314afed2"
 dependencies = [
  "form_urlencoded",
  "futures-util",
@@ -1534,7 +1534,7 @@ dependencies = [
 [[package]]
 name = "librespot-protocol"
 version = "0.8.0"
-source = "git+https://github.com/stappmus/librespot?rev=9d9bf78c5a4b5e67348a7521145682ce13269dee#9d9bf78c5a4b5e67348a7521145682ce13269dee"
+source = "git+https://github.com/stappmus/librespot?rev=6d3ecd76115c08a5e606d6f6d2181932314afed2#6d3ecd76115c08a5e606d6f6d2181932314afed2"
 dependencies = [
  "protobuf",
  "protobuf-codegen",

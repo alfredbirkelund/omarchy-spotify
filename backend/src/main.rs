@@ -108,8 +108,9 @@ async fn run(config: BackendConfig, socket_path: PathBuf) -> Result<()> {
             signal.context("failed to wait for termination signal")?;
         }
         _ = requested_shutdown.changed() => {}
-        _ = runtime.wait_done() => {
-            anyhow::bail!("librespot session ended unexpectedly");
+        result = runtime.wait_done() => {
+            result.context("librespot engine stopped")?;
+            anyhow::bail!("librespot engine stopped unexpectedly");
         }
         result = &mut mpris_task => {
             match result {

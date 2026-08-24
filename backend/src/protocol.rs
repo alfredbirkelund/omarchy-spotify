@@ -114,6 +114,8 @@ pub struct BackendState {
     pub shuffle: bool,
     pub repeat: RepeatMode,
     pub generation: u64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub error_code: String,
     pub error: String,
     #[serde(skip)]
     pub seek_sequence: u64,
@@ -136,6 +138,7 @@ impl Default for BackendState {
             shuffle: false,
             repeat: RepeatMode::Off,
             generation: 0,
+            error_code: String::new(),
             error: String::new(),
             seek_sequence: 0,
         }
@@ -234,6 +237,25 @@ mod tests {
         assert_eq!(value["type"], "event");
         assert_eq!(value["v"], 1);
         assert_eq!(value["state"]["engine"], "librespot");
+        assert!(value["state"].get("error_code").is_none());
         assert!(value["state"].get("seek_sequence").is_none());
+    }
+
+    #[test]
+    fn state_event_includes_machine_readable_errors() {
+        let state = BackendState {
+            error_code: "audio_key_unavailable".to_string(),
+            error: "Try another Spotify Connect device".to_string(),
+            ..BackendState::default()
+        };
+        let value = serde_json::to_value(ServerMessage::Event {
+            v: PROTOCOL_VERSION,
+            event: "state_changed",
+            state: &state,
+        })
+        .unwrap();
+
+        assert_eq!(value["state"]["error_code"], "audio_key_unavailable");
+        assert_eq!(value["state"]["error"], state.error);
     }
 }

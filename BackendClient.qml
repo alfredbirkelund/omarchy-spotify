@@ -19,6 +19,8 @@ Item {
   readonly property bool connected: !!(activeSocket && activeSocket.connected)
   property string lifecycle: ""
   property bool sessionConnected: false
+  property string errorCode: ""
+  property string errorMessage: ""
   property var lastState: null
   property int nextId: 1
   property var pending: ({})
@@ -79,6 +81,8 @@ Item {
       lastState = message.state
       lifecycle = String(message.state.lifecycle || "")
       sessionConnected = message.state.session_connected === true
+      errorMessage = Api.redact(String(message.state.error || ""))
+      errorCode = String(message.state.error_code || "")
       stateReceived(message.state)
       return
     }
@@ -104,6 +108,8 @@ Item {
     socketLoader.active = false
     lifecycle = ""
     sessionConnected = false
+    errorCode = ""
+    errorMessage = ""
     lastState = null
     reconnectAttempt = 0
     resetPending("Playback on this computer stopped")
