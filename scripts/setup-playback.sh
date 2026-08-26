@@ -3,8 +3,8 @@ set -euo pipefail
 
 source_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 
-# Plugin installs intentionally do not run hooks. Prefer the plugin-owned
-# backend, and retain the official Arch spotifyd package as a no-build fallback.
+# Plugin installs intentionally do not run hooks. Prefer the verified or
+# source-built plugin backend, and retain Arch spotifyd as a no-build fallback.
 set +e
 "$source_root/scripts/setup.sh"
 setup_status=$?

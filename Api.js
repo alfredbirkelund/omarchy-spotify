@@ -116,7 +116,8 @@ function parseJson(text, fallback) {
   }
 }
 
-function barTrackText(title, artist, showTitle, showArtist) {
+function barTrackText(title, artist, showTitle, showArtist, playing) {
+  if (playing !== true) return ""
   var cleanTitle = String(title || "").trim()
   var cleanArtist = String(artist || "").trim()
   var parts = []

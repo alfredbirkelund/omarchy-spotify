@@ -11,7 +11,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/setup.sh [--install-spotifyd] [--skip-backend-build] [--force-config] [--device-name NAME]
 
-Build and install the plugin-owned playback backend and its static user unit.
+Verify or build the plugin-owned playback backend and install its user unit.
 spotifyd remains an optional fallback. Neither unit is enabled at login.
 EOF
 }
@@ -55,7 +55,7 @@ if (( install_spotifyd )) && ! command -v spotifyd >/dev/null 2>&1; then
   sudo pacman -S --needed spotifyd
 fi
 
-for command_name in secret-tool openssl socat xdg-open systemctl awk install python3 avahi-browse; do
+for command_name in secret-tool openssl socat xdg-open systemctl awk cmp install python3 avahi-browse sha256sum; do
   command -v "$command_name" >/dev/null 2>&1 || {
     echo "setup.sh: required Omarchy base command is missing: $command_name" >&2
     exit 1
@@ -75,12 +75,38 @@ backend_unit_file="$unit_dir/omarchy-spotify.service"
 fallback_unit_file="$unit_dir/omarchy-spotifyd.service"
 
 backend_binary=${OMARCHY_SPOTIFY_RUNTIME_DIR:-"$HOME/.local/lib/omarchy-spotify"}/omarchy-spotify-backend
+runtime_dir=$(dirname -- "$backend_binary")
+backend_source_id_file="$runtime_dir/backend-source.sha256"
+backend_binary_hash_file="$runtime_dir/backend-binary.sha256"
 backend_ready=0
-if [[ -x $backend_binary ]]; then
+backend_changed=0
+unit_changed=0
+
+backend_install_is_current() {
+  local current_source_id expected_source_id expected_binary_hash actual_binary_hash
+
+  [[ -x $backend_binary && -s $backend_source_id_file \
+    && -s $backend_binary_hash_file ]] || return 1
+  current_source_id=$("$source_root/scripts/backend-source-id.sh") || return 1
+  expected_source_id=$(<"$backend_source_id_file")
+  [[ $expected_source_id == "$current_source_id" ]] || return 1
+  expected_binary_hash=$(<"$backend_binary_hash_file")
+  [[ $expected_binary_hash =~ ^[0-9a-f]{64}$ ]] || return 1
+  actual_binary_hash=$(sha256sum -- "$backend_binary") || return 1
+  [[ ${actual_binary_hash%% *} == "$expected_binary_hash" ]]
+}
+
+backend_was_active=0
+if systemctl --user is-active --quiet omarchy-spotify.service 2>/dev/null; then
+  backend_was_active=1
+fi
+
+if backend_install_is_current; then
   backend_ready=1
 elif (( ! skip_backend_build )); then
   if "$source_root/scripts/build-backend.sh"; then
     backend_ready=1
+    backend_changed=1
   else
     echo "Warning: the plugin-owned backend could not be built; checking spotifyd fallback." >&2
   fi
@@ -108,12 +134,20 @@ fi
 
 printf '%s\n' "$device_name" | "$source_root/scripts/configure-spotifyd.sh"
 if (( backend_ready )); then
+  if [[ ! -f $backend_unit_file ]] \
+      || ! cmp -s -- "$source_root/systemd/omarchy-spotify.service" "$backend_unit_file"; then
+    unit_changed=1
+  fi
   install -m 644 -- "$source_root/systemd/omarchy-spotify.service" "$backend_unit_file"
 fi
 if command -v spotifyd >/dev/null 2>&1; then
   install -m 644 -- "$source_root/systemd/omarchy-spotifyd.service" "$fallback_unit_file"
 fi
 systemctl --user daemon-reload
+
+if (( backend_ready && backend_was_active && (backend_changed || unit_changed) )); then
+  systemctl --user restart omarchy-spotify.service
+fi
 
 for unit_name in omarchy-spotify.service omarchy-spotifyd.service; do
   unit_state=$(systemctl --user is-enabled "$unit_name" 2>/dev/null || true)

@@ -6335,7 +6335,7 @@ Item {
                   text: "Title · " + (root.draftShowTitle ? "On" : "Off")
                   foreground: root.foreground
                   selected: root.draftShowTitle
-                  tooltipText: "Show the song title in the top bar"
+                  tooltipText: "Show the song title in the top bar while playing"
                   onClicked: {
                     root.draftShowTitle = !root.draftShowTitle
                     root.enforceScrollAvailability()
@@ -6346,7 +6346,7 @@ Item {
                   text: "Artist · " + (root.draftShowArtist ? "On" : "Off")
                   foreground: root.foreground
                   selected: root.draftShowArtist
-                  tooltipText: "Show the artist name in the top bar"
+                  tooltipText: "Show the artist name in the top bar while playing"
                   onClicked: {
                     root.draftShowArtist = !root.draftShowArtist
                     root.enforceScrollAvailability()

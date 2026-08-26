@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "quickshell.spotify",
   "name": "Omarchy Spotify",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": "QuickshellSpotify",
   "license": "MIT",
   "description": "Spotify in Quickshell with all the features you need—using about 60 MB of memory versus roughly 950 MB for the official client.",
@@ -101,7 +101,8 @@
           "On",
           "Off"
         ],
-        "defaultValue": "On"
+        "defaultValue": "On",
+        "description": "Shown only while music is playing. The bar returns to the Spotify icon when paused."
       },
       {
         "key": "showArtistName",
@@ -111,7 +112,8 @@
           "On",
           "Off"
         ],
-        "defaultValue": "Off"
+        "defaultValue": "Off",
+        "description": "Shown only while music is playing. The bar returns to the Spotify icon when paused."
       },
       {
         "key": "scrollBarText",

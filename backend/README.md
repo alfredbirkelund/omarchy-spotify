@@ -19,6 +19,14 @@ stops cleanly when Spotify refuses an audio key instead of skipping through the
 queue. Updating the revision requires the full test suite and a live switch
 test; a floating branch is intentionally never used.
 
+Release tags build the backend on GitHub-hosted native runners with a pinned
+Rust toolchain and immutable action revisions. GitHub records build-provenance
+attestations for the exact raw executables. The installer accepts a release
+binary only when `gh attestation verify` binds it to this repository, the
+release workflow, the exact version tag, and the checkout's source commit.
+Checksums committed beside a binary are deliberately not treated as source
+provenance, and no ELF executable is stored in this repository.
+
 The production process uses a current-thread Tokio control runtime. Librespot's
 separate blocking player runtime is capped at two workers by the systemd unit;
 one worker was deliberately not used because fetching, preloading, and decoding
@@ -49,15 +57,18 @@ Build and verify from the repository root:
 cargo fmt --manifest-path backend/Cargo.toml --all -- --check
 cargo test --manifest-path backend/Cargo.toml --locked
 cargo clippy --manifest-path backend/Cargo.toml --locked --all-targets -- -D warnings
-./scripts/build-backend.sh
+OMARCHY_SPOTIFY_BUILD_FROM_SOURCE=1 ./scripts/build-backend.sh
 ```
 
-`scripts/build-backend.sh` compiles to `$XDG_CACHE_HOME/omarchy-spotify/target`
-(override with `CARGO_TARGET_DIR`). Omarchy hot-reloads plugins on any write
-inside their directory, so building to a cache path outside the plugin prevents
-the shell's recursive watcher from reloading the plugin and killing the build.
+By default, `scripts/build-backend.sh` first tries the exact-commit attested
+release. `OMARCHY_SPOTIFY_BUILD_FROM_SOURCE=1` forces an auditable local build
+into `$XDG_CACHE_HOME/omarchy-spotify/target` (override with
+`CARGO_TARGET_DIR`). Omarchy hot-reloads plugins on any write inside their
+directory, so building to a cache path outside the plugin prevents the shell's
+recursive watcher from reloading the plugin and killing the build.
 
 See [the protocol reference](../docs/BACKEND_PROTOCOL.md) for the compatibility
-contract. The legacy `omarchy-spotifyd.service` remains installable as a
+contract and [release process](../docs/RELEASING.md) for the artifact-provenance
+requirements. The legacy `omarchy-spotifyd.service` remains installable as a
 fallback and conflicts with the primary unit so two local receivers cannot run
 accidentally with the same device identity.

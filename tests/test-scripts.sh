@@ -5,11 +5,12 @@ source_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 test_root=$(mktemp -d)
 trap 'rm -rf -- "$test_root"' EXIT
 
-# Plugin releases must carry the backend because Omarchy does not run install
-# hooks while cloning a plugin and end users should not need a Rust toolchain.
-release_arch=$(uname -m)
-release_backend="$source_root/backend/dist/$release_arch/omarchy-spotify-backend"
-[[ -x $release_backend ]]
+# Release executables are published separately with exact-commit build
+# provenance. The reviewed source snapshot must not contain an opaque ELF.
+[[ ! -e $source_root/backend/dist/$(uname -m)/omarchy-spotify-backend ]]
+[[ -f $source_root/.github/workflows/release-backend.yml ]]
+backend_source_id=$($source_root/scripts/backend-source-id.sh)
+[[ $backend_source_id =~ ^[0-9a-f]{64}$ ]]
 
 pkce_output=$("$source_root/scripts/pkce.sh")
 IFS=$'\t' read -r verifier challenge state <<<"$pkce_output"
@@ -63,20 +64,30 @@ runtime_config="$test_root/runtime-config"
 runtime_cache="$test_root/runtime-cache"
 runtime_state="$test_root/runtime-state"
 runtime_backend="$test_root/runtime-backend"
+mock_target="$test_root/mock-target"
 secret_log="$test_root/secret-tool.log"
+systemctl_log="$test_root/systemctl.log"
 mkdir -p "$mock_bin" "$runtime_config" "$runtime_cache" "$runtime_state" "$runtime_backend"
 
 printf '%s\n' '#!/bin/sh' 'exit 0' >"$mock_bin/spotifyd"
 printf '%s\n' \
   '#!/bin/sh' \
+  'mkdir -p "${CARGO_TARGET_DIR:?}/release"' \
+  'printf "%s\n" "mock source-built backend" >"$CARGO_TARGET_DIR/release/omarchy-spotify-backend"' \
+  'chmod 755 "$CARGO_TARGET_DIR/release/omarchy-spotify-backend"' \
+  'exit 0' >"$mock_bin/cargo"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'if [ -n "${TEST_SYSTEMCTL_LOG:-}" ]; then printf "%s\n" "$*" >>"$TEST_SYSTEMCTL_LOG"; fi' \
   'if [ "${1:-}" = "--user" ]; then shift; fi' \
   'if [ "${1:-}" = "is-enabled" ]; then exit 1; fi' \
+  'if [ "${1:-}" = "is-active" ]; then [ "${TEST_SERVICE_ACTIVE:-0}" = 1 ]; exit; fi' \
   'exit 0' >"$mock_bin/systemctl"
 printf '%s\n' \
   '#!/bin/sh' \
   'printf "%s\n" "$*" >>"${TEST_SECRET_LOG:?}"' \
   'exit 1' >"$mock_bin/secret-tool"
-chmod 755 "$mock_bin/spotifyd" "$mock_bin/systemctl" "$mock_bin/secret-tool"
+chmod 755 "$mock_bin/cargo" "$mock_bin/spotifyd" "$mock_bin/systemctl" "$mock_bin/secret-tool"
 
 [[ -x $source_root/scripts/spotify-connect-device.py ]]
 "$source_root/scripts/spotify-connect-device.py" self-test |
@@ -123,17 +134,73 @@ OMARCHY_SPOTIFY_SKIP_BACKEND_BUILD=1 \
 [[ -f $runtime_spotify_config && -f $runtime_unit ]]
 grep -qx 'device_name = "Omarchy Spotify"' "$runtime_spotify_config"
 
-# A clean release install must prefer the bundled backend without Cargo or
-# package installation. This is the path used after an enabled plugin loads.
-rm -f -- "$runtime_backend/omarchy-spotify-backend"
+# A clean source install records both the reviewed backend-source fingerprint
+# and installed executable hash. The release path writes the same records only
+# after its exact-commit attestation succeeds.
+rm -f -- "$runtime_backend/omarchy-spotify-backend" \
+  "$runtime_backend/backend-source.sha256" \
+  "$runtime_backend/backend-binary.sha256" \
+  "$runtime_backend/backend-origin"
 PATH="$mock_bin:$PATH" \
 XDG_CONFIG_HOME="$runtime_config" \
 XDG_CACHE_HOME="$runtime_cache" \
 XDG_STATE_HOME="$runtime_state" \
 OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
+CARGO_TARGET_DIR="$mock_target" \
+OMARCHY_SPOTIFY_BUILD_FROM_SOURCE=1 \
   "$source_root/scripts/setup.sh" >/dev/null
 runtime_backend_unit="$runtime_config/systemd/user/omarchy-spotify.service"
 [[ -x $runtime_backend/omarchy-spotify-backend && -f $runtime_backend_unit ]]
+[[ $(<"$runtime_backend/backend-source.sha256") == "$backend_source_id" ]]
+installed_hash=$(sha256sum -- "$runtime_backend/omarchy-spotify-backend")
+[[ $(<"$runtime_backend/backend-binary.sha256") == "${installed_hash%% *}" ]]
+[[ $(<"$runtime_backend/backend-origin") == "source-build:$backend_source_id" ]]
+[[ $(stat -c '%a' "$runtime_backend/backend-source.sha256") == 600 ]]
+[[ $(stat -c '%a' "$runtime_backend/backend-binary.sha256") == 600 ]]
+
+# Existing installations must be checked against their recorded source and
+# binary hashes. Re-run setup when the executable or static unit is stale, then
+# restart an already-active backend so it immediately uses the replacement.
+printf '%s\n' 'stale backend' >"$runtime_backend/omarchy-spotify-backend"
+chmod 755 "$runtime_backend/omarchy-spotify-backend"
+printf '%s\n' 'stale unit' >"$runtime_backend_unit"
+selected_unit=$(PATH="$mock_bin:$PATH" \
+  XDG_CONFIG_HOME="$runtime_config" \
+  OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
+  "$source_root/scripts/playback-runtime.sh" unit)
+[[ $selected_unit == omarchy-spotifyd.service ]]
+
+: >"$systemctl_log"
+PATH="$mock_bin:$PATH" \
+XDG_CONFIG_HOME="$runtime_config" \
+XDG_CACHE_HOME="$runtime_cache" \
+XDG_STATE_HOME="$runtime_state" \
+OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
+CARGO_TARGET_DIR="$mock_target" \
+OMARCHY_SPOTIFY_BUILD_FROM_SOURCE=1 \
+TEST_SERVICE_ACTIVE=1 \
+TEST_SYSTEMCTL_LOG="$systemctl_log" \
+  "$source_root/scripts/setup.sh" >/dev/null
+installed_hash=$(sha256sum -- "$runtime_backend/omarchy-spotify-backend")
+source_build_hash=$(sha256sum -- "$mock_target/release/omarchy-spotify-backend")
+[[ ${installed_hash%% *} == "${source_build_hash%% *}" ]]
+cmp -s -- "$source_root/systemd/omarchy-spotify.service" "$runtime_backend_unit"
+PATH="$mock_bin:$PATH" \
+XDG_CONFIG_HOME="$runtime_config" \
+OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
+  "$source_root/scripts/playback-runtime.sh" check
+grep -qx -- '--user restart omarchy-spotify.service' "$systemctl_log"
+
+: >"$systemctl_log"
+PATH="$mock_bin:$PATH" \
+XDG_CONFIG_HOME="$runtime_config" \
+XDG_CACHE_HOME="$runtime_cache" \
+XDG_STATE_HOME="$runtime_state" \
+OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
+TEST_SERVICE_ACTIVE=1 \
+TEST_SYSTEMCTL_LOG="$systemctl_log" \
+  "$source_root/scripts/setup.sh" >/dev/null
+! grep -q -- '--user restart omarchy-spotify.service' "$systemctl_log"
 
 mkdir -p "$runtime_config/omarchy-spotify" "$runtime_cache/spotifyd"
 cp -- "$source_root/config/spotifyd.conf" "$runtime_config/omarchy-spotify/spotifyd.conf"
@@ -147,6 +214,10 @@ TEST_SECRET_LOG="$secret_log" \
 
 [[ ! -e $runtime_config/omarchy-spotify && ! -e $runtime_cache/spotifyd ]]
 [[ ! -e $runtime_state/omarchy-spotify ]]
+[[ ! -e $runtime_backend/omarchy-spotify-backend ]]
+[[ ! -e $runtime_backend/backend-source.sha256 ]]
+[[ ! -e $runtime_backend/backend-binary.sha256 ]]
+[[ ! -e $runtime_backend/backend-origin ]]
 grep -q 'clear service quickshell-spotify kind refresh-token' "$secret_log"
 
 mkdir -p "$runtime_state/omarchy-spotify/oauth" "$runtime_cache/spotifyd/oauth"
@@ -209,6 +280,7 @@ PATH="$mock_bin:$PATH" \
 
 grep -qx 'umask 077' "$source_root/scripts/spotifyd-auth.sh"
 [[ -x $source_root/scripts/setup-playback.sh ]]
+[[ -x $source_root/scripts/backend-source-id.sh ]]
 grep -q 'pkexec /usr/bin/pacman -S --needed --noconfirm spotifyd' \
   "$source_root/scripts/setup-playback.sh"
 ! grep -q 'sudo' "$source_root/scripts/setup-playback.sh"
@@ -225,7 +297,19 @@ grep -q 'readonly property string redirectUri: "http://127.0.0.1:"' \
 ! grep -q '"clientId"' "$source_root/manifest.json"
 ! grep -q '"oauthPort"' "$source_root/manifest.json"
 grep -q 'window.close()' "$source_root/OAuth.js"
-jq -e '.version == "1.0.2"
+grep -q 'gh attestation verify' "$source_root/scripts/build-backend.sh"
+grep -q -- '--cert-identity' "$source_root/scripts/build-backend.sh"
+grep -q -- '--source-ref' "$source_root/scripts/build-backend.sh"
+grep -q -- '--source-digest' "$source_root/scripts/build-backend.sh"
+grep -q -- '--deny-self-hosted-runners' "$source_root/scripts/build-backend.sh"
+! grep -q 'ALLOW_UNVERIFIED' "$source_root/scripts/build-backend.sh"
+if grep -E '^[[:space:]]*uses:' \
+    "$source_root/.github/workflows/release-backend.yml" \
+    | grep -Ev '@[0-9a-f]{40}([[:space:]]+#.*)?$'; then
+  echo "release-backend.yml contains a mutable action reference" >&2
+  exit 1
+fi
+jq -e '.version == "1.0.3"
   and .barWidget.defaultSection == "left"
   and .barWidget.defaults.showMiniPlayer == "On"
   and (.barWidget.schema[] | select(.key == "showMiniPlayer").defaultValue) == "On"

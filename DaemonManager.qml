@@ -78,10 +78,10 @@ Item {
   }
 
   // Omarchy deliberately does not execute install hooks while cloning a
-  // plugin. Once this enabled plugin is loaded, install its bundled backend
-  // into the user's runtime directory. This is unprivileged and also migrates
-  // older installations that previously selected the spotifyd fallback.
-  function installBundledBackendIfNeeded() {
+  // plugin. Once this enabled plugin is loaded, install its verified release
+  // backend into the user's runtime directory. The readiness check also
+  // rejects a stale binary or unit, so plugin updates replace older installs.
+  function installPlaybackBackendIfNeeded() {
     if (automaticSetupAttempted || setupBusy || !pluginDir
         || !requirementsChecked) return
     if (playbackReady && !usingFallbackRuntime) return
@@ -274,7 +274,7 @@ Item {
     onExited: function(exitCode) {
       root.binaryAvailable = exitCode === 0
       root.binaryChecked = true
-      root.installBundledBackendIfNeeded()
+      root.installPlaybackBackendIfNeeded()
     }
   }
 
@@ -290,7 +290,7 @@ Item {
       root.usingFallbackRuntime = exitCode === 0
         && unit === "omarchy-spotifyd.service"
       if (exitCode === 0) root.requestConfiguration()
-      root.installBundledBackendIfNeeded()
+      root.installPlaybackBackendIfNeeded()
     }
   }
 
@@ -301,14 +301,12 @@ Item {
     onExited: function(exitCode) {
       root.setupBusy = false
       if (exitCode === 0) {
+        root.lastError = ""
         root.binaryAvailable = true
         root.binaryChecked = true
         root.unitAvailable = true
         root.unitChecked = true
-        root.usingFallbackRuntime = false
-        root.unitName = "omarchy-spotify.service"
-        root.lastError = ""
-        root.requestConfiguration()
+        root.checkRequirements()
         root.refreshStatus()
         root.setupSucceeded()
         return

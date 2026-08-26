@@ -51,17 +51,27 @@ or speaker tuning.
 
 - Omarchy 4 with the Quickshell shell enabled
 - Spotify Premium
-- the bundled plugin backend, or `spotifyd` 0.4.2 or newer as fallback
+- the exact-commit attested plugin backend, a local source build, or `spotifyd`
+  0.4.2 or newer as fallback
 - Omarchy base tools: `secret-tool`, `openssl`, `socat`, `xdg-open`, `wl-copy`,
   `avahi-browse`, `systemctl`, and Python 3
 
+The verified-release fast path also uses `curl` and GitHub CLI when available;
+neither is trusted as a bypass when provenance verification cannot complete.
+
 Omarchy's plugin installer deliberately clones and validates plugins without
-running install hooks or privileged code. The enabled plugin therefore installs
-its bundled backend on first load, using only unprivileged user-level files.
-Release builds include the `x86_64` backend so users never need Cargo. A source
-checkout can still build it with Cargo; `spotifyd` is retained only as a
-last-resort fallback when neither backend is available. Configuration and user
-units need no privilege.
+running install hooks or privileged code. The enabled plugin therefore prepares
+local playback on first load. It downloads the raw backend for the current
+architecture from the matching version tag, checks the release checksum, then
+requires GitHub's signed build provenance to match this repository, the pinned
+release workflow, the exact tag and checked-out commit, and a GitHub-hosted
+runner. A same-release checksum alone is never accepted as provenance.
+
+If `gh` is unavailable or any download, checksum, identity, or attestation
+check fails, the artifact is not executed. Setup instead builds `Cargo.lock`
+from the reviewed source with the available Cargo when present, or offers the
+official Arch `spotifyd` package as the last-resort fallback. Configuration,
+verified downloads, local builds, and user units themselves need no privilege.
 
 Omarchy treats any write inside a plugin directory as a change to the plugin and
 hot-reloads it, so the backend is compiled to

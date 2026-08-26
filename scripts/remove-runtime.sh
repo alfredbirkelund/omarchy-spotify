@@ -21,10 +21,14 @@ cache_dir="$cache_root/spotifyd"
 state_dir="$state_root/omarchy-spotify"
 runtime_dir=${OMARCHY_SPOTIFY_RUNTIME_DIR:-"$HOME/.local/lib/omarchy-spotify"}
 backend_binary="$runtime_dir/omarchy-spotify-backend"
+backend_source_id_file="$runtime_dir/backend-source.sha256"
+backend_binary_hash_file="$runtime_dir/backend-binary.sha256"
+backend_origin_file="$runtime_dir/backend-origin"
 
 systemctl --user stop omarchy-spotify.service 2>/dev/null || true
 systemctl --user stop omarchy-spotifyd.service 2>/dev/null || true
-rm -f -- "$backend_unit_file" "$fallback_unit_file" "$backend_binary"
+rm -f -- "$backend_unit_file" "$fallback_unit_file" "$backend_binary" \
+  "$backend_source_id_file" "$backend_binary_hash_file" "$backend_origin_file"
 systemctl --user daemon-reload
 
 if [[ -d $config_dir ]]; then

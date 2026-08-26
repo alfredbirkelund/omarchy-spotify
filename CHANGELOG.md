@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 1.0.3 — 2026-08-26
+
+- Download playback backends only from an exact-tag GitHub release whose raw
+  executable has build provenance for the checked-out source commit. Verify
+  its checksum, workflow identity, source ref and digest, and GitHub-hosted
+  runner before installation; otherwise build the locked Rust source locally
+  or use the packaged spotifyd fallback.
+- Replace stale or modified installed playback backends when their recorded
+  source or binary checksum changes, and refresh changed user units on plugin
+  startup. Stop committing opaque ELF executables to the plugin repository.
+
+- Hide the track title and artist from the bar while playback is paused, leaving
+  only the Spotify icon visible.
 
 - Reconnect a closed librespot session inside the existing backend process, so
   transient Spotify connection closures no longer tear down the local socket

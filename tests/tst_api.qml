@@ -12,17 +12,22 @@ TestCase {
   }
 
   function test_barTrackText_respectsIndependentTitleAndArtistSettings() {
-    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, false),
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, false, true),
       "Blue in Green")
-    compare(Api.barTrackText("Blue in Green", "Miles Davis", false, true),
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", false, true, true),
       "Miles Davis")
-    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, true),
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, true, true),
       "Miles Davis - Blue in Green")
-    compare(Api.barTrackText("Blue in Green", "Miles Davis", false, false), "")
-    compare(Api.barTrackText("  Blue in Green  ", "  Miles Davis  ", true, true),
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", false, false, true), "")
+    compare(Api.barTrackText("  Blue in Green  ", "  Miles Davis  ", true, true,
+      true),
       "Miles Davis - Blue in Green")
-    compare(Api.barTrackText("Blue in Green", "", true, true), "Blue in Green")
-    compare(Api.barTrackText("", "Miles Davis", true, true), "Miles Davis")
+    compare(Api.barTrackText("Blue in Green", "", true, true, true), "Blue in Green")
+    compare(Api.barTrackText("", "Miles Davis", true, true, true), "Miles Davis")
+  }
+
+  function test_barTrackText_isHiddenWhilePaused() {
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, true, false), "")
   }
 
   function test_scrollAvailability_requiresAtLeastOneBarLabel() {
