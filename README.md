@@ -125,6 +125,53 @@ packaged `spotifyd` fallback instead of executing an unverified download.
 
 > Requires Omarchy 4 and a personal Spotify Premium account.
 
+## Remove it completely
+
+Run the bundled uninstaller from outside the plugin directory:
+
+```bash
+cd "$HOME" && "$HOME/.config/omarchy/plugins/quickshell.spotify/scripts/uninstall.sh"
+```
+
+It disables and removes the plugin, stops and removes both user services,
+restarts the shell, and deletes all plugin-owned configuration, cached audio,
+backend build files, installed binaries, playback state, runtime sockets, old
+configuration backups, and matching GNOME Keyring entries.
+
+If you prefer to inspect and paste the main steps individually:
+
+```bash
+plugin_dir="$HOME/.config/omarchy/plugins/quickshell.spotify"
+cd "$HOME"
+omarchy plugin disable quickshell.spotify 2>/dev/null || true
+"$plugin_dir/scripts/remove-runtime.sh" --purge
+omarchy plugin remove quickshell.spotify --yes
+omarchy restart shell
+```
+
+The cleanup deliberately leaves unrelated software alone. A source checkout
+outside Omarchy's plugin directory, separate plugins such as Omasing, and the
+`spotifyd` package remain in place. If this plugin was the only reason you
+installed the fallback package, remove it with:
+
+```bash
+omarchy pkg drop spotifyd
+```
+
+Very old installation instructions may also have added a custom Hyprland
+shortcut. The uninstaller reports any such references without rewriting your
+personal configuration. Check both the live config and, when applicable, its
+chezmoi source:
+
+```bash
+rg -n 'quickshell\.spotify|Omarchy Spotify' \
+  "$HOME/.config/hypr" "$HOME/.local/share/chezmoi" 2>/dev/null
+```
+
+Remove only the matching custom lines, apply the dotfiles change, and run
+`hyprctl reload`. Omarchy's stock **Super+Shift+M** Music shortcut will then be
+used again.
+
 ## More music, less app
 
 - Discover Weekly, Release Radar, Daily Mixes, daylist, and more in **Discover**.
