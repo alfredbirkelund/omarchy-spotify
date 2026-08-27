@@ -52,12 +52,12 @@
       {
         "key": "idleShutdownMinutes",
         "type": "integer",
-        "label": "Stop local playback when idle",
+        "label": "Sleep empty local receiver",
         "min": 0,
         "max": 1440,
         "step": 5,
         "defaultValue": 15,
-        "description": "Minutes after the player closes. Use 0 to keep this computer available even while the player is closed."
+        "description": "Minutes after the player closes when no media is loaded. Paused media stays available to resume. Use 0 to keep this computer available even while the player is closed."
       },
       {
         "key": "showMiniPlayer",
