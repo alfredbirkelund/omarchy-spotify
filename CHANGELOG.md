@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Apply volume while the volume slider is dragged, in both the bar popup and the
+  player, instead of waiting for the mouse release. Commands are coalesced per
+  backend: 80 ms for local spotifyd, 250 ms for Spotify Connect devices so the
+  Web API is not rate limited, and 120 ms retries for a Sonos whose helper is
+  still busy, so the released position is always the volume that lands. Playback
+  state is refetched once the drag settles rather than after every command.
+- Remember the pre-mute level when the bar popup volume slider is used, so `M`
+  restores the dragged volume.
+
 ## 1.0.3 — 2026-08-26
 
 - Download playback backends only from an exact-tag GitHub release whose raw

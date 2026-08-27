@@ -104,6 +104,9 @@ Item {
   property bool volumeFlushQueued: false
   property real queuedVolumeSlider: 0
   property bool volumeFlushCooling: false
+  // True while a slider drag keeps feeding values. Playback state is refetched
+  // once the drag settles instead of after every command.
+  property bool volumeLiveActive: false
   property int remoteControlSerial: 0
   readonly property int remoteControlGraceMs: 8000
   property string remoteVolumeProbeKey: ""
@@ -203,7 +206,9 @@ Item {
     clearPendingSliderVolume()
     volumeFlushQueued = false
     volumeFlushCooling = false
+    volumeLiveActive = false
     if (volumeFlushTimer) volumeFlushTimer.stop()
+    if (volumeLiveIdleTimer) volumeLiveIdleTimer.stop()
   }
   readonly property bool shuffle: useRemotePlayback
     ? remotePlayback.shuffle === true
@@ -1022,11 +1027,21 @@ Item {
       clearPendingSliderVolume()
   }
 
+  function volumeFlushTarget() {
+    if (sonosControlAvailable && sonosControlDevice && sonosControlDevice.id)
+      return "sonos"
+    return useRemotePlayback ? "remote" : "local"
+  }
+
+  // Returns false when the backend could not take the command, so the caller
+  // keeps it queued and retries. Only Sonos rejects this way.
   function sendVolumeCommand(sliderValue) {
     var localVolume = !useRemotePlayback && hasLocalPlayer
       && activePlayer.volumeSupported
     var normalized = localVolume
       ? Api.sliderToSpotifydVolume(sliderValue) : sliderValue
+    var sonos = volumeFlushTarget() === "sonos"
+    if (sonos && spotifyConnectManager.controlBusy) return false
     var remoteSerial = 0
     if (!localVolume && useRemotePlayback && remoteDevice) {
       var remotePercent = Math.round(normalized * 100)
@@ -1034,7 +1049,7 @@ Item {
       var receiver = findDiscoveredReceiver(remoteDevice)
       if (receiver) spotifyConnectManager.rememberVolume(receiver.id, remotePercent)
     }
-    if (sendSonosControl("volume", String(Math.round(normalized * 100)))) return
+    if (sendSonosControl("volume", String(Math.round(normalized * 100)))) return true
     if (localVolume)
       activePlayer.volume = normalized
     else apiAction("PUT", "/me/player/volume",
@@ -1044,8 +1059,11 @@ Item {
         root.clearPendingRemoteVolume(remoteSerial)
         root.clearPendingSliderVolume()
       }
-      root.loadPlaybackState()
+      // A live drag refetches once through volumeLiveIdleTimer rather than
+      // after every command.
+      if (!ok || !root.volumeLiveActive) root.loadPlaybackState()
     })
+    return true
   }
 
   function flushVolume() {
@@ -1054,9 +1072,8 @@ Item {
       return
     }
     var sliderValue = queuedVolumeSlider
-    volumeFlushQueued = false
     beginPendingSliderVolume(sliderValue)
-    sendVolumeCommand(sliderValue)
+    if (sendVolumeCommand(sliderValue)) volumeFlushQueued = false
     volumeFlushCooling = true
     if (volumeFlushTimer) volumeFlushTimer.restart()
   }
@@ -3191,9 +3208,13 @@ Item {
     })
   }
 
-  function setVolume(value) {
+  function setVolume(value, live) {
     var sliderValue = Math.max(0, Math.min(1, Number(value) || 0))
     noteActivity()
+    if (live === true) {
+      volumeLiveActive = true
+      volumeLiveIdleTimer.restart()
+    }
     beginPendingSliderVolume(sliderValue)
     queuedVolumeSlider = sliderValue
     volumeFlushQueued = true
@@ -3461,7 +3482,9 @@ Item {
     clearPendingSliderVolume()
     volumeFlushQueued = false
     volumeFlushCooling = false
+    volumeLiveActive = false
     volumeFlushTimer.stop()
+    volumeLiveIdleTimer.stop()
     remoteControlSerial = 0
     remoteVolumeProbeKey = ""
     remoteControlDiscoveryKey = ""
@@ -3872,9 +3895,21 @@ Item {
 
   Timer {
     id: volumeFlushTimer
-    interval: Api.VOLUME_FLUSH_MS
+    interval: Api.volumeFlushInterval(root.volumeFlushTarget())
     repeat: false
     onTriggered: root.flushVolume()
+  }
+
+  Timer {
+    id: volumeLiveIdleTimer
+    interval: 400
+    repeat: false
+    onTriggered: {
+      root.volumeLiveActive = false
+      // Only the remote path skipped its per-command refetch; a local MPRIS
+      // write reports the new volume on its own.
+      if (root.useRemotePlayback) root.loadPlaybackState()
+    }
   }
 
   Timer {

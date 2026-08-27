@@ -15,6 +15,9 @@ PanelSlider {
   property int minimumFeedbackMs: 300
   property int feedbackTimeoutMs: 8000
   property string contextKey: ""
+  // Volume applies while the knob moves; seek waits for release so a drag does
+  // not make the player re-buffer on every frame.
+  property bool liveCommit: false
 
   property real pendingValue: -1
   property double pendingStartedAt: 0
@@ -23,7 +26,7 @@ PanelSlider {
 
   value: awaitingFeedback ? pendingValue : sourceValue
 
-  signal committed(real value)
+  signal committed(real value, bool live)
 
   function preview(value) {
     pendingValue = Math.max(minimum, Math.min(maximum, Number(value) || 0))
@@ -37,13 +40,18 @@ PanelSlider {
     pendingContextKey = ""
   }
 
-  onMoved: function(value) { preview(value) }
+  onMoved: function(value) {
+    preview(value)
+    // A wheel notch emits moved() and released() with dragging still false, so
+    // gating here keeps it at a single commit through the released() path.
+    if (liveCommit && dragging) committed(pendingValue, true)
+  }
   onReleased: function(value) {
     preview(value)
     pendingStartedAt = Date.now()
     pendingContextKey = contextKey
     feedbackTimer.restart()
-    committed(pendingValue)
+    committed(pendingValue, false)
   }
   onContextKeyChanged: {
     if (awaitingFeedback && pendingContextKey

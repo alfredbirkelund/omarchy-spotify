@@ -163,6 +163,18 @@ TestCase {
     compare(Api.seekPosition(40, 10, 0), 50)
   }
 
+  function test_volumeFlushInterval_slowsDownForNetworkBackends() {
+    compare(Api.volumeFlushInterval("local"), Api.VOLUME_FLUSH_MS)
+    compare(Api.volumeFlushInterval("remote"), Api.VOLUME_FLUSH_REMOTE_MS)
+    compare(Api.volumeFlushInterval("sonos"), Api.VOLUME_FLUSH_SONOS_MS)
+    compare(Api.volumeFlushInterval("SONOS"), Api.VOLUME_FLUSH_SONOS_MS)
+    compare(Api.volumeFlushInterval(""), Api.VOLUME_FLUSH_MS)
+    compare(Api.volumeFlushInterval(null), Api.VOLUME_FLUSH_MS)
+    compare(Api.volumeFlushInterval("unknown"), Api.VOLUME_FLUSH_MS)
+    verify(Api.VOLUME_FLUSH_REMOTE_MS > Api.VOLUME_FLUSH_SONOS_MS)
+    verify(Api.VOLUME_FLUSH_SONOS_MS > Api.VOLUME_FLUSH_MS)
+  }
+
   function test_pendingSliderVolumeHoldsUntilPlayerAcknowledgesIt() {
     var pending = { slider: 0.55, expiresAt: 9000 }
     verify(Api.pendingSliderVolumeShouldHold(0.5, pending, 2000))
