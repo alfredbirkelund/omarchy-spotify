@@ -198,24 +198,22 @@ See [Benchmark](BENCHMARK.md) for methodology and recorded results.
 
 ## Complete removal
 
-Log out in the app first, then remove the plugin. Before deleting the checkout,
-run:
+Run the bundled uninstaller from outside the plugin directory:
 
 ```bash
-./scripts/remove-runtime.sh --purge
-omarchy plugin remove quickshell.spotify --yes
+cd "$HOME" && "$HOME/.config/omarchy/plugins/quickshell.spotify/scripts/uninstall.sh"
 ```
 
-This stops and removes both static user units and the installed backend binary,
-deletes the app's private playback config, durable playback authorization,
-player session state, and cached audio,
-and clears matching Omarchy Spotify keyring entries. The `spotifyd` package
-remains installed because another client may use it.
+This removes the plugin and all plugin-owned services, binaries, config, state,
+caches, sockets, backups, and keyring entries. See the README's
+**Remove it completely** section for the equivalent commands and legacy
+keybinding check. The `spotifyd` package remains installed because another
+client may use it.
 
 Remove that package separately only when it was installed solely for this app:
 
 ```bash
-sudo pacman -Rns spotifyd
+omarchy pkg drop spotifyd
 ```
 
 ## Upstream projects

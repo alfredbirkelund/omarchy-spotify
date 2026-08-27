@@ -63,11 +63,15 @@ mock_bin="$test_root/mock-bin"
 runtime_config="$test_root/runtime-config"
 runtime_cache="$test_root/runtime-cache"
 runtime_state="$test_root/runtime-state"
-runtime_backend="$test_root/runtime-backend"
+runtime_session="$test_root/runtime-session"
+runtime_backend="$test_root/runtime-lib/omarchy-spotify"
+runtime_home="$test_root/runtime-home"
 mock_target="$test_root/mock-target"
 secret_log="$test_root/secret-tool.log"
 systemctl_log="$test_root/systemctl.log"
-mkdir -p "$mock_bin" "$runtime_config" "$runtime_cache" "$runtime_state" "$runtime_backend"
+omarchy_log="$test_root/omarchy.log"
+mkdir -p "$mock_bin" "$runtime_config" "$runtime_cache" "$runtime_state" \
+  "$runtime_session" "$runtime_backend" "$runtime_home"
 
 printf '%s\n' '#!/bin/sh' 'exit 0' >"$mock_bin/spotifyd"
 printf '%s\n' \
@@ -87,7 +91,15 @@ printf '%s\n' \
   '#!/bin/sh' \
   'printf "%s\n" "$*" >>"${TEST_SECRET_LOG:?}"' \
   'exit 1' >"$mock_bin/secret-tool"
-chmod 755 "$mock_bin/cargo" "$mock_bin/spotifyd" "$mock_bin/systemctl" "$mock_bin/secret-tool"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'printf "%s\n" "$*" >>"${TEST_OMARCHY_LOG:?}"' \
+  'if [ "$*" = "plugin remove quickshell.spotify --yes" ]; then' \
+  '  rm -f -- "$HOME/.config/omarchy/plugins/quickshell.spotify"' \
+  'fi' \
+  'exit 0' >"$mock_bin/omarchy"
+chmod 755 "$mock_bin/cargo" "$mock_bin/spotifyd" "$mock_bin/systemctl" \
+  "$mock_bin/secret-tool" "$mock_bin/omarchy"
 
 [[ -x $source_root/scripts/spotify-connect-device.py ]]
 "$source_root/scripts/spotify-connect-device.py" self-test |
@@ -202,23 +214,88 @@ TEST_SYSTEMCTL_LOG="$systemctl_log" \
   "$source_root/scripts/setup.sh" >/dev/null
 ! grep -q -- '--user restart omarchy-spotify.service' "$systemctl_log"
 
-mkdir -p "$runtime_config/omarchy-spotify" "$runtime_cache/spotifyd"
+mkdir -p "$runtime_config/omarchy-spotify" \
+  "$runtime_config/omarchy-spotify.bak.20260827000000" \
+  "$runtime_cache/spotifyd" "$runtime_cache/omarchy-spotify/target" \
+  "$runtime_session/omarchy-spotify"
 cp -- "$source_root/config/spotifyd.conf" "$runtime_config/omarchy-spotify/spotifyd.conf"
+printf '%s\n' stale >"$runtime_config/omarchy-spotify.bak.20260827000000/spotifyd.conf"
+printf '%s\n' stale >"$runtime_cache/omarchy-spotify/target/build-artifact"
+printf '%s\n' stale >"$runtime_session/omarchy-spotify/backend.sock"
+: >"$systemctl_log"
 PATH="$mock_bin:$PATH" \
 XDG_CONFIG_HOME="$runtime_config" \
 XDG_CACHE_HOME="$runtime_cache" \
 XDG_STATE_HOME="$runtime_state" \
+XDG_RUNTIME_DIR="$runtime_session" \
 OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
 TEST_SECRET_LOG="$secret_log" \
+TEST_SYSTEMCTL_LOG="$systemctl_log" \
   "$source_root/scripts/remove-runtime.sh" --purge >/dev/null
 
 [[ ! -e $runtime_config/omarchy-spotify && ! -e $runtime_cache/spotifyd ]]
+[[ ! -e $runtime_config/omarchy-spotify.bak.20260827000000 ]]
+[[ ! -e $runtime_cache/omarchy-spotify ]]
 [[ ! -e $runtime_state/omarchy-spotify ]]
-[[ ! -e $runtime_backend/omarchy-spotify-backend ]]
-[[ ! -e $runtime_backend/backend-source.sha256 ]]
-[[ ! -e $runtime_backend/backend-binary.sha256 ]]
-[[ ! -e $runtime_backend/backend-origin ]]
+[[ ! -e $runtime_session/omarchy-spotify ]]
+[[ ! -e $runtime_backend ]]
+grep -qx -- '--user disable --now omarchy-spotify.service' "$systemctl_log"
+grep -qx -- '--user disable --now omarchy-spotifyd.service' "$systemctl_log"
 grep -q 'clear service quickshell-spotify kind refresh-token' "$secret_log"
+
+set +e
+PATH="$mock_bin:$PATH" \
+XDG_CACHE_HOME="relative-cache" \
+  "$source_root/scripts/remove-runtime.sh" --purge >/dev/null 2>&1
+unsafe_remove_status=$?
+set -e
+[[ $unsafe_remove_status -eq 3 ]]
+
+# The top-level uninstaller wraps the runtime purge, removes the plugin through
+# Omarchy, clears exact-ID backups, restarts the shell, and remains idempotent.
+plugin_dir="$runtime_home/.config/omarchy/plugins/quickshell.spotify"
+plugin_backup="$runtime_home/.config/omarchy/plugins/.quickshell.spotify.bak.20260827000000"
+mkdir -p "$(dirname -- "$plugin_dir")" "$plugin_backup" \
+  "$runtime_config/omarchy-spotify" "$runtime_cache/spotifyd" \
+  "$runtime_state/omarchy-spotify" "$runtime_session/omarchy-spotify" \
+  "$runtime_backend"
+ln -s -- "$source_root" "$plugin_dir"
+printf '%s\n' stale >"$runtime_backend/omarchy-spotify-backend"
+: >"$omarchy_log"
+(
+  cd "$test_root"
+  PATH="$mock_bin:$PATH" \
+  HOME="$runtime_home" \
+  XDG_CONFIG_HOME="$runtime_config" \
+  XDG_CACHE_HOME="$runtime_cache" \
+  XDG_STATE_HOME="$runtime_state" \
+  XDG_RUNTIME_DIR="$runtime_session" \
+  OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
+  TEST_SECRET_LOG="$secret_log" \
+  TEST_SYSTEMCTL_LOG="$systemctl_log" \
+  TEST_OMARCHY_LOG="$omarchy_log" \
+    "$source_root/scripts/uninstall.sh" >/dev/null
+)
+[[ ! -e $plugin_dir && ! -L $plugin_dir && ! -e $plugin_backup ]]
+[[ ! -e $runtime_config/omarchy-spotify && ! -e $runtime_cache/spotifyd ]]
+[[ ! -e $runtime_state/omarchy-spotify && ! -e $runtime_session/omarchy-spotify ]]
+[[ ! -e $runtime_backend ]]
+grep -qx 'plugin disable quickshell.spotify' "$omarchy_log"
+grep -qx 'plugin remove quickshell.spotify --yes' "$omarchy_log"
+grep -qx 'restart shell' "$omarchy_log"
+
+PATH="$mock_bin:$PATH" \
+HOME="$runtime_home" \
+XDG_CONFIG_HOME="$runtime_config" \
+XDG_CACHE_HOME="$runtime_cache" \
+XDG_STATE_HOME="$runtime_state" \
+XDG_RUNTIME_DIR="$runtime_session" \
+OMARCHY_SPOTIFY_RUNTIME_DIR="$runtime_backend" \
+TEST_SECRET_LOG="$secret_log" \
+TEST_SYSTEMCTL_LOG="$systemctl_log" \
+TEST_OMARCHY_LOG="$omarchy_log" \
+  "$source_root/scripts/uninstall.sh" >/dev/null
+[[ $(grep -c '^plugin remove quickshell.spotify --yes$' "$omarchy_log") -eq 1 ]]
 
 mkdir -p "$runtime_state/omarchy-spotify/oauth" "$runtime_cache/spotifyd/oauth"
 printf '%s\n' '{"mock":"credential"}' \
@@ -281,6 +358,10 @@ PATH="$mock_bin:$PATH" \
 grep -qx 'umask 077' "$source_root/scripts/spotifyd-auth.sh"
 [[ -x $source_root/scripts/setup-playback.sh ]]
 [[ -x $source_root/scripts/backend-source-id.sh ]]
+[[ -x $source_root/scripts/uninstall.sh ]]
+grep -q 'remove-runtime.sh.*--purge' "$source_root/scripts/uninstall.sh"
+grep -q 'omarchy plugin remove quickshell.spotify --yes' "$source_root/scripts/uninstall.sh"
+grep -q '^## Remove it completely$' "$source_root/README.md"
 grep -q 'pkexec /usr/bin/pacman -S --needed --noconfirm spotifyd' \
   "$source_root/scripts/setup-playback.sh"
 ! grep -q 'sudo' "$source_root/scripts/setup-playback.sh"
