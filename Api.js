@@ -502,10 +502,6 @@ function spotifyTypeLabel(type) {
 var MUTE_THRESHOLD = 0.001
 var UNMUTE_FLOOR = 0.05
 var SEARCH_DEBOUNCE_MS = 600
-// Dragging a volume slider sends a command per frame, so each backend gets its
-// own flush cadence. Local spotifyd only writes an MPRIS property, the Web API
-// is rate limited, and the Sonos helper spawns a process per command and drops
-// anything that arrives while it is busy.
 var VOLUME_FLUSH_MS = 80
 var VOLUME_FLUSH_REMOTE_MS = 250
 var VOLUME_FLUSH_SONOS_MS = 120

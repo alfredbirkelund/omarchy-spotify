@@ -15,8 +15,6 @@ PanelSlider {
   property int minimumFeedbackMs: 300
   property int feedbackTimeoutMs: 8000
   property string contextKey: ""
-  // Volume applies while the knob moves; seek waits for release so a drag does
-  // not make the player re-buffer on every frame.
   property bool liveCommit: false
 
   property real pendingValue: -1

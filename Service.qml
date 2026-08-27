@@ -104,8 +104,6 @@ Item {
   property bool volumeFlushQueued: false
   property real queuedVolumeSlider: 0
   property bool volumeFlushCooling: false
-  // True while a slider drag keeps feeding values. Playback state is refetched
-  // once the drag settles instead of after every command.
   property bool volumeLiveActive: false
   property int remoteControlSerial: 0
   readonly property int remoteControlGraceMs: 8000
@@ -1059,8 +1057,6 @@ Item {
         root.clearPendingRemoteVolume(remoteSerial)
         root.clearPendingSliderVolume()
       }
-      // A live drag refetches once through volumeLiveIdleTimer rather than
-      // after every command.
       if (!ok || !root.volumeLiveActive) root.loadPlaybackState()
     })
     return true

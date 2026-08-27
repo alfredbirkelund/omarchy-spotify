@@ -150,11 +150,10 @@ from RenderingControl because Spotify's `volume_percent` field is nullable; the
 UI remembers that value and updates it immediately after a volume command. The
 helper drops any command issued while an earlier one is still running, so a
 volume drag checks `controlBusy` and retries the queued value instead of losing
-it. When
-playback has moved elsewhere, a local Play wake is attempted first; the OAuth
-activation flow remains the fallback for a Sonos that has actually lost its
-Spotify session. Receiver discovery and requests are retried briefly because
-Sonos can sleep its endpoint during a handoff.
+it. When playback has moved elsewhere, a local Play wake is attempted first;
+the OAuth activation flow remains the fallback for a Sonos that has actually
+lost its Spotify session. Receiver discovery and requests are retried briefly
+because Sonos can sleep its endpoint during a handoff.
 
 The current-playback response is also merged into the device list. This matters
 for models that Spotify omits from `/me/player/devices`, or whose active device
