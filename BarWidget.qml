@@ -544,14 +544,15 @@ BarWidget {
   Component.onCompleted: syncSettings()
   Component.onDestruction: if (spotify) spotify.setUiVisible(surfaceKey, false)
 
-  WidgetButton {
+  BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: ""
-    labelVisible: root.iconOnly
+    text: root.iconOnly ? "" : ""
     hasVisualContent: true
-    fontSize: root.iconOnly ? Style.font.bodySmall : Style.font.body
+    slotSize: Style.bar.iconSlot
+    opticalSize: Style.bar.iconCanvas
+    fontSize: root.iconOnly ? Style.bar.iconFont : Style.font.body
     active: root.spotify && root.spotify.playing
     // Follow the bar's contrast-aware color when transparency changes.
     // Keep root.foreground theme-based for the popup/player surfaces.
@@ -562,16 +563,16 @@ BarWidget {
       : (root.spotify && !root.spotify.accountConnected
         ? "Set up Omarchy Spotify" : "Omarchy Spotify")
     // Size from the painted glyph and label plus the real inner chrome.
-    readonly property real fittedWidth: Math.ceil(barGlyph.implicitWidth
+    readonly property real fittedWidth: Math.ceil(barGlyph.width
       + barContent.spacing + barLabel.implicitWidth + scaledHorizontalMargin * 2)
     readonly property real barTextCap: root.spotify ? root.spotify.maxBarTextWidth : 240
 
     fixedWidth: root.vertical ? root.barSize
-      : (root.iconOnly ? Style.bar.statusSlot
+      : (root.iconOnly ? Style.bar.iconSlot
         : Math.max(root.barSize, barTextCap > 0
           ? Math.min(Style.space(barTextCap), fittedWidth)
           : fittedWidth))
-    fixedHeight: root.vertical && root.iconOnly ? Style.bar.statusSlot : -1
+    fixedHeight: root.vertical && root.iconOnly ? Style.bar.iconSlot : -1
     clip: true
 
     Row {
@@ -581,21 +582,22 @@ BarWidget {
       visible: !root.iconOnly
       enabled: false
 
-      Text {
+      OpticalGlyph {
         id: barGlyph
         anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(16)
+        height: Style.space(16)
         text: ""
         color: button.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-        font.pixelSize: Style.font.body
-        renderType: Text.NativeRendering
+        fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+        fontSize: Style.font.body
       }
 
       Item {
         id: scrollClip
-        width: Math.max(0, button.width - barGlyph.implicitWidth
+        width: Math.max(0, button.width - barGlyph.width
           - barContent.spacing - button.scaledHorizontalMargin * 2)
-        height: barGlyph.implicitHeight
+        height: barGlyph.height
         anchors.verticalCenter: parent.verticalCenter
         clip: barLabel.needsScroll
 
@@ -1085,8 +1087,8 @@ BarWidget {
         visible: !root.lyricsInstallPromptVisible
           && (!root.spotify || root.spotify.accountConnected)
 
-        Button {
-          iconText: "󰒟"
+        TransportButton {
+          glyphText: "󰒟"
           foreground: root.foreground
           selected: root.spotify && root.spotify.shuffle
           hasCursor: root.miniCursorActive && root.miniCursor === "shuffle"
@@ -1097,8 +1099,8 @@ BarWidget {
           KeyHint { sequences: ["Ctrl+S"] }
         }
 
-        Button {
-          iconText: "󰒮"
+        TransportButton {
+          glyphText: "󰒮"
           foreground: root.foreground
           hasCursor: root.miniCursorActive && root.miniCursor === "previous"
           tooltipText: "Previous · Ctrl+Left"
@@ -1108,9 +1110,9 @@ BarWidget {
           KeyHint { sequences: ["Ctrl+Left"] }
         }
 
-        Button {
-          iconText: root.spotify && root.spotify.playing ? "󰏤" : "󰐊"
-          iconSize: Style.font.iconLarge
+        TransportButton {
+          glyphText: root.spotify && root.spotify.playing ? "󰏤" : "󰐊"
+          glyphSize: Style.font.iconLarge
           foreground: root.foreground
           selected: root.spotify && root.spotify.playing
           hasCursor: root.miniCursorActive && root.miniCursor === "play"
@@ -1122,8 +1124,8 @@ BarWidget {
           KeyHint { sequences: ["Space"] }
         }
 
-        Button {
-          iconText: "󰒭"
+        TransportButton {
+          glyphText: "󰒭"
           foreground: root.foreground
           hasCursor: root.miniCursorActive && root.miniCursor === "next"
           tooltipText: "Next · Ctrl+Right"
@@ -1133,8 +1135,8 @@ BarWidget {
           KeyHint { sequences: ["Ctrl+Right"] }
         }
 
-        Button {
-          iconText: root.spotify && root.spotify.repeatMode === "track" ? "󰑘" : "󰑖"
+        TransportButton {
+          glyphText: root.spotify && root.spotify.repeatMode === "track" ? "󰑘" : "󰑖"
           foreground: root.foreground
           selected: root.spotify && root.spotify.repeatMode !== "off"
           hasCursor: root.miniCursorActive && root.miniCursor === "repeat"
@@ -1146,8 +1148,8 @@ BarWidget {
           KeyHint { sequences: ["Ctrl+R"] }
         }
 
-        Button {
-          iconText: "󰎈"
+        TransportButton {
+          glyphText: "󰎈"
           foreground: root.foreground
           hasCursor: root.miniCursorActive && root.miniCursor === "lyrics"
           tooltipText: "Open lyrics in Omasing · Ctrl+Shift+L"

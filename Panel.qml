@@ -4040,8 +4040,8 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Style.space(3)
 
-                Button {
-                  iconText: "󰒟"
+                TransportButton {
+                  glyphText: "󰒟"
                   foreground: root.foreground
                   selected: root.service && root.service.shuffle
                   hasCursor: root.cursorOn("footer", "shuffle")
@@ -4053,8 +4053,8 @@ Item {
                   }
                   KeyHint { region: "footer"; action: "shuffle"; sequences: ["Ctrl+S"] }
                 }
-                Button {
-                  iconText: "󰒮"
+                TransportButton {
+                  glyphText: "󰒮"
                   foreground: root.foreground
                   hasCursor: root.cursorOn("footer", "previous")
                   tooltipText: root.shortcutHint("Previous", "Ctrl+Left")
@@ -4065,9 +4065,9 @@ Item {
                   }
                   KeyHint { region: "footer"; action: "previous"; sequences: ["Ctrl+Left"] }
                 }
-                Button {
-                  iconText: root.service && root.service.playing ? "󰏤" : "󰐊"
-                  iconSize: Style.font.iconLarge
+                TransportButton {
+                  glyphText: root.service && root.service.playing ? "󰏤" : "󰐊"
+                  glyphSize: Style.font.iconLarge
                   foreground: root.foreground
                   selected: root.service && root.service.playing
                   hasCursor: root.cursorOn("footer", "play")
@@ -4080,8 +4080,8 @@ Item {
                   }
                   KeyHint { region: "footer"; action: "play"; sequences: ["Space"] }
                 }
-                Button {
-                  iconText: "󰒭"
+                TransportButton {
+                  glyphText: "󰒭"
                   foreground: root.foreground
                   hasCursor: root.cursorOn("footer", "next")
                   tooltipText: root.shortcutHint("Next", "Ctrl+Right")
@@ -4092,8 +4092,8 @@ Item {
                   }
                   KeyHint { region: "footer"; action: "next"; sequences: ["Ctrl+Right"] }
                 }
-                Button {
-                  iconText: root.service && root.service.repeatMode === "track" ? "󰑘" : "󰑖"
+                TransportButton {
+                  glyphText: root.service && root.service.repeatMode === "track" ? "󰑘" : "󰑖"
                   foreground: root.foreground
                   selected: root.service && root.service.repeatMode !== "off"
                   hasCursor: root.cursorOn("footer", "repeat")
@@ -4107,8 +4107,8 @@ Item {
                   }
                   KeyHint { region: "footer"; action: "repeat"; sequences: ["Ctrl+R"] }
                 }
-                Button {
-                  iconText: "󰎈"
+                TransportButton {
+                  glyphText: "󰎈"
                   foreground: root.foreground
                   hasCursor: root.cursorOn("footer", "lyrics")
                   tooltipText: root.shortcutHint("Open lyrics in Omasing",
