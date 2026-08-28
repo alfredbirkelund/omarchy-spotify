@@ -10,6 +10,14 @@ and keeps your music close with an integrated mini player.
 Pair it with **Omasing** and lyrics for the song you are playing are fetched
 for you, ready when you want them.
 
+## Install
+
+```bash
+omarchy plugin add https://github.com/stappmus/Omarchy-Spotify.git --enable
+```
+
+Requires Omarchy 4 and a personal Spotify Premium account.
+
 ## Why you will love it
 
 - **Lightweight by design.** Enjoy your music without keeping a browser-sized
@@ -95,11 +103,7 @@ The essentials are always one click away, without reopening the full app.
 
 ![Omarchy Spotify mini player playing Under the Bridge](docs/screenshots/mini-player-under-the-bridge.png)
 
-## Add it to Omarchy
-
-```bash
-omarchy plugin add https://github.com/stappmus/Omarchy-Spotify.git --enable
-```
+## Set it up
 
 In Omarchy Spotify's Settings, choose whether **Super+Shift+M** launches
 Omarchy's Music app, toggles the full player, or toggles the mini-player.
@@ -123,8 +127,6 @@ provenance matches this plugin version's tag and the checkout's backend inputs
 still match that tagged source. If verification is unavailable, setup builds
 the locked Rust source locally or offers Omarchy's packaged `spotifyd` fallback
 instead of executing an unverified download.
-
-> Requires Omarchy 4 and a personal Spotify Premium account.
 
 ## Remove it completely
 
