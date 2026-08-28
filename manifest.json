@@ -36,6 +36,7 @@
       "shortcutHints": "On",
       "showTrackTitle": "On",
       "showArtistName": "Off",
+      "showPausedTrack": "On",
       "scrollBarText": "Off",
       "scrollSpeed": "1",
       "maxBarTextWidth": "240",
@@ -102,7 +103,7 @@
           "Off"
         ],
         "defaultValue": "On",
-        "description": "Shown only while music is playing. The bar returns to the Spotify icon when paused."
+        "description": "Show the current song title in the bar."
       },
       {
         "key": "showArtistName",
@@ -113,7 +114,18 @@
           "Off"
         ],
         "defaultValue": "Off",
-        "description": "Shown only while music is playing. The bar returns to the Spotify icon when paused."
+        "description": "Show the current artist name in the bar."
+      },
+      {
+        "key": "showPausedTrack",
+        "type": "enum",
+        "label": "Show paused track in bar",
+        "options": [
+          "On",
+          "Off"
+        ],
+        "defaultValue": "On",
+        "description": "When off, the bar returns to the Spotify icon while playback is paused. The session remains available to resume."
       },
       {
         "key": "scrollBarText",

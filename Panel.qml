@@ -60,6 +60,7 @@ Item {
   property string popupReturnAction: "list"
   property bool draftShowTitle: true
   property bool draftShowArtist: false
+  property bool draftShowPausedTrack: true
   property bool draftScrollBarText: false
   property real draftScrollSpeed: 1
   // 0 means no cap — the slot grows with the track text.
@@ -181,6 +182,7 @@ Item {
     draftShortcutHints = service.shortcutHintsEnabled
     draftShowTitle = service.showTrackTitle
     draftShowArtist = service.showArtistName
+    draftShowPausedTrack = service.showPausedTrack
     draftScrollBarText = service.scrollBarText
     draftScrollSpeed = service.scrollSpeed
     draftMaxBarTextWidth = service.maxBarTextWidth
@@ -198,6 +200,7 @@ Item {
       shortcutHints: draftShortcutHints ? "On" : "Off",
       showTrackTitle: draftShowTitle ? "On" : "Off",
       showArtistName: draftShowArtist ? "On" : "Off",
+      showPausedTrack: draftShowPausedTrack ? "On" : "Off",
       scrollBarText: draftScrollBarText ? "On" : "Off",
       scrollSpeed: Api.normalizedScrollSpeed(draftScrollSpeed),
       maxBarTextWidth: Api.normalizedMaxBarTextWidth(draftMaxBarTextWidth),
@@ -6401,7 +6404,7 @@ Item {
                   text: "Title · " + (root.draftShowTitle ? "On" : "Off")
                   foreground: root.foreground
                   selected: root.draftShowTitle
-                  tooltipText: "Show the song title in the top bar while playing"
+                  tooltipText: "Show the song title in the top bar"
                   onClicked: {
                     root.draftShowTitle = !root.draftShowTitle
                     root.enforceScrollAvailability()
@@ -6412,10 +6415,23 @@ Item {
                   text: "Artist · " + (root.draftShowArtist ? "On" : "Off")
                   foreground: root.foreground
                   selected: root.draftShowArtist
-                  tooltipText: "Show the artist name in the top bar while playing"
+                  tooltipText: "Show the artist name in the top bar"
                   onClicked: {
                     root.draftShowArtist = !root.draftShowArtist
                     root.enforceScrollAvailability()
+                    root.persistDraftSettings()
+                  }
+                }
+                Button {
+                  text: "While paused · "
+                    + (root.draftShowPausedTrack ? "Show" : "Hide")
+                  foreground: root.foreground
+                  selected: root.draftShowPausedTrack
+                  tooltipText: root.draftShowPausedTrack
+                    ? "Keep the configured title and artist visible while paused"
+                    : "Show only the Spotify icon while paused"
+                  onClicked: {
+                    root.draftShowPausedTrack = !root.draftShowPausedTrack
                     root.persistDraftSettings()
                   }
                 }

@@ -40,6 +40,7 @@ Item {
     shortcutHints: "On",
     showTrackTitle: "On",
     showArtistName: "Off",
+    showPausedTrack: "On",
     scrollBarText: "Off",
     scrollSpeed: "1",
     maxBarTextWidth: "240",
@@ -56,6 +57,7 @@ Item {
   readonly property bool shortcutHintsEnabled: String(settings.shortcutHints || "On") !== "Off"
   readonly property bool showTrackTitle: String(settings.showTrackTitle || "On") !== "Off"
   readonly property bool showArtistName: String(settings.showArtistName || "Off") === "On"
+  readonly property bool showPausedTrack: String(settings.showPausedTrack || "On") !== "Off"
   readonly property bool scrollBarText: String(settings.scrollBarText || "Off") === "On"
   readonly property real scrollSpeed: Api.normalizedScrollSpeed(settings.scrollSpeed)
   // Bar label cap in unscaled px; 0 means no cap.
@@ -457,7 +459,8 @@ Item {
     var source = values || {}
     var keys = ["deviceName", "idleShutdownMinutes", "showMiniPlayer",
       "shortcutPlayer", "shortcutHints", "showTrackTitle", "showArtistName",
-      "scrollBarText", "scrollSpeed", "maxBarTextWidth", "audioQuality"]
+      "showPausedTrack", "scrollBarText", "scrollSpeed", "maxBarTextWidth",
+      "audioQuality"]
     for (var i = 0; i < keys.length; i++) {
       var key = keys[i]
       if (source[key] !== undefined) next[key] = source[key]
@@ -470,6 +473,7 @@ Item {
     next.shortcutHints = Api.normalizedShortcutHints(next.shortcutHints)
     next.showTrackTitle = String(next.showTrackTitle || "On") === "Off" ? "Off" : "On"
     next.showArtistName = String(next.showArtistName || "Off") === "On" ? "On" : "Off"
+    next.showPausedTrack = String(next.showPausedTrack || "On") === "Off" ? "Off" : "On"
     next.scrollBarText = String(next.scrollBarText || "Off") === "On" ? "On" : "Off"
     if (!Api.canScrollBarText(next.showTrackTitle === "On", next.showArtistName === "On"))
       next.scrollBarText = "Off"

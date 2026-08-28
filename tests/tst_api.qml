@@ -12,22 +12,32 @@ TestCase {
   }
 
   function test_barTrackText_respectsIndependentTitleAndArtistSettings() {
-    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, false),
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, false,
+      true, true),
       "Blue in Green")
-    compare(Api.barTrackText("Blue in Green", "Miles Davis", false, true),
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", false, true,
+      true, true),
       "Miles Davis")
-    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, true),
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, true,
+      true, true),
       "Miles Davis - Blue in Green")
-    compare(Api.barTrackText("Blue in Green", "Miles Davis", false, false), "")
-    compare(Api.barTrackText("  Blue in Green  ", "  Miles Davis  ", true, true),
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", false, false,
+      true, true), "")
+    compare(Api.barTrackText("  Blue in Green  ", "  Miles Davis  ", true,
+      true, true, true),
       "Miles Davis - Blue in Green")
-    compare(Api.barTrackText("Blue in Green", "", true, true), "Blue in Green")
-    compare(Api.barTrackText("", "Miles Davis", true, true), "Miles Davis")
+    compare(Api.barTrackText("Blue in Green", "", true, true, true, true),
+      "Blue in Green")
+    compare(Api.barTrackText("", "Miles Davis", true, true, true, true),
+      "Miles Davis")
   }
 
-  function test_barTrackText_keepsPausedMediaVisible() {
-    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, true),
+  function test_barTrackText_pausedVisibilityIsConfigurable() {
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, true,
+      false, true),
       "Miles Davis - Blue in Green")
+    compare(Api.barTrackText("Blue in Green", "Miles Davis", true, true,
+      false, false), "")
   }
 
   function test_idleShutdown_onlyRunsForAnEmptyReceiver() {

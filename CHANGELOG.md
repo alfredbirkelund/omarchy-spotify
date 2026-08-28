@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep paused media advertised and resumable after the player closes. Paused
+  title and artist text remains visible by default and can be hidden in the
+  bar settings without stopping the session.
 - Follow the displayed playlist or album order when a list is sorted or
   filtered, including row, context-menu, and playlist-level Play actions.
   Original views keep Spotify's native context playback; longer custom orders
