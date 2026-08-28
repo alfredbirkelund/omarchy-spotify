@@ -20,7 +20,7 @@ BarWidget {
   readonly property string lyricsRequestKey: surfaceKey + "-lyrics"
   readonly property string barText: spotify
     ? Api.barTrackText(spotify.title, spotify.artist,
-      spotify.showTrackTitle, spotify.showArtistName, spotify.playing) : ""
+      spotify.showTrackTitle, spotify.showArtistName) : ""
   readonly property bool miniPlayerEnabled:
     String(root.setting("showMiniPlayer", "On")) !== "Off"
   readonly property bool iconOnly: !spotify || vertical || !spotify.hasMedia

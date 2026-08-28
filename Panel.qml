@@ -6589,7 +6589,7 @@ Item {
 
             Text {
               width: parent.width
-              text: "This computer stays visible in Spotify Connect while the player is open. After it closes, playback support sleeps at the idle timeout. Use 0 minutes to keep this computer available even while the player is closed. Device name and audio quality changes apply the next time local playback starts."
+              text: "This computer stays visible in Spotify Connect while the player is open. After it closes, an empty receiver sleeps at the idle timeout; paused media stays available to resume. Use 0 minutes to keep this computer available even while the player is closed. Device name and audio quality changes apply the next time local playback starts."
               color: root.muted
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall

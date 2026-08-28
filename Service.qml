@@ -3959,8 +3959,8 @@ Item {
     id: idleTimer
     interval: 60000
     repeat: true
-    running: root.daemon.running && !root.playing && !root.uiVisible
-      && root.idleShutdownMinutes > 0
+    running: Api.idleShutdownShouldRun(root.daemon.running, root.hasMedia,
+      root.uiVisible, root.idleShutdownMinutes)
     onTriggered: {
       if (Date.now() - root.lastActivityAt >= root.idleShutdownMinutes * 60000)
         root.stopEngine()

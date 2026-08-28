@@ -116,8 +116,7 @@ function parseJson(text, fallback) {
   }
 }
 
-function barTrackText(title, artist, showTitle, showArtist, playing) {
-  if (playing !== true) return ""
+function barTrackText(title, artist, showTitle, showArtist) {
   var cleanTitle = String(title || "").trim()
   var cleanArtist = String(artist || "").trim()
   var parts = []
@@ -361,6 +360,14 @@ function visibleLocalReceiverAction(uiVisible, fullyConnected, running, busy) {
   if (busy === true) return "wait"
   if (running === true) return "refresh"
   return "start"
+}
+
+// A paused item is still an active media session: keep its MPRIS metadata and
+// resume controls alive after the UI closes. Only an empty/stopped receiver is
+// eligible for the configured background shutdown timeout.
+function idleShutdownShouldRun(daemonRunning, hasMedia, uiVisible, idleMinutes) {
+  return daemonRunning === true && hasMedia !== true && uiVisible !== true
+    && Number(idleMinutes) > 0
 }
 
 function remotePlaybackPollShouldRun(loggedIn, loading, uiVisible, useRemote,
