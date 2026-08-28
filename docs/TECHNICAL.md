@@ -64,8 +64,11 @@ running install hooks or privileged code. The enabled plugin therefore prepares
 local playback on first load. It downloads the raw backend for the current
 architecture from the matching version tag, checks the release checksum, then
 requires GitHub's signed build provenance to match this repository, the pinned
-release workflow, the exact tag and checked-out commit, and a GitHub-hosted
-runner. A same-release checksum alone is never accepted as provenance.
+release workflow, the exact tag and tagged commit, and a GitHub-hosted runner.
+The tagged commit must be an ancestor of the checkout, and the backend source
+and Rust toolchain must be unchanged between them. This permits later UI and
+documentation commits without weakening the backend source binding. A
+same-release checksum alone is never accepted as provenance.
 
 If `gh` is unavailable or any download, checksum, identity, or attestation
 check fails, the artifact is not executed. Setup instead builds `Cargo.lock`

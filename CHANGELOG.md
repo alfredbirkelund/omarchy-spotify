@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restore the selected playlist, every explicitly loaded page, and its scroll
+  position after the panel or shell is reopened.
 - Accept the version tag's attested playback backend when newer commits change
   only the UI or documentation, while still falling back to a locked source
   build whenever the backend inputs differ from that tag.

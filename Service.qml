@@ -279,6 +279,8 @@ Item {
   property string playlistItemsNext: ""
   property string playlistItemsError: ""
   property int playlistItemsStatus: 0
+  property int playlistItemsSerial: 0
+  property int playlistRestoreTargetCount: 0
   property var selectedPlaylist: null
   property string currentUserId: ""
   property string currentUserName: ""
@@ -332,6 +334,7 @@ Item {
   property bool detailLoading: false
   property string detailMessage: ""
   property int detailSerial: 0
+  property int detailRestoreTargetCount: 0
   property var artistAlbums: []
   property string artistAlbumsNext: ""
   property bool artistAlbumsLoading: false
@@ -381,6 +384,19 @@ Item {
   property bool searchLoading: false
   property string lastError: ""
   property string statusMessage: ""
+
+  readonly property bool playlistRestorePending: Api.playlistRestorePending(
+    playlistItems.length, playlistRestoreTargetCount, playlistItemsLoading,
+    playlistItemsNext)
+  readonly property int playlistRememberedItemCount:
+    Api.normalizedPlaylistRestoreCount(Math.max(playlistItems.length,
+      playlistRestoreTargetCount))
+  readonly property bool detailRestorePending: !!detailItem
+    && detailItem.type === "playlist" && Api.playlistRestorePending(
+      detailItems.length, detailRestoreTargetCount, detailLoading, detailNext)
+  readonly property int detailRememberedItemCount: Math.min(cacheLimit,
+    Api.normalizedPlaylistRestoreCount(Math.max(detailItems.length,
+      detailRestoreTargetCount)))
 
   property int dataSerial: 0
   property var visibleSurfaces: ({})
@@ -1639,9 +1655,13 @@ Item {
     loadLibraryCollection(value, append === true)
   }
 
-  function openPlaylist(playlist) {
+  function openPlaylist(playlist, restoredItemCount) {
     if (!playlist || !playlist.id) return
     succeed("")
+    playlistItemsSerial++
+    playlistItemsLoading = false
+    playlistRestoreTargetCount = Api.normalizedPlaylistRestoreCount(
+      restoredItemCount)
     selectedPlaylist = playlist
     playlistItems = []
     playlistItemsNext = ""
@@ -1657,13 +1677,16 @@ Item {
     if (!path) return
     var playlistId = String(selectedPlaylist.id)
     var expected = dataSerial
+    var requestSerial = playlistItemsSerial
     playlistItemsLoading = true
     spotifyApi.request("GET", path, append ? null : { limit: 50 }, null,
       function(status, payload, error) {
-        root.playlistItemsLoading = false
         if (expected !== root.dataSerial) return
+        if (requestSerial !== root.playlistItemsSerial) return
         if (!root.selectedPlaylist || String(root.selectedPlaylist.id) !== playlistId) return
+        root.playlistItemsLoading = false
         if (error) {
+          root.playlistRestoreTargetCount = 0
           var hidden = Api.playlistItemsHiddenByApi(status,
             root.playlistOwned(root.selectedPlaylist),
             root.selectedPlaylist.collaborative === true,
@@ -1696,11 +1719,26 @@ Item {
           append, page.next)
         root.playlistItems = playlistPage.items
         root.playlistItemsNext = playlistPage.next
+        if (Api.playlistRestoreShouldContinue(root.playlistItems.length,
+            root.playlistRestoreTargetCount, root.playlistItemsNext))
+          root.loadPlaylistItems(true)
+        else root.playlistRestoreTargetCount = 0
       })
   }
 
   function loadMorePlaylistItems() {
     loadPlaylistItems(true)
+  }
+
+  function ensurePlaylistItemCount(value) {
+    if (!selectedPlaylist || !selectedPlaylist.id) return
+    var target = Api.normalizedPlaylistRestoreCount(value)
+    if (target <= playlistItems.length) return
+    playlistRestoreTargetCount = Math.max(playlistRestoreTargetCount, target)
+    if (playlistItemsLoading) return
+    if (playlistItems.length === 0) loadPlaylistItems(false)
+    else if (playlistItemsNext) loadPlaylistItems(true)
+    else playlistRestoreTargetCount = 0
   }
 
   function createPlaylist(name, callback) {
@@ -1864,7 +1902,12 @@ Item {
 
   function reloadPlaylist(playlist) {
     if (!playlist) return
+    var restoredDetailItemCount = detailRememberedItemCount
     if (selectedPlaylist && selectedPlaylist.id === playlist.id) {
+      var restoredItemCount = playlistRememberedItemCount
+      playlistItemsSerial++
+      playlistItemsLoading = false
+      playlistRestoreTargetCount = restoredItemCount
       playlistItems = []
       playlistItemsNext = ""
       playlistItemsError = ""
@@ -1872,7 +1915,7 @@ Item {
       loadPlaylistItems(false)
     }
     if (detailItem && detailItem.type === "playlist" && detailItem.id === playlist.id)
-      openDetail(detailItem)
+      openDetail(detailItem, "", restoredDetailItemCount)
   }
 
   function removePlaylistItem(item, index, playlist) {
@@ -1978,11 +2021,13 @@ Item {
     })
   }
 
-  function openDetail(item, requestedArtistQuery) {
+  function openDetail(item, requestedArtistQuery, restoredItemCount) {
     if (!item || !item.id || item.kind !== "context") return
     var type = String(item.type || "")
     if (["artist", "album", "playlist", "show", "audiobook"].indexOf(type) < 0) return
     var serial = ++detailSerial
+    detailRestoreTargetCount = type === "playlist" ? Math.min(cacheLimit,
+      Api.normalizedPlaylistRestoreCount(restoredItemCount)) : 0
     detailItem = item
     detailItems = []
     detailNext = ""
@@ -2010,6 +2055,7 @@ Item {
     spotifyApi.request("GET", metadataPath, null, null, function(status, payload, error) {
       if (serial !== root.detailSerial) return
       if (error) {
+        root.detailRestoreTargetCount = 0
         root.detailLoading = false
         root.fail(error)
         return
@@ -2027,6 +2073,10 @@ Item {
       root.detailNext = page.next
       root.detailLoading = false
       root.checkSavedItems(root.detailItems)
+      if (type === "playlist" && Api.playlistRestoreShouldContinue(
+          root.detailItems.length, root.detailRestoreTargetCount,
+          root.detailNext)) root.loadMoreDetail()
+      else root.detailRestoreTargetCount = 0
       if (type === "playlist" && !payload.items && !payload.tracks)
         root.detailMessage = Api.playlistItemsHiddenMessage()
     })
@@ -2185,14 +2235,32 @@ Item {
     spotifyApi.request("GET", path, null, null, function(status, payload, error) {
       if (serial !== root.detailSerial) return
       root.detailLoading = false
-      if (error) { root.fail(error); return }
+      if (error) {
+        root.detailRestoreTargetCount = 0
+        root.fail(error)
+        return
+      }
       var page = root.detailPageFromPayload(payload, type, parent)
       root.detailItems = (type === "playlist"
         ? root.detailItems.concat(page.items)
         : Api.mergeUnique(root.detailItems, page.items)).slice(0, root.cacheLimit)
       root.detailNext = root.detailItems.length >= root.cacheLimit ? "" : page.next
       root.checkSavedItems(page.items)
+      if (type === "playlist" && Api.playlistRestoreShouldContinue(
+          root.detailItems.length, root.detailRestoreTargetCount,
+          root.detailNext)) root.loadMoreDetail()
+      else root.detailRestoreTargetCount = 0
     })
+  }
+
+  function ensureDetailItemCount(value) {
+    if (!detailItem || detailItem.type !== "playlist") return
+    var target = Math.min(cacheLimit, Api.normalizedPlaylistRestoreCount(value))
+    if (target <= detailItems.length) return
+    detailRestoreTargetCount = Math.max(detailRestoreTargetCount, target)
+    if (detailLoading) return
+    if (detailNext) loadMoreDetail()
+    else detailRestoreTargetCount = 0
   }
 
   function currentContext(kind, callback) {
@@ -3417,6 +3485,7 @@ Item {
 
   function clearData() {
     radioSerial++
+    playlistItemsSerial++
     clearPendingPlayback()
     radioContextSelected = false
     playlists = []
@@ -3444,6 +3513,7 @@ Item {
     playlistItemsNext = ""
     playlistItemsError = ""
     playlistItemsStatus = 0
+    playlistRestoreTargetCount = 0
     selectedPlaylist = null
     currentUserId = ""
     currentUserName = ""
@@ -3503,6 +3573,7 @@ Item {
     detailNext = ""
     detailLoading = false
     detailMessage = ""
+    detailRestoreTargetCount = 0
     artistCatalogSerial++
     artistCatalogQuery = ""
     artistAlbums = []

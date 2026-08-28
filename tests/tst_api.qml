@@ -378,12 +378,21 @@ TestCase {
 
     var encoded = Api.encodeSessionRecord({
       tab: "playlists",
-      searchText: "radiohead"
+      searchText: "radiohead",
+      selectedPlaylist: {
+        kind: "context", type: "playlist", id: "playlist-one",
+        uri: "spotify:playlist:playlist-one", name: "Long playlist"
+      },
+      selectedPlaylistItemCount: 150,
+      detailItemCount: 100
     }, ["radiohead", "bjork"])
     compare(JSON.parse(encoded).version, 1)
     var restored = Api.parseSessionRecord(encoded)
     compare(restored.sessionState.tab, "playlists")
     compare(restored.sessionState.searchText, "radiohead")
+    compare(restored.sessionState.selectedPlaylist.id, "playlist-one")
+    compare(restored.sessionState.selectedPlaylistItemCount, 150)
+    compare(restored.sessionState.detailItemCount, 100)
     compare(JSON.stringify(restored.searchHistory),
       JSON.stringify(["radiohead", "bjork"]))
     compare(Api.sessionRecordIsEmpty(restored), false)
@@ -874,6 +883,23 @@ TestCase {
     verify(refreshed.items === incoming)
     compare(refreshed.items.length, 50)
     compare(refreshed.next, "")
+  }
+
+  function test_playlistRestoreCount_isBoundedAndContinuesOnlyWithNextPage() {
+    compare(Api.normalizedPlaylistRestoreCount(undefined), 0)
+    compare(Api.normalizedPlaylistRestoreCount(-10), 0)
+    compare(Api.normalizedPlaylistRestoreCount(149.9), 149)
+    compare(Api.normalizedPlaylistRestoreCount(999999), 10000)
+
+    var nextUrl = Api.API_BASE + "/playlists/list/items?offset=50"
+    verify(Api.playlistRestorePending(50, 150, true, ""))
+    verify(Api.playlistRestorePending(50, 150, false, nextUrl))
+    verify(!Api.playlistRestorePending(150, 150, true, nextUrl))
+    verify(!Api.playlistRestorePending(50, 150, false, ""))
+    verify(Api.playlistRestoreShouldContinue(50, 150, nextUrl))
+    verify(!Api.playlistRestoreShouldContinue(150, 150, nextUrl))
+    verify(!Api.playlistRestoreShouldContinue(50, 150,
+      "https://attacker.example/items?offset=50"))
   }
 
   function test_playbackBodies() {

@@ -119,9 +119,10 @@ to **Set up and continue**, then Spotify sign-in finishes in your browser. You
 can move the widget later with Omarchy's bar controls.
 
 Local playback installs an exact-version backend only after its GitHub build
-provenance matches this plugin's checked-out source commit. If verification is
-unavailable, setup builds the locked Rust source locally or offers Omarchy's
-packaged `spotifyd` fallback instead of executing an unverified download.
+provenance matches this plugin version's tag and the checkout's backend inputs
+still match that tagged source. If verification is unavailable, setup builds
+the locked Rust source locally or offers Omarchy's packaged `spotifyd` fallback
+instead of executing an unverified download.
 
 > Requires Omarchy 4 and a personal Spotify Premium account.
 

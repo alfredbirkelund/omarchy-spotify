@@ -1828,6 +1828,24 @@ function playlistPageState(existing, incoming, append, next) {
   }
 }
 
+var PLAYLIST_RESTORE_ITEM_LIMIT = 10000
+
+function normalizedPlaylistRestoreCount(value) {
+  var count = Math.floor(Number(value) || 0)
+  return Math.max(0, Math.min(PLAYLIST_RESTORE_ITEM_LIMIT, count))
+}
+
+function playlistRestorePending(itemCount, targetCount, loading, next) {
+  var loaded = Math.max(0, Math.floor(Number(itemCount) || 0))
+  var target = normalizedPlaylistRestoreCount(targetCount)
+  if (target <= loaded) return false
+  return loading === true || safeApiUrl(next) !== ""
+}
+
+function playlistRestoreShouldContinue(itemCount, targetCount, next) {
+  return playlistRestorePending(itemCount, targetCount, false, next)
+}
+
 function searchTypeKey(type) {
   var value = String(type || "track")
   if (value === "artist") return "artists"

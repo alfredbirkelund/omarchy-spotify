@@ -25,6 +25,7 @@ Item {
   property string emptyMessage: "Nothing here yet."
   property real restoredContentY: 0
   property string stateKey: ""
+  property bool restoreReady: true
   property bool restoreApplied: false
   property bool keyboardSortSelected: false
   property bool keyboardMoreSelected: false
@@ -231,20 +232,21 @@ Item {
   }
 
   function restoreView() {
-    if (restoreApplied || restoredContentY <= 0 || mediaList.count <= 0) return
+    if (!restoreReady || restoreApplied || restoredContentY <= 0
+        || mediaList.count <= 0) return
     restoreTimer.restart()
   }
 
   function resetRestore() {
     restoreApplied = false
-    restoreTimer.restart()
+    if (restoreReady) restoreTimer.restart()
   }
 
   Timer {
     id: restoreTimer
     interval: 0
     onTriggered: {
-      if (root.restoreApplied) return
+      if (!root.restoreReady || root.restoreApplied) return
       if (root.restoredContentY <= 0) {
         mediaList.contentY = mediaList.originY
         root.restoreApplied = true
@@ -262,6 +264,7 @@ Item {
   Component.onCompleted: restoreView()
   onRestoredContentYChanged: resetRestore()
   onStateKeyChanged: resetRestore()
+  onRestoreReadyChanged: if (restoreReady) resetRestore()
   onCanReorderChanged: if (!canReorder) cancelReorder()
   Component.onDestruction: rememberView()
 

@@ -42,6 +42,9 @@ Item {
   property var navigationStack: []
   property string lastContentTab: "home"
   property string restoredPlaylistId: ""
+  property var restoredPlaylist: null
+  property int restoredPlaylistItemCount: 0
+  property int restoredDetailItemCount: 0
 
   property string draftDeviceName: "Omarchy Spotify"
   property string draftIdleMinutes: "15"
@@ -441,17 +444,33 @@ Item {
     searchInContext = true
     universalSearchActive = false
     restoreScrollPositions(state.scrollPositions)
-    restoredPlaylistId = String(state.selectedPlaylistId || "")
+    restoredPlaylist = state.selectedPlaylist && state.selectedPlaylist.id
+      && state.selectedPlaylist.type === "playlist" ? state.selectedPlaylist : null
+    restoredPlaylistId = String(state.selectedPlaylistId
+      || (restoredPlaylist ? restoredPlaylist.id : ""))
+    restoredPlaylistItemCount = Api.normalizedPlaylistRestoreCount(
+      state.selectedPlaylistItemCount)
+    restoredDetailItemCount = Api.normalizedPlaylistRestoreCount(
+      state.detailItemCount)
     var restoredTab = String(state.tab || "home")
     if (["home", "discover", "search", "library", "playlists", "detail", "queue", "devices", "setup"]
         .indexOf(restoredTab) >= 0) currentTab = restoredTab
-    if (restoreDetail !== false && currentTab === "detail" && state.detailItem)
-      service.openDetail(state.detailItem, artistSearchText)
+    if (restoreDetail !== false && currentTab === "detail" && state.detailItem) {
+      var sameDetail = service.detailItem
+        && String(service.detailItem.id) === String(state.detailItem.id)
+        && String(service.detailItem.type) === String(state.detailItem.type)
+      if (sameDetail) service.ensureDetailItemCount(restoredDetailItemCount)
+      else service.openDetail(state.detailItem, artistSearchText,
+        restoredDetailItemCount)
+    }
     syncUnifiedSearchField()
   }
 
   function persistUiState() {
     if (!service) return
+    var selected = service.selectedPlaylist || restoredPlaylist
+    var selectedItemCount = service.selectedPlaylist
+      ? service.playlistRememberedItemCount : restoredPlaylistItemCount
     service.persistSession({
       tab: currentTab === "login" ? "home" : currentTab,
       searchText: searchText,
@@ -471,15 +490,28 @@ Item {
         && service.detailItem.type === "artist" ? artistSearchText : "",
       scrollPositions: scrollPositions,
       detailItem: currentTab === "detail" && service.detailItem ? service.detailItem : null,
-      selectedPlaylistId: service.selectedPlaylist ? service.selectedPlaylist.id : restoredPlaylistId,
+      detailItemCount: currentTab === "detail" && service.detailItem
+        && service.detailItem.type === "playlist"
+        ? service.detailRememberedItemCount : 0,
+      selectedPlaylist: selected,
+      selectedPlaylistId: selected ? selected.id : restoredPlaylistId,
+      selectedPlaylistItemCount: selectedItemCount,
       lastRadioPlaylist: service.lastRadioPlaylist
     })
   }
 
   function restorePlaylistSelection() {
-    if (!service || !restoredPlaylistId || service.selectedPlaylist) return
+    if (!service || !restoredPlaylistId || currentTab !== "playlists") return
+    if (service.selectedPlaylist) {
+      if (String(service.selectedPlaylist.id) === restoredPlaylistId)
+        service.ensurePlaylistItemCount(restoredPlaylistItemCount)
+      return
+    }
     var playlist = service.playlistById(restoredPlaylistId)
-    if (playlist) service.openPlaylist(playlist)
+    if (!playlist && restoredPlaylist
+        && String(restoredPlaylist.id) === restoredPlaylistId)
+      playlist = restoredPlaylist
+    if (playlist) service.openPlaylist(playlist, restoredPlaylistItemCount)
   }
 
   function openItem(item) {
@@ -1788,6 +1820,7 @@ Item {
     if (service) {
       service.setUiVisible("full-panel", true)
       service.activate(currentTab)
+      restorePlaylistSelection()
       if (currentTab === "detail" && requestedDetail)
         service.openDetail(requestedDetail)
       if (currentTab === "search" && searchText && service.searchQuery !== searchText)
@@ -1844,7 +1877,10 @@ Item {
     currentTab = tab
     if (tab !== "detail") navigationStack = []
     openedForLogin = false
-    if (service) service.openView(tab, false)
+    if (service) {
+      service.openView(tab, false)
+      if (tab === "playlists") restorePlaylistSelection()
+    }
     syncUnifiedSearchField()
   }
 
@@ -5007,6 +5043,7 @@ Item {
             ? root.service.detailItem.uri : ""))
           stateKey: "detail:" + (root.service && root.service.detailItem
             ? root.service.detailItem.uri : "")
+          restoreReady: !root.service || !root.service.detailRestorePending
           emptyMessage: root.service && root.service.detailMessage
             ? root.service.detailMessage : "No items are available for this selection."
           onActivated: function(item, items, uri) {
@@ -5413,6 +5450,7 @@ Item {
             && root.service.selectedPlaylist ? root.service.selectedPlaylist.id : ""))
           stateKey: "playlist:" + (root.service && root.service.selectedPlaylist
             ? root.service.selectedPlaylist.id : "")
+          restoreReady: !root.service || !root.service.playlistRestorePending
           onActivated: function(item, items, uri) {
             root.activateMedia(item, items, uri)
           }
