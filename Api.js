@@ -1998,6 +1998,27 @@ function touchHistory(values, term, maximum) {
   return result
 }
 
+var PLAYBACK_URI_LIMIT = 100
+
+function playbackUsesVisibleOrder(contextUri, filterText, sortKey) {
+  var context = String(contextUri || "")
+  if (!/^spotify:(album|playlist):/.test(context)) return false
+  return String(filterText || "").trim() !== ""
+    || String(sortKey || "default") !== "default"
+}
+
+function playbackContextForView(contextUri, filterText, sortKey) {
+  return playbackUsesVisibleOrder(contextUri, filterText, sortKey)
+    ? "" : String(contextUri || "")
+}
+
+function visibleOrderPlaybackMessage(itemCount) {
+  var count = Math.max(0, Math.floor(Number(itemCount) || 0))
+  return count > PLAYBACK_URI_LIMIT
+    ? "Playing the displayed order for 100 items; Spotify limits custom playback to 100"
+    : "Playing the displayed order"
+}
+
 function playbackContextOffsetPosition(item, sourceItems, contextUri) {
   var context = String(contextUri || "")
   var values = Array.isArray(sourceItems) ? sourceItems : []
@@ -2071,10 +2092,31 @@ function playbackBody(item, sourceItems, contextUri) {
   // at the clicked row and wrap once; Spotify accepts at most 100 URIs.
   var values = Array.isArray(sourceItems) ? sourceItems : []
   var start = -1
+  // Prefer the exact row object so a playlist containing the same track more
+  // than once starts from the occurrence the user actually selected.
   for (var i = 0; i < values.length; i++) {
-    if (values[i] && String(values[i].uri || "") === itemUri) {
+    if (values[i] === item) {
       start = i
       break
+    }
+  }
+  if (start < 0 && item.playlistPosition !== undefined) {
+    var wantedPosition = Number(item.playlistPosition)
+    for (var positionIndex = 0; positionIndex < values.length; positionIndex++) {
+      var positioned = values[positionIndex]
+      if (positioned && Number(positioned.playlistPosition) === wantedPosition
+          && String(positioned.uri || "") === itemUri) {
+        start = positionIndex
+        break
+      }
+    }
+  }
+  if (start < 0) {
+    for (var uriIndex = 0; uriIndex < values.length; uriIndex++) {
+      if (values[uriIndex] && String(values[uriIndex].uri || "") === itemUri) {
+        start = uriIndex
+        break
+      }
     }
   }
   if (start < 0) {
@@ -2084,13 +2126,12 @@ function playbackBody(item, sourceItems, contextUri) {
   }
 
   var uris = []
-  var seen = {}
-  for (var step = 0; step < values.length && uris.length < 100; step++) {
+  for (var step = 0; step < values.length
+      && uris.length < PLAYBACK_URI_LIMIT; step++) {
     var candidate = values[(start + step) % values.length]
     if (!candidate || candidate.kind !== "item") continue
     var uri = String(candidate.uri || "")
-    if (!uri || seen[uri]) continue
-    seen[uri] = true
+    if (!uri) continue
     uris.push(uri)
   }
   var body = { uris: uris.length ? uris : [itemUri] }

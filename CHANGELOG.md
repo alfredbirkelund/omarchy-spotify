@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Follow the displayed playlist or album order when a list is sorted or
+  filtered, including row, context-menu, and playlist-level Play actions.
+  Original views keep Spotify's native context playback; longer custom orders
+  explain Spotify's 100-item request limit.
 - Restore the selected playlist, every explicitly loaded page, and its scroll
   position after the panel or shell is reopened.
 - Accept the version tag's attested playback backend when newer commits change

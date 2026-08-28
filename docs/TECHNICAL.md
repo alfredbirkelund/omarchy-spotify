@@ -133,6 +133,12 @@ as Sonos receive a receiver-scoped code exchanged from that grant.
 It then waits for Spotify to report the genuine device before transferring
 playback when needed. It never asks for or stores the user's password.
 
+An album or playlist in its unfiltered Original order starts Spotify's native
+context, preserving the complete server-side collection. Sorting or filtering
+switches row, context-menu, and collection-level playback to the displayed URI
+sequence instead. Spotify accepts at most 100 URIs in one custom play request,
+so the interface reports that limit when a longer visible sequence is started.
+
 Once a restricted Sonos is active, the Web API rejects its player commands.
 The app therefore resolves that same receiver on the LAN and sends fixed UPnP
 AVTransport or RenderingControl actions for play, pause, previous, next, seek,

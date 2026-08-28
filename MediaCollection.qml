@@ -53,6 +53,10 @@ Item {
   property int dragAutoScrollDirection: 0
 
   readonly property var visibleItems: Api.filteredSorted(sourceItems, filterText, sortKey)
+  readonly property bool playbackUsesVisibleOrder: Api.playbackUsesVisibleOrder(
+    contextUri, filterText, sortKey)
+  readonly property string playbackContextUri: Api.playbackContextForView(
+    contextUri, filterText, sortKey)
   readonly property var sortKeys: ["default", "name", "artist", "album", "duration",
     "date", "date-asc"]
   readonly property bool canReorder: allowReorder && !reorderBusy
@@ -67,7 +71,7 @@ Item {
   signal playlistRequested(var item)
   signal saveToggled(var item)
   signal contextRequested(var item, real sceneX, real sceneY, int index,
-    var sourceItems, string contextUri)
+    var sourceItems, string contextUri, string playbackContextUri)
   signal reorderRequested(int sourceIndex, int destinationIndex)
   signal loadMoreRequested()
   signal viewStateChanged(string filterText, string sortKey, real contentY)
@@ -112,7 +116,8 @@ Item {
       x: point.x,
       y: point.y,
       items: visibleItems,
-      uri: contextUri
+      uri: contextUri,
+      playbackUri: playbackContextUri
     }
   }
 
@@ -423,7 +428,7 @@ Item {
           }
         }
         onActivated: function(item) {
-          root.activated(item, root.visibleItems, root.contextUri)
+          root.activated(item, root.visibleItems, root.playbackContextUri)
         }
         onOpenRequested: function(item) { root.opened(item) }
         onArtistRequested: function(item) { root.opened(item) }
@@ -433,7 +438,7 @@ Item {
         onSaveRequested: function(item) { root.saveToggled(item) }
         onContextRequested: function(item, sceneX, sceneY) {
           root.contextRequested(item, sceneX, sceneY, index,
-            root.visibleItems, root.contextUri)
+            root.visibleItems, root.contextUri, root.playbackContextUri)
         }
         onReorderDragStarted: function(sceneY) {
           root.beginReorder(index, sceneY)

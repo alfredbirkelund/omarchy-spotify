@@ -70,6 +70,7 @@ Item {
   property var contextItem: null
   property var contextSourceItems: []
   property string contextSourceUri: ""
+  property string contextPlaybackUri: ""
   property int contextSourceIndex: -1
   property var contextPlaylist: null
   property var pendingPlaylistItem: null
@@ -296,11 +297,14 @@ Item {
     return "Ready — starts automatically when you play music"
   }
 
-  function openMediaContext(item, sceneX, sceneY, sourceItems, contextUri, index) {
+  function openMediaContext(item, sceneX, sceneY, sourceItems, contextUri, index,
+      playbackContextUri) {
     if (!item) return
     contextItem = item
     contextSourceItems = Array.isArray(sourceItems) ? sourceItems : []
     contextSourceUri = String(contextUri || "")
+    contextPlaybackUri = playbackContextUri === undefined
+      ? contextSourceUri : String(playbackContextUri || "")
     contextSourceIndex = index === undefined ? -1 : Math.floor(Number(index))
     contextPlaylist = playlistForContext(contextSourceUri)
     mediaContextMenu.x = Math.max(Style.space(6), Math.min(
@@ -588,10 +592,26 @@ Item {
     syncUnifiedSearchField()
   }
 
-  function activateMedia(item, sourceItems, contextUri) {
+  function activateMedia(item, sourceItems, contextUri, successMessage) {
     if (!item || !service) return
     if (unifiedSearchField.activeFocus) focusScope.forceActiveFocus()
-    service.playItem(item, sourceItems, contextUri)
+    service.playItem(item, sourceItems, contextUri, successMessage)
+  }
+
+  function playSelectedPlaylist() {
+    if (!service || !service.selectedPlaylist) return
+    var collection = pageCollection()
+    if (collection && collection.playbackUsesVisibleOrder) {
+      var items = Api.arrayValues(collection.visibleItems)
+      if (!items.length) {
+        service.fail("No visible playlist items to play")
+        return
+      }
+      activateMedia(items[0], items, "",
+        Api.visibleOrderPlaybackMessage(items.length))
+      return
+    }
+    activateMedia(service.selectedPlaylist)
   }
 
   function textInputFocused() {
@@ -1207,7 +1227,7 @@ Item {
     } else if (action.indexOf("search-") === 0) {
       searchType = action.substring(7)
     } else if (action === "playlist-play" && service && service.selectedPlaylist)
-      activateMedia(service.selectedPlaylist)
+      playSelectedPlaylist()
     else if (action === "playlist-more" && service && service.selectedPlaylist)
       openMediaContext(service.selectedPlaylist, Style.space(80),
         Style.space(120), [], service.selectedPlaylist.uri, -1)
@@ -1275,7 +1295,7 @@ Item {
       var anchor = collection.currentContextAnchor()
       if (anchor && anchor.item) {
         openMediaContext(anchor.item, anchor.x, anchor.y, anchor.items,
-          anchor.uri, anchor.index)
+          anchor.uri, anchor.index, anchor.playbackUri)
         return true
       }
     }
@@ -2466,7 +2486,7 @@ Item {
         onClicked: {
           mediaContextMenu.close()
           root.activateMedia(root.contextItem, root.contextSourceItems,
-            root.contextSourceUri)
+            root.contextPlaybackUri)
         }
       }
 
@@ -4401,8 +4421,8 @@ Item {
           onQueued: function(item) { if (root.service) root.service.addToQueue(item) }
           onPlaylistRequested: function(item) { root.openPlaylistPicker(item) }
           onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
-          onContextRequested: function(item, x, y, index, items, uri) {
-            root.openMediaContext(item, x, y, items, uri, index)
+          onContextRequested: function(item, x, y, index, items, uri, playbackUri) {
+            root.openMediaContext(item, x, y, items, uri, index, playbackUri)
           }
           onViewStateChanged: function(filter, sort, y) {
             root.rememberScroll("home:" + root.homeType, y)
@@ -4440,8 +4460,8 @@ Item {
         }
         onOpened: function(item) { root.openItem(item) }
         onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
-        onContextRequested: function(item, x, y, index, items, uri) {
-          root.openMediaContext(item, x, y, items, uri, index)
+        onContextRequested: function(item, x, y, index, items, uri, playbackUri) {
+          root.openMediaContext(item, x, y, items, uri, index, playbackUri)
         }
         onViewStateChanged: function(filter, sort, y) {
           root.rememberScroll("discover", y)
@@ -4730,8 +4750,8 @@ Item {
                 }
                 onOpened: function(item) { root.openItem(item) }
                 onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
-                onContextRequested: function(item, x, y, index, items, uri) {
-                  root.openMediaContext(item, x, y, items, uri, index)
+                onContextRequested: function(item, x, y, index, items, uri, playbackUri) {
+                  root.openMediaContext(item, x, y, items, uri, index, playbackUri)
                 }
                 onLoadMoreRequested: if (root.service) root.service.loadMoreArtistAlbums()
               }
@@ -4777,8 +4797,8 @@ Item {
                 onQueued: function(item) { if (root.service) root.service.addToQueue(item) }
                 onPlaylistRequested: function(item) { root.openPlaylistPicker(item) }
                 onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
-                onContextRequested: function(item, x, y, index, items, uri) {
-                  root.openMediaContext(item, x, y, items, uri, index)
+                onContextRequested: function(item, x, y, index, items, uri, playbackUri) {
+                  root.openMediaContext(item, x, y, items, uri, index, playbackUri)
                 }
                 onLoadMoreRequested: if (root.service) root.service.loadMoreArtistSongs()
               }
@@ -5053,8 +5073,8 @@ Item {
           onQueued: function(item) { if (root.service) root.service.addToQueue(item) }
           onPlaylistRequested: function(item) { root.openPlaylistPicker(item) }
           onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
-          onContextRequested: function(item, x, y, index, items, uri) {
-            root.openMediaContext(item, x, y, items, uri, index)
+          onContextRequested: function(item, x, y, index, items, uri, playbackUri) {
+            root.openMediaContext(item, x, y, items, uri, index, playbackUri)
           }
           onReorderRequested: function(sourceIndex, destinationIndex) {
             if (root.service && root.service.detailItem)
@@ -5202,8 +5222,8 @@ Item {
           onQueued: function(item) { if (root.service) root.service.addToQueue(item) }
           onPlaylistRequested: function(item) { root.openPlaylistPicker(item) }
           onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
-          onContextRequested: function(item, x, y, index, items, uri) {
-            root.openMediaContext(item, x, y, items, uri, index)
+          onContextRequested: function(item, x, y, index, items, uri, playbackUri) {
+            root.openMediaContext(item, x, y, items, uri, index, playbackUri)
           }
           onLoadMoreRequested: if (root.service) root.service.loadMoreSearch(root.searchType)
           onViewStateChanged: function(filter, sort, y) {
@@ -5288,8 +5308,8 @@ Item {
           onQueued: function(item) { if (root.service) root.service.addToQueue(item) }
           onPlaylistRequested: function(item) { root.openPlaylistPicker(item) }
           onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
-          onContextRequested: function(item, x, y, index, items, uri) {
-            root.openMediaContext(item, x, y, items, uri, index)
+          onContextRequested: function(item, x, y, index, items, uri, playbackUri) {
+            root.openMediaContext(item, x, y, items, uri, index, playbackUri)
           }
           onLoadMoreRequested: if (root.service) root.service.loadLibrary(root.libraryType, true)
           onViewStateChanged: function(filter, sort, y) {
@@ -5373,8 +5393,14 @@ Item {
               text: "Play"
               foreground: root.foreground
               selected: true
+              enabled: !playlistItemsCollection.playbackUsesVisibleOrder
+                || playlistItemsCollection.visibleItems.length > 0
               hasCursor: root.cursorOn("page", "playlist-play")
-              onClicked: root.activateMedia(root.service.selectedPlaylist)
+              tooltipText: playlistItemsCollection.playbackUsesVisibleOrder
+                ? Api.visibleOrderPlaybackMessage(
+                  playlistItemsCollection.visibleItems.length)
+                : "Play this playlist in its original order"
+              onClicked: root.playSelectedPlaylist()
               onHovered: function(on) {
                 if (on) root.setPanelCursor("page", "playlist-play")
               }
@@ -5452,14 +5478,16 @@ Item {
             ? root.service.selectedPlaylist.id : "")
           restoreReady: !root.service || !root.service.playlistRestorePending
           onActivated: function(item, items, uri) {
-            root.activateMedia(item, items, uri)
+            root.activateMedia(item, items, uri,
+              playbackUsesVisibleOrder
+                ? Api.visibleOrderPlaybackMessage(items.length) : "")
           }
           onOpened: function(item) { root.openItem(item) }
           onQueued: function(item) { if (root.service) root.service.addToQueue(item) }
           onPlaylistRequested: function(item) { root.openPlaylistPicker(item) }
           onSaveToggled: function(item) { if (root.service) root.service.toggleSaved(item) }
-          onContextRequested: function(item, x, y, index, items, uri) {
-            root.openMediaContext(item, x, y, items, uri, index)
+          onContextRequested: function(item, x, y, index, items, uri, playbackUri) {
+            root.openMediaContext(item, x, y, items, uri, index, playbackUri)
           }
           onReorderRequested: function(sourceIndex, destinationIndex) {
             if (root.service && root.service.selectedPlaylist)

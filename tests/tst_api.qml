@@ -958,6 +958,45 @@ TestCase {
     }))
   }
 
+  function test_playbackContext_followsTheDisplayedOrderOnlyWhenCustomized() {
+    var playlist = "spotify:playlist:list"
+    var album = "spotify:album:record"
+    compare(Api.playbackContextForView(playlist, "", "default"), playlist)
+    compare(Api.playbackContextForView(playlist, "miles", "default"), "")
+    compare(Api.playbackContextForView(playlist, "", "name"), "")
+    compare(Api.playbackContextForView(album, "", "date"), "")
+    compare(Api.playbackContextForView("spotify:show:podcast", "", "name"),
+      "spotify:show:podcast")
+    verify(Api.playbackUsesVisibleOrder(playlist, "miles", "default"))
+    verify(!Api.playbackUsesVisibleOrder(playlist, "", "default"))
+    compare(Api.visibleOrderPlaybackMessage(12), "Playing the displayed order")
+    verify(Api.visibleOrderPlaybackMessage(114).indexOf("100 items") >= 0)
+    compare(Api.PLAYBACK_URI_LIMIT, 100)
+  }
+
+  function test_visibleOrderPlayback_preservesOccurrencesAndCapsLongLists() {
+    var duplicateRows = [
+      { kind: "item", uri: "spotify:track:duplicate", playlistPosition: 0 },
+      { kind: "item", uri: "spotify:track:middle", playlistPosition: 1 },
+      { kind: "item", uri: "spotify:track:duplicate", playlistPosition: 2 },
+      { kind: "item", uri: "spotify:track:last", playlistPosition: 3 }
+    ]
+    compare(JSON.stringify(Api.playbackBody(duplicateRows[2], duplicateRows, "")),
+      JSON.stringify({ uris: ["spotify:track:duplicate", "spotify:track:last",
+        "spotify:track:duplicate", "spotify:track:middle"] }))
+
+    var longRows = []
+    for (var i = 0; i < 114; i++)
+      longRows.push({ kind: "item", uri: "spotify:track:" + i,
+        playlistPosition: i })
+    var body = Api.playbackBody(longRows[110], longRows, "")
+    compare(body.uris.length, Api.PLAYBACK_URI_LIMIT)
+    compare(body.uris[0], "spotify:track:110")
+    compare(body.uris[3], "spotify:track:113")
+    compare(body.uris[4], "spotify:track:0")
+    compare(body.uris[99], "spotify:track:95")
+  }
+
   function test_playbackPreservesActiveDeviceAndFallsBackToLocal() {
     var external = { id: "desktop", local: false, active: true, restricted: false }
     var local = { id: "omarchy", local: true, active: false, restricted: false }
