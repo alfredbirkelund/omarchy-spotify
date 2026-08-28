@@ -1769,11 +1769,11 @@ Item {
       service.lengthSeconds))
   }
 
-  function setPanelVolume(value) {
+  function setPanelVolume(value, live) {
     if (!service || !service.volumeSupported) return
     var next = Api.nextVolume(value, 0)
     if (Api.shouldRememberVolume(next)) volumeBeforeMute = next
-    service.setVolume(next)
+    service.setVolume(next, live === true)
   }
 
   function adjustVolume(delta) {
@@ -4304,7 +4304,10 @@ Item {
                   sourceValue: root.service ? root.service.volume : 0
                   sourcePending: root.service && root.service.volumePending
                   contextKey: root.service ? root.service.playbackDeviceName : ""
-                  onCommitted: function(value) { root.setPanelVolume(value) }
+                  liveCommit: true
+                  onCommitted: function(value, live) {
+                    root.setPanelVolume(value, live)
+                  }
                   onRightClicked: root.toggleMute()
 
                   HoverHandler { id: volumeSliderHover }

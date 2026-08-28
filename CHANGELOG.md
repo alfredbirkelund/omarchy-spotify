@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Apply volume while the volume slider is dragged, in both the bar popup and the
+  player, instead of waiting for the mouse release. Commands are coalesced per
+  backend: 80 ms for local spotifyd, 250 ms for Spotify Connect devices so the
+  Web API is not rate limited, and 120 ms retries for a Sonos whose helper is
+  still busy, so the released position is always the volume that lands. Playback
+  state is refetched once the drag settles rather than after every command.
+- Remember the pre-mute level when the bar popup volume slider is used, so `M`
+  restores the dragged volume.
 - Keep paused media advertised and resumable after the player closes. Paused
   title and artist text remains visible by default and can be hidden in the
   bar settings without stopping the session.

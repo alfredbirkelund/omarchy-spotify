@@ -511,7 +511,16 @@ var MUTE_THRESHOLD = 0.001
 var UNMUTE_FLOOR = 0.05
 var SEARCH_DEBOUNCE_MS = 600
 var VOLUME_FLUSH_MS = 80
+var VOLUME_FLUSH_REMOTE_MS = 250
+var VOLUME_FLUSH_SONOS_MS = 120
 var SLIDER_VOLUME_ACK_TOLERANCE = 0.04
+
+function volumeFlushInterval(target) {
+  var backend = String(target || "").trim().toLowerCase()
+  if (backend === "remote") return VOLUME_FLUSH_REMOTE_MS
+  if (backend === "sonos") return VOLUME_FLUSH_SONOS_MS
+  return VOLUME_FLUSH_MS
+}
 
 function nextVolume(current, delta) {
   return clampUnit((Number(current) || 0) + (Number(delta) || 0))

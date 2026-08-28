@@ -47,6 +47,17 @@ transitions, seeks, and passthrough are unchanged. This fixes both the queued
 tail and the smaller waveform discontinuity without changing PipeWire routing
 or speaker tuning.
 
+Volume sliders apply while the knob moves; the seek slider still commits on
+release so a drag cannot make the player re-buffer per frame. A drag emits a
+command per input event, so `Service` coalesces them: the first value is sent
+immediately and later ones are queued and flushed at a per-backend interval,
+`Api.volumeFlushInterval` — 80 ms for a local MPRIS property write, 250 ms for
+the rate-limited Web API, and 120 ms for Sonos. The queued value is only cleared
+once a backend accepts the command, so the position the knob was released at is
+always the one that lands. The optimistic slider value is held until the player
+reports it, and playback state is refetched once the drag settles rather than
+after every command.
+
 ## Runtime requirements
 
 - Omarchy 4 with the Quickshell shell enabled
@@ -145,11 +156,13 @@ AVTransport or RenderingControl actions for play, pause, previous, next, seek,
 shuffle/repeat mode, and volume. Targets still come only from validated local
 Spotify Connect discovery. Discovery also reads the current Sonos master volume
 from RenderingControl because Spotify's `volume_percent` field is nullable; the
-UI remembers that value and updates it immediately after a volume command. When
-playback has moved elsewhere, a local Play wake is attempted first; the OAuth
-activation flow remains the fallback for a Sonos that has actually lost its
-Spotify session. Receiver discovery and requests are retried briefly because
-Sonos can sleep its endpoint during a handoff.
+UI remembers that value and updates it immediately after a volume command. The
+helper drops any command issued while an earlier one is still running, so a
+volume drag checks `controlBusy` and retries the queued value instead of losing
+it. When playback has moved elsewhere, a local Play wake is attempted first;
+the OAuth activation flow remains the fallback for a Sonos that has actually
+lost its Spotify session. Receiver discovery and requests are retried briefly
+because Sonos can sleep its endpoint during a handoff.
 
 The current-playback response is also merged into the device list. This matters
 for models that Spotify omits from `/me/player/devices`, or whose active device

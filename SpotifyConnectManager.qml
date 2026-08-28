@@ -29,6 +29,12 @@ Item {
   property string controlResult: ""
   property string lastError: ""
 
+  // control() silently drops commands while a helper process is in flight.
+  // Callers that repeat a command, such as a volume drag, check this so they can
+  // retry instead of losing the value they sent last.
+  readonly property bool controlBusy: controlling || controlCommand.running
+    || activating
+
   signal refreshed()
   signal refreshFailed(string reason)
   signal activated(string deviceId)

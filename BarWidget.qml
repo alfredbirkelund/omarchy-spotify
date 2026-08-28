@@ -363,12 +363,17 @@ BarWidget {
       spotify.lengthSeconds))
   }
 
+  function setVolumeValue(value, live) {
+    if (!spotify || !spotify.volumeSupported) return false
+    var next = Api.nextVolume(value, 0)
+    if (Api.shouldRememberVolume(next)) volumeBeforeMute = next
+    spotify.setVolume(next, live === true)
+    return true
+  }
+
   function adjustVolume(delta) {
     if (!spotify || !spotify.volumeSupported) return false
-    var next = Api.nextVolume(spotify.volume, delta)
-    if (Api.shouldRememberVolume(next)) volumeBeforeMute = next
-    spotify.setVolume(next)
-    return true
+    return setVolumeValue(Api.nextVolume(spotify.volume, delta), false)
   }
 
   function toggleMute() {
@@ -1198,8 +1203,9 @@ BarWidget {
             sourcePending: root.spotify && root.spotify.volumePending
             contextKey: root.spotify ? root.spotify.playbackDeviceName : ""
             enabled: root.spotify && root.spotify.volumeSupported
-            onCommitted: function(value) {
-              if (root.spotify) root.spotify.setVolume(value)
+            liveCommit: true
+            onCommitted: function(value, live) {
+              root.setVolumeValue(value, live)
             }
           }
         }
