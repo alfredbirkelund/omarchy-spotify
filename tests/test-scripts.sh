@@ -12,6 +12,115 @@ trap 'rm -rf -- "$test_root"' EXIT
 backend_source_id=$($source_root/scripts/backend-source-id.sh)
 [[ $backend_source_id =~ ^[0-9a-f]{64}$ ]]
 
+# A release built from the manifest's version tag remains valid when main has
+# moved ahead with UI-only commits. The attestation must stay bound to the
+# tagged commit, while any committed backend change must force a source build.
+release_source="$test_root/release-source"
+release_runtime="$test_root/release-runtime"
+release_target="$test_root/release-target"
+release_mock_bin="$test_root/release-mock-bin"
+release_fixture="$test_root/release-fixture"
+release_gh_log="$test_root/release-gh.log"
+release_cargo_log="$test_root/release-cargo.log"
+mkdir -p "$release_source/scripts" "$release_mock_bin" "$release_fixture"
+while IFS= read -r backend_file; do
+  mkdir -p "$release_source/$(dirname -- "$backend_file")"
+  cp -- "$source_root/$backend_file" "$release_source/$backend_file"
+done < <(git -C "$source_root" ls-files backend)
+cp -- "$source_root/scripts/build-backend.sh" \
+  "$source_root/scripts/backend-source-id.sh" "$release_source/scripts/"
+cp -- "$source_root/manifest.json" "$source_root/rust-toolchain.toml" \
+  "$release_source/"
+git -C "$release_source" init -q
+git -C "$release_source" config user.name "Omarchy Spotify tests"
+git -C "$release_source" config user.email "tests@example.invalid"
+git -C "$release_source" add .
+git -C "$release_source" commit -qm "Release source"
+git -C "$release_source" tag -a v1.0.3 -m "Release v1.0.3"
+release_commit=$(git -C "$release_source" rev-parse 'refs/tags/v1.0.3^{commit}')
+printf '%s\n' 'UI-only change after the release' >"$release_source/Panel.qml"
+git -C "$release_source" add Panel.qml
+git -C "$release_source" commit -qm "Change only the UI"
+[[ $(git -C "$release_source" rev-parse HEAD) != "$release_commit" ]]
+
+release_asset_name="omarchy-spotify-backend-$(uname -m)"
+release_asset="$release_fixture/$release_asset_name"
+release_sums="$release_fixture/SHA256SUMS"
+printf '%s\n' 'mock attested release' >"$release_asset"
+release_hash=$(sha256sum -- "$release_asset")
+printf '%s  %s\n' "${release_hash%% *}" "$release_asset_name" >"$release_sums"
+
+printf '%s\n' \
+  '#!/bin/sh' \
+  'set -eu' \
+  'output=' \
+  'while [ "$#" -gt 0 ]; do' \
+  '  case $1 in' \
+  '    -o) output=$2; shift 2 ;;' \
+  '    *) shift ;;' \
+  '  esac' \
+  'done' \
+  'case $output in' \
+  '  */SHA256SUMS) cp -- "${TEST_RELEASE_SUMS:?}" "$output" ;;' \
+  '  *) cp -- "${TEST_RELEASE_ASSET:?}" "$output" ;;' \
+  'esac' >"$release_mock_bin/curl"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'set -eu' \
+  'printf "%s\n" "$*" >>"${TEST_GH_LOG:?}"' \
+  'digest=' \
+  'while [ "$#" -gt 0 ]; do' \
+  '  case $1 in' \
+  '    --source-digest) digest=$2; shift 2 ;;' \
+  '    *) shift ;;' \
+  '  esac' \
+  'done' \
+  '[ "$digest" = "${TEST_EXPECTED_DIGEST:?}" ]' >"$release_mock_bin/gh"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'set -eu' \
+  'printf "%s\n" "$*" >>"${TEST_CARGO_LOG:?}"' \
+  'mkdir -p "${CARGO_TARGET_DIR:?}/release"' \
+  'printf "%s\n" "mock changed-source build" >"$CARGO_TARGET_DIR/release/omarchy-spotify-backend"' \
+  'chmod 755 "$CARGO_TARGET_DIR/release/omarchy-spotify-backend"' \
+  'exit 0' >"$release_mock_bin/cargo"
+chmod 755 "$release_mock_bin/curl" "$release_mock_bin/gh" \
+  "$release_mock_bin/cargo"
+: >"$release_gh_log"
+: >"$release_cargo_log"
+
+PATH="$release_mock_bin:$PATH" \
+TEST_RELEASE_ASSET="$release_asset" \
+TEST_RELEASE_SUMS="$release_sums" \
+TEST_EXPECTED_DIGEST="$release_commit" \
+TEST_GH_LOG="$release_gh_log" \
+TEST_CARGO_LOG="$release_cargo_log" \
+OMARCHY_SPOTIFY_RUNTIME_DIR="$release_runtime" \
+CARGO_TARGET_DIR="$release_target" \
+  "$release_source/scripts/build-backend.sh" >/dev/null
+cmp -s -- "$release_asset" "$release_runtime/omarchy-spotify-backend"
+[[ $(<"$release_runtime/backend-origin") == "attested-release:$release_commit" ]]
+grep -q -- "--source-digest $release_commit" "$release_gh_log"
+[[ ! -s $release_cargo_log ]]
+
+printf '%s\n' '// committed backend change' >>"$release_source/backend/src/main.rs"
+git -C "$release_source" add backend/src/main.rs
+git -C "$release_source" commit -qm "Change backend after release"
+: >"$release_gh_log"
+: >"$release_cargo_log"
+PATH="$release_mock_bin:$PATH" \
+TEST_RELEASE_ASSET="$release_asset" \
+TEST_RELEASE_SUMS="$release_sums" \
+TEST_EXPECTED_DIGEST="$release_commit" \
+TEST_GH_LOG="$release_gh_log" \
+TEST_CARGO_LOG="$release_cargo_log" \
+OMARCHY_SPOTIFY_RUNTIME_DIR="$release_runtime" \
+CARGO_TARGET_DIR="$release_target" \
+  "$release_source/scripts/build-backend.sh" >/dev/null
+[[ ! -s $release_gh_log ]]
+grep -q -- '--locked --release' "$release_cargo_log"
+grep -q '^source-build:' "$release_runtime/backend-origin"
+
 pkce_output=$("$source_root/scripts/pkce.sh")
 IFS=$'\t' read -r verifier challenge state <<<"$pkce_output"
 

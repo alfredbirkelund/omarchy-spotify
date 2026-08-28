@@ -68,18 +68,23 @@ download_verified_release() {
   [[ -z $(git -C "$source_root" status --porcelain --untracked-files=normal \
     -- backend rust-toolchain.toml 2>/dev/null) ]] || return 1
 
-  verified_commit=$(git -C "$source_root" rev-parse HEAD 2>/dev/null) || return 1
-  [[ $verified_commit =~ ^[0-9a-f]{40}$ ]] || return 1
   version=$(python3 -c \
     'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' \
     "$source_root/manifest.json") || return 1
   [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || return 1
+  expected_ref="refs/tags/v$version"
+  verified_commit=$(git -C "$source_root" rev-parse "$expected_ref^{commit}" \
+    2>/dev/null) || return 1
+  [[ $verified_commit =~ ^[0-9a-f]{40}$ ]] || return 1
+  git -C "$source_root" merge-base --is-ancestor "$verified_commit" HEAD \
+    2>/dev/null || return 1
+  git -C "$source_root" diff --quiet "$verified_commit" HEAD -- \
+    backend rust-toolchain.toml || return 1
 
   case $architecture in
     x86_64|aarch64) release_asset="omarchy-spotify-backend-$architecture" ;;
     *) return 1 ;;
   esac
-  expected_ref="refs/tags/v$version"
   release_base="https://github.com/$repository/releases/download/v$version"
   download_dir=$(mktemp -d "${TMPDIR:-/tmp}/omarchy-spotify-release.XXXXXX")
 

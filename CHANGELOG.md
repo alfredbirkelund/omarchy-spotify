@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Accept the version tag's attested playback backend when newer commits change
+  only the UI or documentation, while still falling back to a locked source
+  build whenever the backend inputs differ from that tag.
+
 ## 1.0.3 — 2026-08-26
 
 - Download playback backends only from an exact-tag GitHub release whose raw
