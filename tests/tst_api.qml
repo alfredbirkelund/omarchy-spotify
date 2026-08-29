@@ -203,6 +203,7 @@ TestCase {
     compare(Api.displayedSliderVolume(0.5, pending, 9000), 0.5)
     verify(!Api.pendingSliderVolumeShouldHold(0.5, null, 2000))
     compare(Api.SEARCH_DEBOUNCE_MS, 600)
+    compare(Api.SEARCH_REQUEST_TIMEOUT_MS, 8000)
     compare(Api.VOLUME_FLUSH_MS, 80)
   }
 
@@ -252,9 +253,22 @@ TestCase {
     verify(!Api.apiRequestIsMutating("GET"))
     var queued = Api.enqueueApiJob([], { method: "GET", id: "one" })
     queued = Api.enqueueApiJob(queued, { method: "GET", id: "two" })
+    queued = Api.enqueueApiJob(queued,
+      { method: "GET", id: "search", priority: "interactive" })
     queued = Api.enqueueApiJob(queued, { method: "PUT", id: "play" })
     compare(queued[0].id, "play")
-    compare(queued[1].id, "one")
+    compare(queued[1].id, "search")
+    compare(queued[2].id, "one")
+    compare(queued[3].id, "two")
+    compare(Api.apiJobPriority(queued[0]), 2)
+    compare(Api.apiJobPriority(queued[1]), 1)
+    compare(Api.apiJobPriority(queued[2]), 0)
+    queued = Api.enqueueApiJob(queued,
+      { method: "GET", id: "search-two", priority: "interactive" })
+    queued = Api.enqueueApiJob(queued, { method: "POST", id: "pause" })
+    compare(queued[1].id, "pause")
+    compare(queued[2].id, "search")
+    compare(queued[3].id, "search-two")
     var skipped = Api.dequeueApiJob([
       { id: "stale", handle: { aborted: true } },
       { id: "live", handle: { aborted: false } }
