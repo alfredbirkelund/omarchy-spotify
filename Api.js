@@ -288,11 +288,19 @@ function apiRequestIsMutating(method) {
   return value !== "GET" && value !== "HEAD"
 }
 
-function enqueueApiJob(queue, job, preferFront) {
+function apiJobPriority(job) {
+  if (!job) return 0
+  if (apiRequestIsMutating(job.method)) return 2
+  return String(job.priority || "") === "interactive" ? 1 : 0
+}
+
+function enqueueApiJob(queue, job) {
   var next = arrayValues(queue)
   if (!job) return next
-  if (preferFront === true || apiRequestIsMutating(job.method)) next.unshift(job)
-  else next.push(job)
+  var priority = apiJobPriority(job)
+  var index = 0
+  while (index < next.length && apiJobPriority(next[index]) >= priority) index++
+  next.splice(index, 0, job)
   return next
 }
 
@@ -510,6 +518,7 @@ function spotifyTypeLabel(type) {
 var MUTE_THRESHOLD = 0.001
 var UNMUTE_FLOOR = 0.05
 var SEARCH_DEBOUNCE_MS = 600
+var SEARCH_REQUEST_TIMEOUT_MS = 8000
 var VOLUME_FLUSH_MS = 80
 var VOLUME_FLUSH_REMOTE_MS = 250
 var VOLUME_FLUSH_SONOS_MS = 120
