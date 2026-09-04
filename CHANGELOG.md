@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep nearby Spotify Connect speakers, including Sonos, when Avahi takes
+  longer than a few seconds to finish resolving every service. Discovery now
+  uses the records already printed, accepts IPv4 addresses even when Avahi
+  labels the browse result as IPv6, and waits up to 8 seconds.
 - Keep popups drawn inside the player (keyboard shortcuts help, menus, and
   pickers) readable on translucent themes. They reuse the theme's popup
   colour, which glass-style themes set to a low alpha meant for blurred
