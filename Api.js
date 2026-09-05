@@ -388,7 +388,7 @@ function remotePlaybackPollShouldRun(loggedIn, loading, uiVisible, useRemote,
 
 function remotePlaybackPollInterval(uiVisible, useRemote, hasLocal) {
   return uiVisible === true && (useRemote === true || hasLocal !== true)
-    ? 5000 : 15000
+    ? 2000 : 3000
 }
 
 function normalizedShortcutPlayer(value) {

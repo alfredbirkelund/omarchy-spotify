@@ -1090,9 +1090,9 @@ TestCase {
     verify(!Api.remotePlaybackPollShouldRun(true, false, false, false, true))
     verify(!Api.remotePlaybackPollShouldRun(true, true, true, true, true))
     verify(!Api.remotePlaybackPollShouldRun(false, false, true, true, true))
-    compare(Api.remotePlaybackPollInterval(true, true, false), 5000)
-    compare(Api.remotePlaybackPollInterval(true, false, true), 15000)
-    compare(Api.remotePlaybackPollInterval(false, true, false), 15000)
+    compare(Api.remotePlaybackPollInterval(true, true, false), 2000)
+    compare(Api.remotePlaybackPollInterval(true, false, true), 3000)
+    compare(Api.remotePlaybackPollInterval(false, true, false), 3000)
   }
 
   function test_normalizedShortcutPlayer_mapsLegacyDefault() {

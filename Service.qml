@@ -287,6 +287,7 @@ Item {
   property string savedEpisodesNext: ""
   property var savedAudiobooks: []
   property string savedAudiobooksNext: ""
+  property var playlistCache: ({})
   property var playlistItems: []
   property string playlistItemsNext: ""
   property string playlistItemsError: ""
@@ -1172,6 +1173,18 @@ Item {
         loadDevices()
       }
     }
+    if (state && state.playing && state.item && state.item.durationMs > 0) {
+      var remainingMs = state.item.durationMs - (Number(state.progressSeconds || 0) * 1000)
+      if (remainingMs > 500 && remainingMs <= 600000) {
+        trackEndTimer.stop()
+        trackEndTimer.interval = Math.max(800, Math.round(remainingMs) + 600)
+        trackEndTimer.start()
+      } else {
+        trackEndTimer.stop()
+      }
+    } else {
+      trackEndTimer.stop()
+    }
   }
 
   function loadPlaybackState(callback, reportError) {
@@ -1695,6 +1708,13 @@ Item {
     loadLibraryCollection(value, append === true)
   }
 
+  function cachePlaylist(id, items, next) {
+    if (!id) return
+    var copy = Api.shallowCopy(playlistCache || {})
+    copy[String(id)] = { items: items, next: next || "" }
+    playlistCache = copy
+  }
+
   function openPlaylist(playlist, restoredItemCount) {
     if (!playlist || !playlist.id) return
     succeed("")
@@ -1703,8 +1723,14 @@ Item {
     playlistRestoreTargetCount = Api.normalizedPlaylistRestoreCount(
       restoredItemCount)
     selectedPlaylist = playlist
-    playlistItems = []
-    playlistItemsNext = ""
+    var cached = playlistCache[String(playlist.id)]
+    if (cached && Array.isArray(cached.items) && cached.items.length > 0) {
+      playlistItems = cached.items
+      playlistItemsNext = cached.next || ""
+    } else {
+      playlistItems = []
+      playlistItemsNext = ""
+    }
     playlistItemsError = ""
     playlistItemsStatus = 0
     loadPlaylistItems(false)
@@ -1759,6 +1785,7 @@ Item {
           append, page.next)
         root.playlistItems = playlistPage.items
         root.playlistItemsNext = playlistPage.next
+        root.cachePlaylist(playlistId, playlistPage.items, playlistPage.next)
         if (Api.playlistRestoreShouldContinue(root.playlistItems.length,
             root.playlistRestoreTargetCount, root.playlistItemsNext))
           root.loadPlaylistItems(true)
@@ -3098,6 +3125,8 @@ Item {
           root.selectedDeviceId = String(deviceId || root.selectedDeviceId)
           root.loadDevices()
           root.loadQueue()
+          root.loadPlaybackState()
+          remotePlaybackRetryTimer.restart()
         }
       })
   }
@@ -3307,7 +3336,12 @@ Item {
 
   function remotePlayerAction(method, path, query) {
     apiAction(method, path, query, null, "",
-      function(ok) { if (ok) root.loadPlaybackState() })
+      function(ok) {
+        if (ok) {
+          root.loadPlaybackState()
+          remotePlaybackRetryTimer.restart()
+        }
+      })
   }
 
   function seekSeconds(seconds) {
@@ -3583,6 +3617,7 @@ Item {
     savedAudiobooks = []
     savedAudiobooksLoaded = false
     savedAudiobooksNext = ""
+    playlistCache = ({})
     playlistItems = []
     playlistItemsNext = ""
     playlistItemsError = ""
@@ -3996,6 +4031,20 @@ Item {
     running: Api.remotePlaybackPollShouldRun(root.auth.loggedIn,
       root.remotePlaybackLoading, root.uiVisible, root.useRemotePlayback,
       root.playing)
+    onTriggered: root.loadPlaybackState()
+  }
+
+  Timer {
+    id: remotePlaybackRetryTimer
+    interval: 600
+    repeat: false
+    onTriggered: root.loadPlaybackState()
+  }
+
+  Timer {
+    id: trackEndTimer
+    interval: 1000
+    repeat: false
     onTriggered: root.loadPlaybackState()
   }
 
