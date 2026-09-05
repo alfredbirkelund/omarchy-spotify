@@ -31,6 +31,8 @@ Item {
   }
   readonly property string stateDir: stateHome + "/omarchy-spotify"
   readonly property string sessionPath: stateDir + "/session.json"
+  readonly property string clientIdPath: homeDirectory + "/.config/omarchy-spotify/client_id"
+  property string customClientId: ""
 
   readonly property var defaultSettingValues: ({
     deviceName: "Omarchy Spotify",
@@ -3892,6 +3894,18 @@ Item {
     }
   }
 
+  FileView {
+    id: clientIdFile
+    path: root.clientIdPath
+    watchChanges: true
+    printErrors: false
+    onLoaded: {
+      var id = String(text() || "").trim()
+      root.customClientId = id
+    }
+    onLoadFailed: root.customClientId = ""
+  }
+
   Process {
     id: ensureStateDir
     running: false
@@ -4087,6 +4101,7 @@ Item {
   AuthManager {
     id: authManager
     pluginDir: root.pluginDir
+    clientId: root.customClientId ? root.customClientId : "d420a117a32841c2b3474932e49fb54b"
   }
 
   AuthManager {
