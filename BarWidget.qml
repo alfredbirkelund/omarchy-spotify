@@ -256,7 +256,11 @@ BarWidget {
     else bar.shell.toggle("quickshell.spotify", encoded)
   }
 
+  readonly property bool isPrimaryBarInstance: !bar || !Quickshell.screens
+    || Quickshell.screens.length <= 1 || bar.screen === Quickshell.screens[0]
+
   IpcHandler {
+    enabled: root.isPrimaryBarInstance
     target: root.moduleName + ".player"
 
     function configuredPlayer(): string {

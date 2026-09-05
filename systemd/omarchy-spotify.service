@@ -4,6 +4,8 @@ Documentation=https://github.com/stappmus/QuickshellSpotify
 After=graphical-session.target sound.target
 Wants=sound.target
 Conflicts=omarchy-spotifyd.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple
