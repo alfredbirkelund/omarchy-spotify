@@ -21,6 +21,10 @@ Item {
   // A second internal instance may override them for the streaming-only grant
   // required by authorization-code Spotify Connect receivers such as Sonos.
   property string clientId: "d420a117a32841c2b3474932e49fb54b"
+  onClientIdChanged: {
+    resetMemorySession()
+    sessionChecked = false
+  }
   property int oauthPort: 8989
   property string callbackPath: "/login"
   property var scopes: Api.SCOPES
