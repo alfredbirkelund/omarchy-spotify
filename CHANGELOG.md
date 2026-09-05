@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep the last played song loaded while nothing is playing, the way the
+  desktop app's footer does. The bar popup and player show it in place of
+  "Nothing playing", and Play continues inside the playlist or album it came
+  from, starting the local receiver first when it has idled out. Seek, skip,
+  shuffle, and repeat stay disabled until something is actually loaded.
 - Add a "Fixed bar width" bar setting. When on, the bar label always reserves
   the configured maximum width while a track is shown, so the widget and the
   widgets laid out after it no longer shift when the song title length
