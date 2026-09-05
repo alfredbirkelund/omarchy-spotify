@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a "Fixed bar width" bar setting. When on, the bar label always reserves
+  the configured maximum width while a track is shown, so the widget and the
+  widgets laid out after it no longer shift when the song title length
+  changes. Off by default; unavailable while the width is unlimited.
 - Keep nearby Spotify Connect speakers, including Sonos, when Avahi takes
   longer than a few seconds to finish resolving every service. Discovery now
   uses the records already printed, accepts IPv4 addresses even when Avahi
